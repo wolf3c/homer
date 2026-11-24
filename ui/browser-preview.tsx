@@ -10,11 +10,11 @@ import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
 declare global{interface Window{homerBrowserPreview?:BrowserPreviewBridge;}}
 export const BrowserPreviewContext=createContext<{openLink:(url:string,trigger:HTMLAnchorElement)=>boolean;openReference:(reference:PreviewRequest,id:string,history?:boolean)=>void}>({openLink:()=>false,openReference:()=>{}});
-async function requestPreview<T>(threadId:string,source:PreviewSource,target:{url?:string;href?:string}):Promise<T>{
+async function requestPreview<T>(threadId:string,source:PreviewSource,target:{url?:string;href?:string;show?:false}):Promise<T>{
  const response=await connectionFetch('/api/preview/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threadId,source,...target})});
  const result=await response.json();if(!response.ok)throw Error(result.error??'网页打开未确认，请重试。');return result;
 }
-export const openBrowserPreview=(threadId:string,source:PreviewSource,url?:string)=>requestPreview<BrowserPage>(threadId,source,{url});
+export const openBrowserPreview=(threadId:string,source:PreviewSource,url?:string,show?:false)=>requestPreview<BrowserPage>(threadId,source,{url,show});
 export const openPreviewLink=(threadId:string,source:PreviewSource,href:string)=>requestPreview<PreviewLinkResult>(threadId,source,{href});
 export function useBrowserPages(threadId:string){
  const [pages,setPages]=useState<BrowserPage[]>([]),[error,setError]=useState('');

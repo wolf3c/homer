@@ -4,7 +4,7 @@ import {conversationUserText,userAuthorityDescription} from './user-intent.js';
 import {isUtf8} from 'node:buffer';
 import {isDraftImageReference,resourceReferenceText,referencesOf,type ResourceReference} from './preview-reference.js';
 import {messageSourceParts,previewQuoteText} from './message-quote.js';
-import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmentDestination,messageFileDestination,messageFileDestinations,messageLinks,notificationPreviewText} from './message-links.js';
+import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmentDestination,messageFileDestination,messageFileDestinations,messageFileLineSuffix,messageLinks,notificationPreviewText} from './message-links.js';
 import {withInteractionResponses} from './web-homer.js';
 import {publicActivityName,type PublicActivity} from './activity-facts.js';
 import {WebHistoryPages} from './web-history-pages.js';
@@ -279,13 +279,14 @@ export class Homer {
       throw Error('message_file_scope_denied');
     }
     const file=this.validateBrowserSource(threadId,source);
+    const background=a.show===false&&source.kind!=='browser'?{show:false}:{};
     if(source.kind==='message-file'){
       if(a.url!==undefined||file?.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
-      return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,user:true});
+      return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,user:true,...background});
     }
     if(file&&file.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
     const url=a.url!==undefined?this.browserUrl(a.url):source.kind==='attachment'?undefined:this.browserUrl(source.url);
-    return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,...(source.kind==='attachment'||url!==source.url?{url}:{}),user:true});
+    return this.browserTransport({threadId,owner:'main:'+threadId},'open',{source,...(source.kind==='attachment'||url!==source.url?{url}:{}),user:true,...background});
   }
   private browserUrl(value:unknown){const valueString=string(value,16000);let url:URL;try{url=new URL(valueString);}catch{throw Error('preview_url_invalid');}if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('preview_url_invalid');return url.href;}
   private validateBrowserSource(threadId:string,source:import('./preview-reference.js').PreviewSource,includeData=true){
@@ -2397,6 +2398,13 @@ export class Homer {
     if(preview)return {filename:asset.filename+'.wav',mime:preview.mime,data:preview.bytes.toString('base64')};
     return {filename:asset.filename,mime:asset.mime!,data:bytes.toString('base64'),sha256:asset.hash!};
   }
+  private messageFileSourceLine(suffix:RegExpMatchArray|undefined|null){
+    if(!suffix)return;
+    const [,line,column,end]=suffix;
+    const valid=(value:string|undefined)=>value===undefined||Number.isSafeInteger(Number(value))&&Number(value)>0;
+    if(!valid(line)||!valid(column)||!valid(end)||end!==undefined&&Number(end)<Number(line))return;
+    return end!==undefined?`${Number(line)}-${Number(end)}`:column!==undefined?`${Number(line)}:${Number(column)}`:String(Number(line));
+  }
   private resolveMessageFile(value:unknown,inlineImage=false,matchPath?:string){
     const input=object(value),threadId=string(input.threadId,100),destination=string(input.destination,16000);
     let messageId=string(input.messageId,100);
@@ -2441,13 +2449,14 @@ export class Homer {
       if(matchPath)return {threadId,messageId};
       throw Error('message_file_scope_denied');
     }
+    const target=this.messageFileTarget(raw);
     const snapshot=this.finalAttachmentDestinations(messageId).findIndex(link=>decodeMessageLink(link)===decodeMessageLink(raw));
     if(snapshot>=0){
       const ref=original.attachments?.[snapshot];
       if(!ref)throw Error('media_scope_denied');
-      return {attachment:{messageId,...ref},threadId,destination:raw,messageId};
+      return {attachment:{messageId,...ref},target,threadId,destination:raw,messageId};
     }
-    const path=this.messageFilePath(raw);
+    const path=target?.path;
     if(!path)throw Error('message_file_path_unsupported');
     if(inlineImage){
       const root=original.taskId&&original.taskVersion
@@ -2455,14 +2464,22 @@ export class Homer {
         :this.config.workspace;
       if(!inside(root,path))throw Error('artifact_path_denied');
     }
-    return {path,threadId,destination:raw,messageId};
+    return {path,target,threadId,destination:raw,messageId};
   }
-  readMessageFile(value:unknown){
+  readMessageFile(value:unknown):import('./web-contract.js').MessageFileBytes{
     const inlineImage=object(value).inlineImage===true;
     const source=this.resolveMessageFile(value,inlineImage);
-    const file=source.attachment?this.readAttachment(source.attachment):undefined;
-    const result=file?{filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64')}
-      :this.withMessageFilePath(source.path!,path=>this.readLocalAttachment(path,true,inlineImage));
+    const result=source.attachment?(()=>{
+      const file=this.readAttachment(source.attachment);
+      const target=source.target;
+      const original=!inlineImage&&target?.suffix&&attachmentSourcePath(this.store.db,this.media.asset(source.attachment));
+      const sourceLine=original&&target?.withoutLine&&normalize(original)===normalize(target.withoutLine)
+        ?this.messageFileSourceLine(target.suffix):undefined;
+      return {filename:file.filename,mime:file.mime,bytes:Buffer.from(file.data,'base64'),sha256:file.sha256,sourceLine,attachment:source.attachment};
+    })():this.withMessageFilePath(source.path!, (path,suffix)=>({
+      ...this.readLocalAttachment(path,true,inlineImage),
+      sourceLine:inlineImage?undefined:this.messageFileSourceLine(suffix??(process.platform==='win32'?source.target?.suffix:undefined)),
+    }));
     if(inlineImage&&!inlineImageMimes.has(result.mime))throw Error('file_preview_unsupported');
     return result;
   }
@@ -2492,9 +2509,9 @@ export class Homer {
     return {kind:'local' as const,filename:basename(info.path),size:info.size,overLimit:info.size>MEDIA_POLICY.fileBytes,
       reveal:!!this.browserTransport&&(platform==='darwin'||platform==='win32'),platform};
   }
-  private withMessageFilePath<T>(path:string,operation:(target:string)=>T):T{
-    const read=(target:string)=>{
-      try{return operation(target);}
+  private withMessageFilePath<T>(path:string,operation:(target:string,suffix?:RegExpMatchArray)=>T):T{
+    const read=(target:string,suffix?:RegExpMatchArray)=>{
+      try{return operation(target,suffix);}
       catch(error){
         const code=(error as NodeJS.ErrnoException).code;
         if(code==='ENOENT'||code==='ENOTDIR')throw Error('artifact_missing');
@@ -2504,22 +2521,25 @@ export class Homer {
     };
     try{return read(path);}
     catch(error){
-      const withoutLine=process.platform==='win32'?path:path.replace(/:\d+(?::\d+)?$/,'');
-      if(!(error instanceof Error)||error.message!=='artifact_missing'||withoutLine===path)throw error;
-      return read(withoutLine);
+      const suffix=process.platform==='win32'?null:path.match(messageFileLineSuffix);
+      if(!(error instanceof Error)||error.message!=='artifact_missing'||!suffix||suffix[3]!==undefined&&!this.messageFileSourceLine(suffix))throw error;
+      return read(path.slice(0,suffix.index),suffix);
     }
   }
-  private messageFilePath(raw:string){
+  private messageFilePath(raw:string){return this.messageFileTarget(raw)?.path;}
+  private messageFileTarget(raw:string){
     const explicit=/^file:/i.test(raw);
     if(explicit&&(!/^file:\/\/\/(?![\\/])/i.test(raw)||/[?#]/.test(raw)))return;
     let path=decodeMessageLink(explicit?raw.slice(7):raw);
     if(!path||/[\x00-\x1f\x7f]/.test(path))return;
+    const matched=path.match(messageFileLineSuffix);
+    const suffix=matched?.[3]!==undefined&&!this.messageFileSourceLine(matched)?null:matched;
     if(process.platform==='win32'){
-      path=path.replace(/^\/(?=[a-z]:[\\/])/i,'').replace(/:(\d+)(?::\d+)?$/,'');
+      path=(suffix?path.slice(0,suffix.index):path).replace(/^\/(?=[a-z]:[\\/])/i,'');
       if(!/^[a-z]:[\\/]/i.test(path)||path.slice(2).includes(':'))return;
       path=normalize(path);
     }else if(!/^\/(?![\\/])/.test(path))return;
-    return path;
+    return {path,suffix,withoutLine:suffix?(process.platform==='win32'?path:path.slice(0,suffix.index)):undefined};
   }
   revealAttachment(input:AttachmentRef&{messageId:string}){
     this.attachmentMessage(input);

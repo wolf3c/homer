@@ -148,8 +148,8 @@ export async function runDev({ root, configPath, json = false, webPort, mobileSi
         openPreview:input=>invokeWeb('preview.open',input),
         messageFileInfo:(source,reveal)=>invokeWeb(reveal?'preview.revealMessageFile':'preview.messageFileInfo',source),
         readMessageFile:async input=>{
-          const {filename,mime,data}=await invokeWeb('preview.messageFile',input);
-          return {filename,mime,bytes:Buffer.from(data,'base64')};
+          const {filename,mime,data,sourceLine,sha256,attachment}=await invokeWeb('preview.messageFile',input);
+          return {filename,mime,bytes:Buffer.from(data,'base64'),sourceLine,sha256,attachment};
         },
       }:{}),history:{state:historyState,page:input=>invokeWeb('history.page',input),process:input=>invokeWeb('history.process',input),resolve:input=>invokeWeb('history.resolve',input),queue:(after,readEpoch)=>invokeWeb('history.queue',{after,readEpoch}),dispatchQueue:input=>invokeWeb('history.dispatchQueue',input),interactions:(after,readEpoch,id)=>invokeWeb('history.interactions',{after,readEpoch,id}),receipts:async input=>{
         const value=await invokeWeb('history.receipts',input),transport=journal?.receipts(input.requestIds)??[];

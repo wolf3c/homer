@@ -45,7 +45,7 @@ import {
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import {defaultUrlTransform,type Components,type UrlTransform} from 'react-markdown';
-import {decodeMessageLink,isMessageFileLink,messageAttachmentDestination} from '../src/message-links';
+import {decodeMessageLink,isMessageFileLink,messageAttachmentDestination,messageFileLineSuffix} from '../src/message-links';
 import remarkGfm from "remark-gfm";
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -1875,7 +1875,7 @@ function HomerApp() {
       return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{...file,trigger:origin}],activeId:file.id};
     });setCanvasOpen(true);
   };
-  function showBrowser(page:BrowserPage,focus?:{key:string;id:string;history?:PreviewRequest}){
+  function showBrowser(page:BrowserPage,focus?:{key:string;id:string;history?:PreviewRequest},keepFileTab=false){
     if(page.threadId!==state.threadId)return;
     const id=page.id;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
     setAnnotationFocus(focus?{...focus,nonce:crypto.randomUUID()}:undefined);
@@ -1883,7 +1883,7 @@ function HomerApp() {
       const source=page.source;
       const tabs=old.tabs.filter(tab=>{
         if(source.kind==='attachment'&&!page.resource&&!('kind'in tab)&&!tab.resource)return tab.assetId!==source.assetId||tab.revision!==source.revision;
-        if(source.kind==='message-file'&&'kind'in tab&&tab.kind==='message-file')return tab.messageId!==source.messageId||tab.destination!==source.destination;
+        if(!keepFileTab&&source.kind==='message-file'&&'kind'in tab&&tab.kind==='message-file')return tab.messageId!==source.messageId||tab.destination!==source.destination;
         return true;
       });
       return {...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};
@@ -1899,9 +1899,16 @@ function HomerApp() {
       return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
     });setCanvasOpen(true);
   }
-  function openDocumentLink(source:Parameters<typeof openPreviewLink>[1],href:string,sourceCurrent?:()=>Promise<boolean>){
+  function openDocumentLink(source:Parameters<typeof openPreviewLink>[1],href?:string,sourceCurrent?:()=>Promise<boolean>){
     if(!isCurrentPreview())return;
     setPageNotice('');
+    if(href===undefined){
+      const current=async()=> (!sourceCurrent||await sourceCurrent())&&isCurrentPreview();
+      void openBrowserPreview(state.threadId,source,undefined,false).then(async page=>{
+        if(await current())showBrowser(page,undefined,true);
+      }).catch(async error=>{if(await current())setPageNotice(error.message);});
+      return;
+    }
     void openPreviewLink(state.threadId,source,href).then(async result=>{
       if(sourceCurrent&&!await sourceCurrent()||!isCurrentPreview())return;
       if('page'in result){showBrowser(result.page);return;}
@@ -1925,6 +1932,11 @@ function HomerApp() {
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
     if(messageId&&(isMessageFileLink(destination)||messageAttachmentDestination(destination))){
       const file=artifacts.find(item=>item.messageId===messageId&&item.destination&&decodeMessageLink(item.destination)===decodeMessageLink(destination));
+      if(!mobileView&&window.homerBrowserPreview&&isMessageFileLink(destination)&&messageFileLineSuffix.test(decodeMessageLink(destination)??'')){
+        const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
+        openLocalFile(messageId,destination,file?.title??title,trigger);
+        return true;
+      }
       if(file){openArtifact(file,trigger);return true;}
       if(messageAttachmentDestination(destination)){setPageNotice('这个文件的交付版本不可用。');return true;}
       if(mobileView){setPageNotice('手机无法直接读取电脑上的本地路径，请在电脑端打开该消息。');return true;}
@@ -1950,10 +1962,12 @@ function HomerApp() {
       return;
     }
     if(reference.kind!=='web')return;
-    const show=(page:BrowserPage)=>showBrowser(page,focus);
+    const keepFileTab=reference.source.kind==='message-file'&&messageFileLineSuffix.test(decodeMessageLink(reference.source.destination)??'');
+    const show=(page:BrowserPage)=>showBrowser(page,focus,keepFileTab);
     const existing=browser.pages.find(page=>page.id===reference.page?.id&&page.url===reference.page.url);
     if(existing&&reference.source.kind!=='message-file'){show(existing);return;}
-    void openBrowserPreview(state.threadId,reference.source,reference.source.kind!=='message-file'&&reference.page?.url.startsWith('http')?reference.page.url:undefined).then(show).catch(error=>setPageNotice(error.message));
+    void openBrowserPreview(state.threadId,reference.source,reference.source.kind!=='message-file'&&reference.page?.url.startsWith('http')?reference.page.url:undefined,keepFileTab?false:undefined)
+      .then(show).catch(error=>setPageNotice(error.message));
   }
   const queueDrafts=(()=>{try{return Object.keys(sessionStorage).filter(key=>key.startsWith('homer-queue-edit:')).flatMap(key=>{const draft=storage.read<Pick<ConversationInput,'text'|'quote'|'quotes'|'resourceReference'|'resourceReferences'|'attachments'>>(key);return draft?[{key,...draft}]:[];});}catch{return [];}})();
   const questionDrafts=(state.inactiveInteractions??[]).filter(item=>item.kind==='question').flatMap(item=>{

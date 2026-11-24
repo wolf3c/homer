@@ -15,7 +15,7 @@ import {Component,lazy,Suspense,useEffect,useLayoutEffect,useMemo,useRef,useStat
 import {connectionFetch,mobileView} from './web-connection-client';
 import {htmlPreviewShell} from '../src/html-preview';
 import ReactMarkdown,{defaultUrlTransform,type Components} from 'react-markdown';
-import {isMessageFileLink} from '../src/message-links';
+import {isMessageFileLink,messageFileLineSuffix} from '../src/message-links';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -32,6 +32,7 @@ import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
 import type{BrowserPage}from'../src/browser-preview';
 import type {ImageAnnotationControl} from './image-annotation';
+import type {Root,RootContent} from 'hast';
 import type {PreviewImportGuard} from './preview-reference';
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
 const MAX_PATCH_BYTES=256*1024,MAX_PATCH_LINES=2000,PATCH_PREFIX_BYTES=128*1024;
@@ -68,8 +69,59 @@ export function canvasWebUrl(value:string):string {
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('请输入不含账号密码的 http(s) 网页地址。');
   return url.href;
 }
+type SourceLines={start:number;end:number};
+const markdownSourceBlocks=/^(?:p|h[1-6]|pre|tr|hr)$/;
+const listInlineElements=/^(?:a|br|code|del|em|img|input|span|strong|sup)$/;
+const textPreviewMime=(mime:string)=>mime.startsWith('text/')||/^application\/(json|javascript)/.test(mime);
+function rehypeSourceLines({start,end}:SourceLines){
+  return ()=>(tree:Root)=>{
+    const overlaps=({position}:RootContent)=>!!position&&position.start.line<=end&&
+      (position.end.line>start||position.end.line===start&&position.end.column>1);
+    const displayMath=(node:RootContent)=>node.type==='element'&&node.tagName==='span'&&'data-preview-math'in node.properties&&
+      node.children.some(child=>child.type==='element'&&child.tagName==='pre');
+    const inline=(node:RootContent)=>node.type==='text'||node.type==='element'&&listInlineElements.test(node.tagName)&&!displayMath(node);
+    function mark(node:RootContent){
+      if(node.type!=='element')return;
+      const hit=overlaps(node);
+      if(hit&&(markdownSourceBlocks.test(node.tagName)||displayMath(node))){
+        node.properties['data-preview-source-target']='';
+        return;
+      }
+      node.children.forEach(mark);
+      if(!hit||node.tagName!=='li')return;
+      // Tight list items render their text without paragraphs. Mark each run
+      // of inline content separately from the intervening blocks and sublists.
+      const children=node.children;
+      for(let index=0;index<children.length;){
+        if(!inline(children[index]!)){index++;continue;}
+        const from=index++;
+        while(index<children.length&&inline(children[index]!))index++;
+        const run=children.slice(from,index);
+        if(!run.some(overlaps))continue;
+        if(from===0&&index===children.length){
+          node.properties['data-preview-source-target']='';
+          return;
+        }
+        children.splice(from,index-from,{type:'element',tagName:'span',properties:{'data-preview-source-target':''},children:run});
+        index=from+1;
+      }
+    }
+    tree.children.forEach(mark);
+  };
+}
+function fileLineRange(text:string,{start,end}:SourceLines){
+  const breaks=/\r\n|\n|\r/g;
+  let offset=0,from=0;
+  for(let number=1;;number++){
+    const next=breaks.exec(text);
+    if(number===start)from=offset;
+    if(number===end)return {from,to:next?.index??text.length};
+    if(!next)return {lineCount:number};
+    offset=breaks.lastIndex;
+  }
+}
 const markdownComponents:Components={
- pre:({children})=><div>{children}</div>,
+ pre:({children,node})=><div data-preview-source-target={node?.properties['data-preview-source-target']===''?'':undefined}>{children}</div>,
  code:({className,children})=>{
   const code=String(children).replace(/\n$/,''),language=/language-(\S+)/.exec(className??'')?.[1];
   return language?<Highlight language={language} code={code}/>:String(children).includes('\n')?<pre><code>{children}</code></pre>:<code>{children}</code>;
@@ -77,7 +129,7 @@ const markdownComponents:Components={
  img:LazyMarkdownImage,
  a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
 };
-type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href:string)=>void;isCurrent?:PreviewImportGuard};
+type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
 
 export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
   const {artifact,webSource,onClose}=readerProps;
@@ -146,7 +198,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   </Dialog.Portal></Dialog.Root></div>;
 }
 
-function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,threadId='',onClose,onReference:saveReference,onOpenLink,referencesEnabled:referenceCapability=false,isCurrent=()=>true,actions,imageControl}:CanvasPanelProps&{local?:MessageFileTab;actions:HTMLElement|null;imageControl:RefObject<ImageAnnotationControl|null>}) {
+function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,local,webSource,threadId='',onClose,onReference:saveReference,onOpenLink,referencesEnabled:referenceCapability=false,isCurrent=()=>true,actions,imageControl}:CanvasPanelProps&{local?:MessageFileTab;actions:HTMLElement|null;imageControl:RefObject<ImageAnnotationControl|null>}) {
   const draft=useAnnotationDraft(annotationDraft);
   const referencesEnabled=referenceCapability&&!draft.frozen;
   const generation=useRef(0),alive=useRef(true),owner=useRef(isCurrent);owner.current=isCurrent;
@@ -163,7 +215,9 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const body=useRef<HTMLDivElement>(null),webFrame=useRef<HTMLIFrameElement>(null);
   const bridge=useRef({onReference});bridge.current={onReference};
   const [readError,setReadError]=useState(''),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
-  const [file,setFile]=useState<{url:string;mime:string;text:string;name:string;blob:Blob;sha256:string|null}|null>(null),[loading,setLoading]=useState(false);
+  const [file,setFile]=useState<{url:string;mime:string;text:string;name:string;blob:Blob;sha256:string|null;sourceLines?:SourceLines;attachment?:CanvasArtifact}|null>(null),[loading,setLoading]=useState(false);
+  const [sourceView,setSourceView]=useState<boolean>();
+  const artifact=tabArtifact??file?.attachment;
   const [mediaError,setMediaError]=useState('');
   const [localInfo,setLocalInfo]=useState<LocalFileInfo>();
   const [locating,setLocating]=useState(false);
@@ -195,7 +249,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const annotationLabel=annotationLoading?'取消批注加载，返回预览':interactive?'退出批注，返回预览':'启用批注';
   const token=useMemo(()=>crypto.randomUUID(),[artifact?.id,local?.reload,webSource?.url,retry,interactive,runtime,frameRevision]);
   const attachmentPath=artifact?'/api/media/'+[artifact.messageId,artifact.assetId,artifact.revision].map(encodeURIComponent).join('/') : '';
-  const source=useMemo<PreviewSource|undefined>(()=>webSource??(local&&file?{kind:'message-file',messageId:local.messageId,destination:local.destination,title:file.name,...(file.sha256?{sha256:file.sha256}:{})}:artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:undefined),[webSource,artifact?.id,file,local]);
+  const source=useMemo<PreviewSource|undefined>(()=>webSource??(artifact&&file?.sha256?{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,sha256:file.sha256,title:file.name}:local&&file?{kind:'message-file',messageId:local.messageId,destination:local.destination,title:file.name,...(file.sha256?{sha256:file.sha256}:{})}:undefined),[webSource,artifact?.id,file,local]);
   const openLink=useRef(onOpenLink);openLink.current=onOpenLink;
   const canOpenLinks=!!onOpenLink&&!!window.homerBrowserPreview;
   const previewMarkdownComponents=useMemo<Components>(()=>({...markdownComponents,
@@ -209,7 +263,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   }),[attachmentPath,source,canOpenLinks]);
   const imageFile=useMemo(()=>file&&source&&(source.kind==='attachment'||source.kind==='message-file'&&source.sha256)?new File([file.blob],file.name,{type:file.mime}):undefined,[file,source]);
   useLayoutEffect(()=>{
-    generation.current++;setFile(null);setLocalInfo(undefined);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
+    generation.current++;setFile(null);setSourceView(undefined);setLocalInfo(undefined);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
     if(!artifact&&!local||webSource){setLoading(false);return;}
     const controller=new AbortController();let objectUrl='';setLoading(true);
     void (async()=>{try{
@@ -234,7 +288,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
         throw Error('成果读取失败（'+response.status+'），'+(error==='file_type_or_size_denied'?'文件类型或大小不符合当前读取限制（文件上限 50 MiB），请使用原文件。':'请重新连接后重试。'));
       }
       let sha256=response.headers.get('X-Homer-Artifact-Hash');
-      if(artifact&&!artifact.resource&&sha256!==artifact.sha256)throw Error('成果读取失败：附件版本已变化，请重新打开。');
+      if(tabArtifact&&!tabArtifact.resource&&sha256!==tabArtifact.sha256)throw Error('成果读取失败：附件版本已变化，请重新打开。');
       if(artifact?.resource)sha256=null;
       const blob=await response.blob(),mime=(response.headers.get('Content-Type')??blob.type).split(';')[0]!.trim().toLowerCase();
       if(local&&['image/png','image/jpeg','image/webp','image/gif'].includes(mime)&&blob.size<=8*1024*1024){
@@ -242,9 +296,19 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
         sha256=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
       }
       let name=local?.title??artifact!.title;try{const encoded=response.headers.get('Content-Disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];if(encoded)name=decodeURIComponent(encoded);}catch{}
-      const text=isPatchFile(name,mime)?await blob.slice(0,blob.size>MAX_PATCH_BYTES?PATCH_PREFIX_BYTES:blob.size).text():!/^(audio|video)\//.test(mime)&&(mime.startsWith('text/')||/^(application\/(json|javascript))/.test(mime)||!local&&/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
+      const text=isPatchFile(name,mime)?await blob.slice(0,blob.size>MAX_PATCH_BYTES?PATCH_PREFIX_BYTES:blob.size).text():!/^(audio|video)\//.test(mime)&&(textPreviewMime(mime)||!local&&/\.(txt|md|json|[cm]?[jt]sx?|css|py|sh)$/i.test(name))?await blob.text():'';
       if(controller.signal.aborted||!readerCurrent())return;
-      objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256});
+      const coordinate=(':'+response.headers.get('X-Homer-Source-Line')).match(messageFileLineSuffix);
+      const start=Number(coordinate?.[1]),end=Number(coordinate?.[3]??coordinate?.[1]);
+      const sourceLines=coordinate?.index===0&&start>0&&end>=start&&Number.isSafeInteger(start)&&Number.isSafeInteger(end)?{start,end}:undefined;
+      let attachment:CanvasArtifact|undefined;
+      const identity=response.headers.get('X-Homer-Artifact-Source');
+      if(local&&identity&&sha256)try{
+        const {messageId,assetId,revision}=JSON.parse(decodeURIComponent(identity));
+        if(typeof messageId==='string'&&typeof assetId==='string'&&Number.isSafeInteger(revision)&&revision>0)
+          attachment={messageId,assetId,revision,sha256,title:name,id:JSON.stringify([messageId,assetId,revision])};
+      }catch{}
+      objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256,sourceLines,attachment});
     }catch(error){if(!controller.signal.aborted&&readerCurrent())setReadError(error instanceof Error?error.message:'成果读取失败。');}
     finally{if(!controller.signal.aborted&&readerCurrent())setLoading(false);}})();
     return()=>{
@@ -255,7 +319,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
       if(media){media.pause();media.removeAttribute('src');media.load();}
       if(objectUrl)URL.revokeObjectURL(objectUrl);
     };
-  },[artifact?.id,local?.id,local?.reload,webSource?.url,retry,threadId]);
+  },[tabArtifact?.id,local?.id,local?.reload,webSource?.url,retry,threadId]);
   const noteKey=source?referenceKey({kind:'image',source}):'';
   const htmlKey=source?referenceKey({kind:'web',source}):'';
   const textReference=referencesOf(draft).find(r=>r.kind==='text'&&source&&referenceKey(r)===referenceKey({kind:'text',source}));
@@ -351,7 +415,29 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
   const patchRaw=file&&<>{!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},()=>{if(readerCurrent())setNotice('下载未完成，请重新连接后重试。');});}}>下载原文件</a>}<pre>{file.text}</pre></>;
   const mediaKind=file?.mime.startsWith('audio/')?'audio':file?.mime.startsWith('video/')?'video':null;
   const unknownMedia=!!file&&(!file.mime||file.mime==='application/octet-stream')&&/\.(mp3|wav|m4a|ogg|flac|mp4|webm|mov|mkv)$/i.test(file.name);
-  const isHtml=file?.mime==='text/html',isText=!!file&&!mediaKind&&(file.mime.startsWith('text/')||!!file.text);
+  const isHtml=file?.mime==='text/html',isText=!!file&&!mediaKind&&(textPreviewMime(file.mime)||!!file.text);
+  const isMarkdown=file?.mime==='text/markdown'||!!file&&(!local||isText)&&/\.md$/i.test(file.name);
+  const sourceLines=isText&&!isPatch&&!annotationFocus?file?.sourceLines:undefined;
+  const location=useMemo(()=>file&&sourceLines?fileLineRange(file.text,sourceLines):undefined,[file,sourceLines]);
+  const sourceRange=location&&'from'in location?location:undefined;
+  const hasMarkdownTarget=!!(isMarkdown&&file&&sourceRange&&/\S/.test(file.text.slice(sourceRange.from,sourceRange.to)));
+  const markdownLinePlugin=useMemo(()=>hasMarkdownTarget&&sourceLines?rehypeSourceLines(sourceLines):undefined,[hasMarkdownTarget,sourceLines]);
+  const showSource=!!sourceLines&&(isHtml||(sourceView??(isMarkdown&&!!sourceRange&&!hasMarkdownTarget)));
+  const locationLabel=sourceLines&&(sourceLines.start===sourceLines.end?String(sourceLines.start):`${sourceLines.start}–${sourceLines.end}`);
+  useLayoutEffect(()=>{
+    const reader=body.current;
+    if(!reader||!sourceRange||!readerCurrent())return;
+    const target=reader.querySelector('[data-preview-source-target]');
+    if(!target){
+      if(isMarkdown&&sourceView===undefined&&!showSource)setSourceView(true);
+      return;
+    }
+    const offset=target.getBoundingClientRect().top-reader.getBoundingClientRect().top;
+    reader.scrollTop+=offset-reader.clientHeight/4;
+  },[file,sourceRange,showSource,sourceView]);
+  const rawText=file&&<pre data-preview-text>{sourceRange?<>
+    {file.text.slice(0,sourceRange.from)}<mark data-preview-source-target="">{file.text.slice(sourceRange.from,sourceRange.to)}</mark>{file.text.slice(sourceRange.to)}
+  </>:file.text}</pre>;
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   return <CanvasSplitDocument>
@@ -362,21 +448,29 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
           ?MOBILE_DOWNLOAD_LIMIT_NOTICE:'下载未完成，请重新连接后重试。');
       });
     }}/>,actions)}
-    {actions&&createPortal(isHtml&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
+    {actions&&locationLabel&&createPortal(<div className="canvas-source-location">
+      <span role="status">{sourceRange?`源文件第 ${locationLabel} 行`:`第 ${locationLabel} 行超出范围（共 ${location?.lineCount} 行）`}</span>
+      {isMarkdown&&<button type="button" onClick={()=>setSourceView(!showSource)}>{showSource?'查看排版':'查看源码'}</button>}
+      {isHtml&&source&&canOpenLinks&&<button type="button" onClick={()=>{
+        const epoch=generation.current;
+        openLink.current?.(source,undefined,async()=>readerCurrent()&&generation.current===epoch);
+      }}>查看页面</button>}
+    </div>,actions)}
+    {actions&&createPortal(isHtml&&!showSource&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
-    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml?'html-preview-body':isPatch?'patch-preview-body':undefined}>
+    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml&&!showSource?'html-preview-body':isPatch?'patch-preview-body':undefined}>
     {(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
     {local&&isImage&&file&&file.blob.size>8*1024*1024&&<p role="status" className="canvas-note">图片超过草稿附件的 8 MiB 上限，可预览。</p>}
-    {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce} historyNote={annotationFocus?.history?.kind==='text'?annotationFocus.history.annotations?.find(note=>note.id===focusId):undefined}/>}
+    {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&!(isMarkdown&&showSource)&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce} historyNote={annotationFocus?.history?.kind==='text'?annotationFocus.history.annotations?.find(note=>note.id===focusId):undefined}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
     loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={event=>{if(local&&!event.isTrusted)return;stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:localInfo&&!file?<div className="canvas-read-error">
       <p>{localInfo.filename} · {localInfo.size<1048576?<FileSize bytes={localInfo.size}/>:((localInfo.size/1048576).toFixed(1)+' MiB')}</p>
       <p>{localInfo.overLimit?'文件超过预览上限（50 MiB）。':'此格式暂不支持内置预览。'}</p>
       {localInfo.reveal&&<button type="button" disabled={locating} onClick={event=>{if(event.isTrusted)void locate();}}>{localInfo.platform==='win32'?'在文件资源管理器中显示':'在 Finder 中显示'}</button>}
     </div>:file?<>
-      {isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
+      {showSource?rawText:isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
         <details><summary>原始补丁文本</summary>{patchRaw}</details>
         <Suspense fallback={<p role="status">加载差异预览…</p>}><LazyDiffViewer patch={file.text} maxCollapsedLines={200}/></Suspense>
@@ -392,8 +486,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact,local,webSource,
         {mediaError&&<p role="alert">{mediaError}</p>}
         {!downloadNotice&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}
       </div>:
-      (file.mime==='text/markdown'||(!local||isText)&&/\.md$/i.test(file.name))?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={[rehypeKatex]} urlTransform={(url,key)=>key==='href'&&source&&canOpenLinks&&isMessageFileLink(url)?url:defaultUrlTransform(url)} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
-      isText?<pre data-preview-text>{file.text}</pre>:
+      isMarkdown?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={markdownLinePlugin?[markdownLinePlugin,rehypeKatex]:[rehypeKatex]} urlTransform={(url,key)=>key==='href'&&source&&canOpenLinks&&isMessageFileLink(url)?url:defaultUrlTransform(url)} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
+      isText?rawText:
       file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation initialEnabled={false} readOnly={!!historicImage} key={noteKey} url={file.url} title={source.title} actions={historicImage?undefined:imageActions} control={imageControl}
         notes={historicImage?.annotations??(imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[])}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},annotationDraft.imageFile(noteKey,imageFile),isCurrent)}

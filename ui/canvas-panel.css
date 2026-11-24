@@ -93,6 +93,10 @@
 .text-annotation-marker:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 
 .canvas-panel [data-preview-text]{padding-left:28px}
+.canvas-source-location{display:flex;align-items:center;flex-wrap:wrap;gap:4px;color:var(--ink);font-size:12px}
+.canvas-source-location button{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:inherit}
+.canvas-panel [data-preview-source-target]{background:color-mix(in srgb,var(--focus) 18%,transparent);color:inherit;box-shadow:-2px 0 var(--focus)}
+.canvas-panel mark[data-preview-source-target]:empty::before{content:"\200b"}
 
 /* Compact composer context. */
 .composer:has(.composer-context){padding-top:5px}

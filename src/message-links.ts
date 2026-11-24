@@ -55,6 +55,8 @@ export function messageAttachmentDestination(destination:string){
   return webMediaRoute('GET',new URL('http://localhost'+destination))?.attachment;
 }
 
+export const messageFileLineSuffix=/:([0-9]+)(?::([0-9]+)|-([0-9]+))?$/;
+
 // Markdown's rendered href URI-encodes whitespace, Unicode and bare percent
 // signs. Accept those spellings and decode percent escapes exactly once.
 export function decodeMessageLink(destination:string){

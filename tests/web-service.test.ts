@@ -53,7 +53,31 @@ test('desktop message-file reads require a visible Markdown link and read its cu
   for(const id of ['existing',fresh.id]){
    const response=await read(id,encodeURI(destination)+':7');
    assert.equal(response.status,200);assert.equal(response.headers.get('x-homer-artifact-hash'),null);
+   assert.equal(response.headers.get('x-homer-source-line'),'7');
    assert.equal(await response.text(),'# 第一版');
+  }
+  f.app.history.record('position',threadId,`[位置](<${destination}:7:2>) [无效](<${destination}:0>) [范围](<${destination}:7-9>) [倒序](<${destination}:9-7>)`);
+  const positioned=await read('position',encodeURI(destination)+':7:2');
+  assert.equal(positioned.headers.get('x-homer-source-line'),'7:2');
+  assert.equal(await positioned.text(),'# 第一版');
+  assert.equal((await read('position',destination+':0')).headers.get('x-homer-source-line'),null);
+  const range=await read('position',encodeURI(destination)+':7-9');
+  assert.equal(range.status,200);
+  assert.equal(range.headers.get('x-homer-source-line'),'7-9');
+  assert.equal(await range.text(),'# 第一版');
+  await expectError(await read('position',destination+':9-7'),409,
+   process.platform==='win32'?'message_file_path_unsupported':'artifact_missing');
+  if(process.platform!=='win32'){
+   writeFileSync(file+':7','# 文件名含冒号');
+   const literal=await read('existing');
+   assert.equal(literal.headers.get('x-homer-source-line'),null);
+   assert.equal(await literal.text(),'# 文件名含冒号');
+   rmSync(file+':7');
+   writeFileSync(file+':7-9','# 完整范围样式文件名');
+   const literalRange=await read('position',destination+':7-9');
+   assert.equal(literalRange.headers.get('x-homer-source-line'),null);
+   assert.equal(await literalRange.text(),'# 完整范围样式文件名');
+   rmSync(file+':7-9');
   }
   writeFileSync(file,'# 第二版');assert.equal(await (await read('existing')).text(),'# 第二版');
   for(const id of ['internal','foreign'])await expectError(await read(id),409,'message_file_scope_denied');
@@ -129,7 +153,11 @@ test('a finalized file link keeps the delivered bytes through its process identi
   const receipt=f.app.store.db.prepare('SELECT operationId FROM operations WHERE id=?').get(operation)!;
   const input={threadId,messageId:String(receipt.operationId),destination};
   writeFileSync(path,'# Changed');
-  assert.equal(f.app.readMessageFile(input).bytes.toString(),'# Delivered');
+  const linkedSnapshot=f.app.readMessageFile(input);
+  assert.equal(linkedSnapshot.bytes.toString(),'# Delivered');
+  assert.equal(linkedSnapshot.sha256,snapshot!.sha256);
+  assert.deepEqual(linkedSnapshot.attachment,{messageId:snapshot!.messageId,assetId:snapshot!.assetId,revision:snapshot!.revision});
+  assert.equal(linkedSnapshot.sourceLine,undefined);
   assert.deepEqual(await f.app.messageFileInfo(input),{kind:'attachment'});
   await assert.rejects(f.app.messageFileInfo(input,true),/media_scope_denied/);
   const bridge=homerWebBridge(f.app);

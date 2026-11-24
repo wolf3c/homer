@@ -26,7 +26,7 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
   if(m.kind==='init')process.send({kind:'ready',thread:state.threadId,stateInvalidationProtocol:1,webHistoryProtocol:3});
   if(m.kind==='web'){
    let value={...state,credentialPassedToHost};
-   if(m.method==='preview.messageFile')value={filename:'预览.md',mime:'text/markdown',data:Buffer.from('# Preview').toString('base64')};
+   if(m.method==='preview.messageFile')value={filename:'预览.md',mime:'text/markdown',data:Buffer.from('# Preview').toString('base64'),sourceLine:'37:5',sha256:'d'.repeat(64)};
    if(m.method==='preview.messageFileInfo'||m.method==='preview.revealMessageFile')value={method:m.method,source:m.input};
    if(m.method==='preview.open')value={id:'synthetic-page',loading:true};
    if(m.method==='schedules.read')value={input:m.input,credentialPassedToHost};
@@ -58,6 +58,7 @@ test('desktop gateway authenticates Preview and privately supplies a fresh key o
    const post=path=>fetch(event.url+path,{method:'POST',headers:{Connection:'close',Origin:event.url,'Content-Type':'application/json','X-Homer-Desktop-Access':event.desktopAccessToken},body:'{}'});
    const file=await post('/api/preview/message-file');
    assert.equal(file.status,200);assert.equal(file.headers.get('Content-Type'),'text/markdown');assert.match(file.headers.get('Content-Disposition'),/%E9%A2%84%E8%A7%88\.md/);assert.equal(await file.text(),'# Preview');
+   assert.equal(file.headers.get('X-Homer-Source-Line'),'37:5');assert.equal(file.headers.get('X-Homer-Artifact-Hash'),'d'.repeat(64));
    for(const operation of ['info','reveal']){
     const result=await post('/api/preview/message-file/'+operation);
     assert.equal(result.status,200);assert.deepEqual(await result.json(),{source:{},method:operation==='reveal'?'preview.revealMessageFile':'preview.messageFileInfo'});

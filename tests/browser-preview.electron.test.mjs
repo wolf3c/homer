@@ -17,8 +17,9 @@ const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
 test('desktop Preview links enforce source authority and preserve foreground ownership', {timeout:60000},()=>runPreview(true));
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},()=>runPreview(false));
-async function runPreview(linksOnly){
- const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':'.');await mkdir(out,{recursive:true});
+test('desktop Preview locates linked source lines in Markdown and plain text', {timeout:60000},()=>runPreview(false,true));
+async function runPreview(linksOnly,linesOnly=false){
+ const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':linesOnly?'lines':'.');await mkdir(out,{recursive:true});
  const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
@@ -72,6 +73,19 @@ async function runPreview(linksOnly){
   const archivePath=join(await realpath(scratch),'test-build.zip');
   await writeFile(archivePath,Buffer.from([80,75,3,4]));await truncate(archivePath,412*1024*1024);
   f.app.history.record('desktop-archive-fixture',f.app.store.meta('mainThread'),`[打开测试安装包](${pathToFileURL(archivePath).href})`);
+  if(linesOnly){
+   const documentPath=join(scratch,'source.md'),plainPath=join(scratch,'source.txt');
+   const paragraphs=Array.from({length:16},(_,index)=>`第 ${index+1} 段上下文。\n\n`).join('');
+   await writeFile(documentPath,'# 合成产品定义\n\n'+paragraphs+'7. 前一项\n\n'+
+    '8. **工具能力、权限与协作机制对 LLM 透明。** 优先删除不必要的隐性业务限制。\n\n'+paragraphs);
+   await writeFile(plainPath,'A\r\n'.repeat(2000)+'目标文本');
+   const shapes=join(scratch,'shapes.md'),shapeLink=pathToFileURL(shapes).href;
+   await writeFile(shapes,['- 父项','  - 子项甲','  - 子项乙','','| 题 |','| --- |','| 数据 |','','```js','const value = 1;','```','','折行 $x','+y$ 公式正文','','$$','x^2','$$','','- 父项正文','  ## 项内标题','  项内尾段','  - 子项'].join('\n'));
+   const md=pathToFileURL(documentPath).href,html=pathToFileURL(localHtml).href;
+   await writeFile(localHtml,'<!doctype html>\n<meta charset="utf-8">\n<title>源码定位测试</title>\n<h1>页面原样</h1>');
+   f.app.history.record('desktop-line-fixture',f.app.store.meta('mainThread'),
+    `[打开第 37 行](${md}:37:3) · [打开跨段范围](${md}:35-37) · [打开空行](${md}:36) · [打开文本末行](${pathToFileURL(plainPath).href}:2001) · [打开 HTML 源码](${html}:4) · [打开列表范围](${shapeLink}:1-2) · [打开表格与代码范围](${shapeLink}:7-10) · [打开公式段落](${shapeLink}:13-14) · [打开显示公式](${shapeLink}:17) · [打开项内范围](${shapeLink}:21-22) · [打开越界范围](${shapeLink}:9-30)`);
+  }
   const desktopAccessToken='a'.repeat(64);
   web=await createWebServer({bridge:homerWebBridge(f.app),port:0,uiDirectory:resolve(ui),desktopAccessToken});
   const env={...process.env,TEST_ORIGIN:web.url,TEST_ACCESS:desktopAccessToken};delete env.ELECTRON_RUN_AS_NODE;
@@ -81,6 +95,107 @@ async function runPreview(linksOnly){
   const electronExit=new Promise(resolve=>electron.process().once('exit',(code,signal)=>resolve({code,signal})));
   await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
+  if(linesOnly){
+   const panel=host.locator('#canvas-panel'),body=panel.locator('[data-slot=canvas-split-body]');
+   const target=body.locator('[data-preview-source-target]');
+   async function located(text,tag,count=1){
+    await host.waitForFunction(({text,tag,count})=>{
+     const body=document.querySelector('#canvas-panel [data-slot=canvas-split-body]');
+     const target=body?.querySelector('[data-preview-source-target]');
+     if(!target||target.tagName!==tag||!target.textContent.includes(text))return false;
+     const box=target.getBoundingClientRect(),view=body.getBoundingClientRect();
+     return box.top>=view.top && box.top<view.bottom && body.querySelectorAll('[data-preview-source-target]').length===count;
+    },{text,tag,count},{timeout:3500});
+   }
+   const open=host.getByRole('link',{name:'打开第 37 行',exact:true});
+   await open.click();
+   await panel.getByText('源文件第 37 行',{exact:true}).waitFor({timeout:3500});
+   await located('工具能力、权限与协作机制','P');
+   await host.screenshot({path:join(out,'markdown-wide.png')});
+   const tabCount=await panel.getByRole('tab').count();
+   await body.evaluate(node=>node.scrollTop=0);
+   const reread=host.waitForResponse(response=>new URL(response.url()).pathname==='/api/preview/message-file');
+   await open.focus();await open.press('Enter');
+   assert.equal((await reread).status(),200);
+   await located('工具能力、权限与协作机制','P');
+   assert.equal(await panel.getByRole('tab').count(),tabCount);
+   await electron.evaluate(()=>testWindow.setContentSize(760,800));
+   await panel.getByRole('button',{name:'收起预览',exact:true}).click();
+   await open.focus();await open.press('Enter');
+   await located('工具能力、权限与协作机制','P');
+   await host.screenshot({path:join(out,'markdown-narrow.png')});
+   async function openOther(name){
+    await panel.getByRole('button',{name:'收起预览',exact:true}).click();
+    await host.getByRole('link',{name,exact:true}).click();
+   }
+   await openOther('打开跨段范围');
+   await panel.getByText('源文件第 35–37 行',{exact:true}).waitFor({timeout:3500});
+   await located('前一项','P',2);
+   assert.match(await target.first().textContent(),/前一项/);
+   assert.match(await target.last().textContent(),/工具能力/);
+   await host.screenshot({path:join(out,'range-narrow.png')});
+   await panel.getByRole('button',{name:'查看源码',exact:true}).click();
+   await located('7. 前一项\n\n8. **工具能力','MARK');
+   assert.match(await target.textContent(),/^7\. 前一项[\s\S]*隐性业务限制。$/);
+   await openOther('打开列表范围');
+   await located('父项','SPAN',2);
+   assert.match(await target.last().textContent(),/子项甲/);
+   assert.doesNotMatch(await target.allTextContents().then(values=>values.join(' ')),/子项乙/);
+   await openOther('打开表格与代码范围');
+   await located('数据','TR',2);
+   assert.match(await target.last().textContent(),/const value = 1/);
+   await openOther('打开公式段落');
+   await located('公式正文','P');
+   await openOther('打开显示公式');
+   await located('x','SPAN');
+   await openOther('打开项内范围');
+   await located('项内标题','H2',2);
+   assert.match(await target.last().textContent(),/项内尾段/);
+   await openOther('打开越界范围');
+   await panel.getByText('第 9–30 行超出范围（共 23 行）',{exact:true}).waitFor();
+   assert.equal(await target.count(),0);
+   await openOther('打开空行');
+   await located('','MARK');
+   await panel.getByText('源文件第 36 行',{exact:true}).waitFor({timeout:3500});
+   assert.equal(await target.textContent(),'');
+   await openOther('打开文本末行');
+   await located('目标文本','MARK');
+   assert.equal(await body.locator('pre').evaluate(node=>node.childElementCount),1);
+   assert.equal(await body.locator('pre').textContent(),'A\r\n'.repeat(2000)+'目标文本');
+   const fileRoute='**/api/preview/message-file';
+   let release,entered;
+   const hold=new Promise(resolve=>{release=resolve;});
+   const seen=new Promise(resolve=>{entered=resolve;});
+   const delay=async route=>{
+    if(route.request().postDataJSON()?.destination?.endsWith(':2001')){entered();await hold;}
+    await route.continue().catch(()=>{});
+   };
+   await host.route(fileRoute,delay);
+   try{
+    await openOther('打开文本末行');
+    await seen;
+    await panel.getByRole('tab',{name:'source.md:35-37',exact:true}).click();
+    await located('前一项','P',2);
+    release();await host.unroute(fileRoute,delay);
+    await located('前一项','P',2);
+   }finally{release();await host.unroute(fileRoute,delay);}
+   await openOther('打开 HTML 源码');
+   await located('<h1>页面原样</h1>','MARK');
+   await panel.getByRole('button',{name:'查看页面',exact:true}).click();
+   await until(()=>electron.context().pages().some(page=>page.url().startsWith('homer-preview:')));
+   const page=electron.context().pages().find(page=>page.url().startsWith('homer-preview:'));
+   await page.getByRole('heading',{name:'页面原样',exact:true}).waitFor();
+   const htmlSource=panel.getByRole('tab',{name:'local.html:4',exact:true});
+   await htmlSource.click();
+   await located('<h1>页面原样</h1>','MARK');
+   record('real link clicks locate Markdown, plain text and HTML at desktop and narrow widths, highlight ranges across blocks, repeat in the existing tab and preserve source text');
+   assert.deepEqual(errors,[]);
+   await electron.close();
+   const exit=await electronExit;assert.deepEqual(exit,{code:0,signal:null});
+   clearTimeout(watchdog);electronClosed=true;
+   await writeFile(join(out,'line-report.json'),JSON.stringify({checks,errors,exit,watchdog:false},null,2));
+   return;
+  }
   if(linksOnly){
    await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
    await host.getByText('这个文件未单独交付或链接，无法在预览中打开。',{exact:true}).waitFor();

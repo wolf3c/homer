@@ -183,6 +183,9 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
         if(!desktopAccess)return json(response,403,{error:'message_file_scope_denied'});
         if(!bridge.readMessageFile)return json(response,503,{error:'preview_unavailable'});
         const file=await bridge.readMessageFile(await body(request));
+        if(file.sourceLine)response.setHeader('X-Homer-Source-Line',file.sourceLine);
+        if(file.sha256)response.setHeader('X-Homer-Artifact-Hash',file.sha256);
+        if(file.attachment)response.setHeader('X-Homer-Artifact-Source',encodeURIComponent(JSON.stringify(file.attachment)));
         response.writeHead(200,{'Content-Type':file.mime,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`});
         response.end(file.bytes);return;
       }

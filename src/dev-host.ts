@@ -285,8 +285,8 @@ async function receive(raw: unknown) {
       else if(m.method==='preview.open'&&desktop)value=await bridge.openPreview!(m.input);
       else if(desktop&&(m.method==='preview.messageFileInfo'||m.method==='preview.revealMessageFile'))value=await bridge.messageFileInfo!(m.input,m.method==='preview.revealMessageFile');
       else if(m.method==='preview.messageFile'&&desktop){
-        const {filename,mime,bytes}=await bridge.readMessageFile!(m.input);
-        value={filename,mime,data:bytes.toString('base64')};
+        const {filename,mime,bytes,sourceLine,sha256,attachment}=await bridge.readMessageFile!(m.input);
+        value={filename,mime,data:bytes.toString('base64'),sourceLine,sha256,attachment};
       }
       else if(m.method === 'media.read')value=await bridge.media!.read(m.input);
       else if(m.method === 'media.origin'&&bridge.media?.origin)value=await bridge.media.origin(m.input);
