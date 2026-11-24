@@ -20,16 +20,16 @@ function fixture(choice:'repair'|'defer'|'close',emptyEventReply=false,emptyUser
     assert.equal(read.messages[0].payload.execution.status,'failed');
     assert.equal((await main.call('work_inspect',{taskId})).task.historyState,'visible');
     await main.call('task_update',{taskId,notes:'已核对原始执行失败'});
-    if(choice==='close')await assert.rejects(main.call('archive_work',{taskId:itemId}),/denied|required/);
+    if(choice==='close')assert.equal((await main.call('archive_work',{taskId:itemId})).state,'archived');
     else await main.call('task_update',{taskId:itemId,notes:'已获原工作回报，等待明确执行决定'});
-    await assert.rejects(main.call('worker_open',{taskId:itemId,message:'未经授权就执行'}),/task_not_open|task_authority_source_denied/);
+    if(choice==='close')await assert.rejects(main.call('worker_open',{taskId:itemId}),/task_history_not_visible/);
     handled=true;
    }else if(text.startsWith('现在执行')){
     await main.call('task_update',{taskId:itemId,goal:'修复导出'});
     const args={taskId:itemId,message:'按新用户要求修复导出'};
     const repaired=await main.call('worker_open',args,'repair-open');
     assert.deepEqual(await main.call('worker_open',args,'repair-open'),repaired);
-    assert.equal(host.app.tasks.authority(itemId,2).sourceRequestId,'allow-followup');repairWorker=repaired.workerId;
+    assert.equal(host.app.tasks.version(itemId,2).sourceRequestId,'allow-followup');repairWorker=repaired.workerId;
    }else if(text.startsWith('恢复后查询')){
     const latest=await main.call('work_inspect',{taskId:itemId});
     assert.equal(latest.task.id,itemId);assert.match(latest.task.notes,/等待明确执行决定/);
@@ -54,7 +54,7 @@ for(const choice of ['repair','defer','close'] as const)test('same original Work
  const f=fixture(choice);try{
   await failedOriginal(f);
   assert.equal(f.app.tasks.task(f.taskId).notes,'已核对原始执行失败');
-  assert.equal(f.app.tasks.task(f.itemId).historyState,'visible');
+  assert.equal(f.app.tasks.task(f.itemId).historyState,choice==='close'?'archived':'visible');
   assert.equal(f.app.tasks.version(f.itemId,1).sourceRequestId,'remember');assert.equal(f.app.tasks.version(f.itemId,1).authorityJson,null);
   assert.equal(f.app.tasks.runs(f.itemId).length,0);
   if(choice==='repair'){

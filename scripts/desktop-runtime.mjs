@@ -109,9 +109,9 @@ try{
        if(paths.adoption&&!thread)throw Error('desktop_adoption_original_thread_required');
        try{assertDesktopAdoptionLeasesRecoverable(leases,pid=>!leaseOwnerGone(pid));}
        catch{throw Error(paths.adoption?'desktop_adoption_owner_unknown':'desktop_lease_review_required');}
-       const {READABLE_STORE_SCHEMA_VERSIONS}=await import(pathToFileURL(join(homer,'dist/store.js')).href);
+       const {READABLE_STORE_SCHEMA_VERSIONS,MIGRATABLE_STORE_SCHEMA_VERSIONS}=await import(pathToFileURL(join(homer,'dist/store.js')).href);
        const schema=db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get();
-       legacyBaseline=schema?.value==='8'&&(!thread||!!db.prepare("SELECT 1 FROM meta WHERE key='mainToolsHash'").get());
+       legacyBaseline=MIGRATABLE_STORE_SCHEMA_VERSIONS.includes(schema?.value)&&(schema?.value!=='8'||!thread||!!db.prepare("SELECT 1 FROM meta WHERE key='mainToolsHash'").get());
        if(!legacyBaseline&&!READABLE_STORE_SCHEMA_VERSIONS.includes(schema?.value))throw Error('desktop_schema_incompatible');
      }
    }finally{db.close();}

@@ -12,7 +12,7 @@ test('real WebBridge overview bypasses snapshot/history/files and uses four read
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   const denied=()=>{throw Error('unexpected_history_or_file_access');};
   const app={store:{db,meta:f.store.meta.bind(f.store)},history:{byIds:(_thread:string,ids:string[])=>{assert.deepEqual(ids,[]);return [];}},workerProgress:{revision:0},registerWebSurface(){},snapshot:denied,conversationState:denied,tasks:new Proxy({},{get:denied}),files:new Proxy({},{get:denied})} as unknown as import('../src/service.js').Homer;
-  f.store.db.exec('PRAGMA query_only=ON');const bridge=homerWebBridge(app),overview=await bridge.taskOverview!.list();assert.equal(overview.tasks.length,1);assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT\b/.test(sql)));assert.ok(statements.every(sql=>!/(?:payloadJson|checkpointJson|prompt(?!,1,80))/.test(sql)));
+  f.store.db.exec('PRAGMA query_only=ON');const bridge=homerWebBridge(app),overview=await bridge.taskOverview!.list();assert.equal(overview.tasks.length,1);assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT\b/.test(sql)));assert.ok(statements.every(sql=>!/(?:payloadJson|checkpointJson|prompt(?!,1,80))/.test(sql.replaceAll(/json_(?:extract|type)\(m\.payloadJson,'\$\.workTitle'\)/g,''))));
   statements.length=0;assert.deepEqual(readTaskOverview(db,{view:'archived'}),{tasks:[]});assert.equal(statements.length,1,'empty pages skip all per-task queries');
   statements.length=0;assert.equal((await bridge.taskOverview!.detail(f.taskId)).runs.length,0);assert.equal(statements.length,7);
  }finally{f.close();}
@@ -20,7 +20,7 @@ test('real WebBridge overview bypasses snapshot/history/files and uses four read
 test('one thousand Tasks still use four read-only SELECTs without fabricated child records',()=>{
  const f=overviewFixture();try{
   for(let n=0;n<1000;n++){
-   f.tasks.createTask(f.actor,{operationId:'batch-'+n,goal:'batch '+n,authority:f.authority});
+   f.tasks.createTask(f.actor,{operationId:'batch-'+n,goal:'batch '+n});
   }
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get(),overview=readTaskOverview(db);

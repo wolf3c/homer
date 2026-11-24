@@ -15,18 +15,19 @@ function tool(name: string, description: string, properties: Record<string, unkn
   return {type: 'function', name, description, inputSchema: obj(properties, required)};
 }
 
+const workTitle = {type: 'string', minLength: 1, maxLength: 80, pattern: '\\S'};
 const title = {type: 'string', minLength: 1, maxLength: 80, pattern: '\\S'};
 export const RECURSIVE_TOOLS: Tool[] = [
-  tool('task_create', 'Record the assignment goal without starting execution. For an authorized dispatch, pass the returned taskId to worker_open.', {goal: text, notes: {type: 'string', maxLength: 24000}, title, workingDirectory: str}, ['goal', 'title']),
-  tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, an authorized user-conversation message, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
-  tool('task_update', 'Update goal or notes on a current task, or pause or resume execution. Pause immediately prevents new execution. Its blockers identify live Workers and outstanding effects. Interrupt a Worker separately when needed. A later user request can resume execution, leaving Workers idle until dispatched.',
+  tool('task_create', 'Record the assignment goal without starting execution. To dispatch from a user or background turn, pass the returned taskId to worker_open.', {goal: text, notes: {type: 'string', maxLength: 24000}, title, workingDirectory: str}, ['goal', 'title']),
+  tool('work_inspect', 'Select exactly one taskId, messageId or host-returned operationKey. Read a task and its Worker sessions, a visible message in the same Main conversation, or an operation receipt. With taskId, sourceRequestId selects an original user instruction for review. A receipt or history reference does not authorize replay.', {taskId: str, sourceRequestId: str, messageId: str, operationKey: str}, []),
+  tool('task_update', 'Update goal or notes on a current task, or pause or resume execution. Pause immediately prevents new execution. Its blockers identify live Workers and outstanding effects. Interrupt a Worker separately when needed. Resume reopens a visible paused task and allows eligible queued Runs to start on their accepted versions. Edit goals separately. Notes replace the full text. Read existing notes first and retain conclusions and constraints still needed in later turns.',
     {taskId: str, goal: text, notes: {type: 'string', maxLength: 24000}, action: enumeration('pause', 'resume'), reason: text}, ['taskId']),
-  tool('worker_open', 'Open a Worker on an existing task under the user’s delegation. Omit message to assign its current goal, or provide this Worker’s specific instructions. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, workingDirectory: str, attachments}, ['taskId']),
-  tool('worker_message', 'Message an existing Worker. Steer its executing turn, continue its confirmed idle thread, or retry a confirmed first spawn failure. If unavailable, inspect its state or await its report. No message waits for a busy Worker to finish. Inspect the original receipt after an unknown result.', {workerId: str, message: text, attachments}, ['workerId', 'message']),
+  tool('worker_open', 'Open a Worker on an existing task from a user or background turn, including another task’s report. Optionally name the initial assignment with workTitle. Omit message to assign its current goal, or provide this Worker’s specific instructions. Accepted means queued. Inspect existing sessions and receipts after recovery before retrying.', {taskId: str, message: text, workingDirectory: str, workTitle, attachments}, ['taskId']),
+  tool('worker_message', 'Message an existing Worker, including one on another task. Use workTitle only to name a new assignment on its idle thread. An active steer or first-spawn retry retains the previous title. A confirmed idle Worker can accept a new title after interruption. Steer its executing turn, continue its confirmed idle thread, or retry a confirmed first spawn failure. If unavailable, inspect its state or await its report. No message waits for a busy Worker to finish. Inspect the original receipt after an unknown result.', {workerId: str, message: text, workTitle, attachments}, ['workerId', 'message']),
   tool('worker_read', 'Read original public messages and execution facts for one Worker conversation. Follow nextCursor using after. Select messageId and optionally itemId from nativeMessages to read one original public item. Follow nextOffset using offset for long text.', {workerId: str, after: integer, limit: {type: 'integer', minimum: 1, maximum: 50}, messageId: str, itemId: str, offset: integer}, ['workerId']),
   tool('worker_interrupt', 'Interrupt the selected Worker conversation current execution, retaining history and other sessions. Requested is distinct from confirmed exit. Do not replace or resume an execution whose exit or side effects remain unknown.', {workerId: str, reason: text}, ['workerId']),
-  tool('archive_work', 'Move a current task to archive history, including a record that was never dispatched. Call from a real user turn or an authorized Worker report for this task. Live Workers and unresolved operations block archival. A requested receipt awaits confirmation of this turn.', {taskId: str}),
-  tool('restore_work', 'Restore one exact archived task to visible history under actual user authorization. Does not start execution.', {taskId: str}),
+  tool('archive_work', 'Move a current task to archive history, including a record that was never dispatched. Available in user and background turns. The receipt confirms archival and pause. Existing executions and pending receipts retain their own status. Interrupt separately when the user wants execution stopped.', {taskId: str}),
+  tool('restore_work', 'Restore one exact archived task to visible history from a user or background turn. The task stays paused until explicitly resumed.', {taskId: str}),
 ];
 
 // Only declarations persisted by thread/start belong in the resume fingerprint.
@@ -40,7 +41,6 @@ export function mainToolsForHash(hash: string | undefined): Tool[] {
 
 export type RecursiveToolEffects = {
   rootWorkingDirectory?: () => string;
-  rootAuthority: (actor: Actor) => Authority | undefined;
   prepareAttachments?: (actor:Actor, operationKey:string, inputs:MessageAttachmentInput[], scope:WorkerMessageScope) => AttachmentRef[];
   readMessage?: (actor:Actor,messageId:string) => unknown;
   recoverWorkerMessage?: (run:TaskRun) => Promise<(()=>void)|undefined>;
@@ -163,13 +163,13 @@ export class RecursiveTools {
         title:a.title as string|undefined, workingDirectory:a.workingDirectory===undefined?this.effects.rootWorkingDirectory?.():string(a.workingDirectory,4096)});
     } else if (name === 'worker_open') {
       result=this.tasks.workerOpen(actor,{operationId,taskId:string(a.taskId,200),text:a.message as string|undefined,
-        workingDirectory:a.workingDirectory as string|undefined},prepare,()=>this.effects.rootAuthority(actor));
+        workingDirectory:a.workingDirectory as string|undefined,workTitle:a.workTitle as string|undefined},prepare);
     } else if (name === 'worker_message') {
       const workerId=string(a.workerId,200);
       const recover=this.effects.recoverWorkerMessage;
       const recovery=recover&&this.tasks.workerMessageRecovery(actor,workerId,operationId);
       const apply=recovery&&await recover?.(recovery.run);
-      const receipt=this.tasks.workerMessage(actor,{operationId,workerId,text:string(a.message,24000)},prepare,undefined,
+      const receipt=this.tasks.workerMessage(actor,{operationId,workerId,text:string(a.message,24000),workTitle:a.workTitle as string|undefined},prepare,undefined,
         recovery?{...recovery,apply}:undefined);
       if(receipt.route==='blocked')return receipt;
       result = receipt.route === 'steer' ? await this.effects.steer(receipt) : receipt;
@@ -180,13 +180,11 @@ export class RecursiveTools {
       const mutation = {operationId, taskId, expectedRevision: task.revision};
       if (name === 'task_update') {
         if (a.action !== undefined) {
-          if(a.notes!==undefined||a.goal!==undefined&&a.action!=='resume')throw Error('invalid_tool_arguments');
-          const goal=a.goal===undefined?undefined:string(a.goal,24000);
-          const authority=a.action==='resume'?this.effects.rootAuthority(actor):undefined;
-          result = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume', goal,authority,...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
+          if(a.notes!==undefined||a.goal!==undefined)throw Error('invalid_tool_arguments');
+          result = this.tasks.controlTask(actor, {...mutation, action: a.action as 'pause' | 'resume', ...(a.reason === undefined ? {} : {reason: string(a.reason, 24000)})});
         } else {
           if (a.reason !== undefined || a.goal === undefined && a.notes === undefined) throw Error('invalid_tool_arguments');
-          result = this.tasks.updateTask(actor, {...mutation, patch: {...(a.goal === undefined ? {} : {goal: string(a.goal, 24000)}), ...(a.notes === undefined ? {} : {notes: a.notes as string})}, ...(a.goal === undefined ? {} : {authority: this.effects.rootAuthority(actor)})});
+          result = this.tasks.updateTask(actor, {...mutation, patch: {...(a.goal === undefined ? {} : {goal: string(a.goal, 24000)}), ...(a.notes === undefined ? {} : {notes: a.notes as string})}});
         }
       } else if (name === 'archive_work' || name === 'restore_work') {
         result = this.tasks.archiveHistory(actor, mutation, name === 'archive_work');

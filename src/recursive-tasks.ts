@@ -1,3 +1,4 @@
+import {readWorkAssignments} from './task-overview.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {createHash,randomUUID} from 'node:crypto';
 import type {DatabaseSync} from 'node:sqlite';
@@ -18,12 +19,11 @@ export type Task={id:string;title:string;headVersion:number;notes:string;state:'
 export type TaskVersion={taskId:string;version:number;goal:string;authorityJson:string|null;sourceRequestId:string|null;triggerOpId:string;workingDirectory:string};
 export type TaskRun=Run;
 export type TaskMutation={operationId:string;taskId:string;expectedRevision:number};
-type ArchiveProcesses={working:string;unsettled:string;effects:string};
 export type Worker={workerId:string;taskId:string;threadId:string|null;run:TaskRun};
 export type Operation={id:string;actorAgentId:string;scopeId:string;operationId:string;kind:string;payloadHash:string;state:string;detailsJson:string;responseJson:string|null;revision:number};
 export type AgentMessage={seq:number;id:string;senderAgentId:string;senderRunId:string|null;senderEpoch:number|null;recipientAgentId:string;taskId:string|null;taskVersion:number|null;targetRunId:string|null;kind:string;replyTo:string|null;causationId:string|null;operationKey:string;payloadJson:string};
 export type FileReceipt={path:string;sha256:string;bytes:number;state:'written';operationKey:string};
-export type RecursiveTaskLifecycle={validateActor(actor:Actor):void;validateScheduledSource?(requestId:string):void;validateFileRead?(path:string):void;validateWorkerAttachment?(ref:AttachmentRef,messageId:string):void;reviewExitConfirmed?(run:TaskRun):boolean;unconfirmedWorkerEffects?(threadId:string):boolean;operationConfirmed?(actor:Actor,key:string,kind:string,response:Record<string,unknown>):void};
+export type RecursiveTaskLifecycle={validateActor(actor:Actor):void;validateFileRead?(path:string):void;validateWorkerAttachment?(ref:AttachmentRef,messageId:string):void;reviewExitConfirmed?(run:TaskRun):boolean;unconfirmedWorkerEffects?(threadId:string):boolean;operationConfirmed?(actor:Actor,key:string,kind:string,response:Record<string,unknown>):void};
 export type WorkerMessageScope={taskId:string;version:number;workerId:string;messageId:string;operationId:string};
 type WorkerMessageReceipt={taskId:string;workerId:string;runId:string;version:number;threadId:string|null;reason?:string;messageId?:string;expectedTurnId?:string}&(
  {route:'blocked';state:'blocked';reason:string;status:Run['status'];phase:string}|
@@ -32,7 +32,8 @@ type WorkerMessageReceipt={taskId:string;workerId:string;runId:string;version:nu
 type PrepareAttachments=(operationKey:string,scope:WorkerMessageScope)=>AttachmentRef[];
 export const taskSourceRequestsSql=`SELECT sourceRequestId FROM task_versions WHERE taskId=?
  UNION SELECT json_extract(authorityJson,'$.sourceRequestId') FROM task_versions WHERE taskId=?
- UNION SELECT s.value FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?`;
+ UNION SELECT s.value FROM task_versions v,json_each(v.authorityJson,'$.sourceRequestIds') s WHERE v.taskId=?
+ UNION SELECT sourceRequestId FROM runs WHERE taskId=?`;
 export const RECURSIVE_SCHEMA_VERSION=STORE_SCHEMA_VERSION;
 const id=(kind:string)=>kind+'-'+randomUUID(),json=(value:unknown)=>JSON.stringify(value);
 function canonical(value:unknown):string{if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';if(value&&typeof value==='object')return '{'+Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).filter(([,v])=>v!==undefined).map(([k,v])=>json(k)+':'+canonical(v)).join(',')+'}';return json(value)??'null';}
@@ -77,7 +78,6 @@ export class RecursiveTasks{
  task(taskId:string):Task{const task=this.one<Task>('SELECT * FROM tasks WHERE id=?',taskId);if(!task)throw Error('task_not_found');return task;}
  tasks():Task[]{return this.all('SELECT * FROM tasks ORDER BY rowid');}
  version(taskId:string,version:number):TaskVersion{const v=this.one<TaskVersion>('SELECT * FROM task_versions WHERE taskId=? AND version=?',taskId,version);if(!v)throw Error('task_version_not_found');return v;}
- authority(taskId:string,version:number):Authority{const stored=this.version(taskId,version).authorityJson;if(!stored)throw Error('task_authority_source_denied');return JSON.parse(stored);}
  run(runId:string):TaskRun{const r=this.store.run(runId);if(!r)throw Error('run_not_found');return r;}
  runs(taskId?:string,workerId?:string):TaskRun[]{return this.all('SELECT * FROM runs'+(taskId?' WHERE taskId=?'+(workerId?' AND workerId=?':''):workerId?' WHERE workerId=?':'')+' ORDER BY createdAt,rowid',...(taskId?[taskId]:[]),...(workerId?[workerId]:[]));}
  workers(taskId:string):Worker[]{return this.all<TaskRun>('SELECT r.* FROM runs r WHERE taskId=? AND rowid=(SELECT max(rowid) FROM runs WHERE workerId=r.workerId) ORDER BY createdAt,rowid',taskId).map(run=>({workerId:run.workerId,taskId,threadId:run.threadId,run}));}
@@ -92,7 +92,7 @@ export class RecursiveTasks{
  private readAllowed(actor:Actor,taskId:string){const own=this.actorTask(actor);if(own&&own.id!==taskId)throw Error('agent_scope_denied');}
  private writable(task:Task){if(task.historyState!=='visible')throw Error('task_history_not_visible');if(task.state!=='open')throw Error('task_not_open');}
  private check(actor:Actor,input:TaskMutation){this.requireMain(actor);const task=this.task(input.taskId);if(task.revision!==input.expectedRevision)throw Error('task_revision_conflict');return task;}
- guard(actor:Actor,phases=['executing']){const task=this.actorTask(actor);if(!task||!actor.runId)throw Error('run_required');const run=this.run(actor.runId);this.writable(task);if(run.stopRequestedAt)throw Error('run_stop_requested');this.validateRunAuthority(run);if(!phases.includes(run.phase))throw Error('run_phase_denied');return task;}
+ guard(actor:Actor,phases=['executing'],inFlight=false){const task=this.actorTask(actor);if(!task||!actor.runId)throw Error('run_required');const run=this.run(actor.runId);if(!inFlight)this.writable(task);if(run.stopRequestedAt)throw Error('run_stop_requested');if(!phases.includes(run.phase))throw Error('run_phase_denied');return task;}
  source(actor:Actor,requestId:string){
   this.requireMain(actor);
   const row=this.sourceRecord(actor.agentId,requestId);
@@ -115,29 +115,10 @@ export class RecursiveTasks{
   if(!row)throw Error('task_authority_source_denied');
   return row;
  }
- private trustedSource(actor:Actor,source:string){
-  text(source,200);
-  if(this.table('conversation_inputs'))return this.sourceRecord(actor.agentId,source);
-  if(!this.store.request(source))throw Error('task_authority_source_denied');
-  return {requestId:source};
- }
- validateAuthority(actor:Actor,authority:Authority){
-  this.requireMain(actor);return this.authoritySources(actor,authority);
- }
- private authoritySources(actor:Actor,authority:Authority){
-  if(!authority||typeof authority!=='object')throw Error('task_authority_source_denied');
-  text(authority.description,24000);
-  const sources=[...new Set([authority.sourceRequestId,...(authority.sourceRequestIds??[])])];
-  for(const source of sources)this.trustedSource(actor,source);
-  return sources;
- }
- private validateRunAuthority(run:TaskRun){
-  const authority=this.authority(run.taskId,run.version);
-  if(run.sourceRequestId!==authority.sourceRequestId)throw Error('task_authority_source_denied');
-  this.authoritySources({agentId:this.store.meta('mainAgentId')!},authority);
-  if((run.status==='queued'||run.phase==='starting')&&this.table('worker_interactions')&&this.one(
+ private validateQueuedQuestion(run:TaskRun){
+  if(this.table('worker_interactions')&&this.one(
    `SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN worker_interactions i ON i.id=json_extract(o.detailsJson,'$.questionId')
-    WHERE m.targetRunId=? AND i.state NOT IN ('answered','denied') LIMIT 1`,run.id))throw Error('task_authority_source_denied');
+    WHERE m.targetRunId=? AND i.state NOT IN ('answered','denied') LIMIT 1`,run.id))throw Error('question_not_deliverable');
  }
  private insertOperation(key:string,actor:string,scope:string,operationId:string,kind:string,payload:unknown,state='accepted',details:unknown={}){this.sql('INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,NULL,0)',key,actor,scope,operationId,kind,recursiveHash(payload),state,json(details));}
  private mutation<T extends Record<string,unknown>>(actor:Actor,scope:string,operationId:string,kind:string,payload:unknown,write:(key:string)=>T):T&{operationKey:string}{
@@ -159,54 +140,19 @@ export class RecursiveTasks{
    WHERE m.id=? AND m.recipientAgentId=? AND m.senderAgentId='host' AND r.state IN ('offered','received')
    AND m.kind IN ('task_archived','worker_reply','interaction_required','scheduled_message')`,actor.inputMessageId,actor.agentId);
  }
- scheduledAuthority(actor:Actor):Authority|undefined{
-  const message=this.activeEvent(actor);if(message?.kind!=='scheduled_message')return;
-  const payload=JSON.parse(message.payloadJson),source=JSON.parse(payload.sourceRef);
-  if(payload.instanceId!==actor.agentId||source.instanceId!==actor.agentId||payload.threadId!==this.store.meta('mainThread')||source.threadId!==payload.threadId)throw Error('task_authority_source_denied');
-  for(const requestId of this.validateAuthority(actor,source.authority))this.lifecycle?.validateScheduledSource?.(requestId);
-  return source.authority;
- }
- private creationSource(actor:Actor,authority:Authority){
-  const sources=this.validateAuthority(actor,authority);
-  if(actor.sourceRequestId){
-   if(sources.length!==1||authority.sourceRequestId!==actor.sourceRequestId)throw Error('task_authority_source_denied');
-   return;
-  }
-  const message=this.activeEvent(actor);
-  const scheduled=this.scheduledAuthority(actor);
-  if(scheduled){const allowed=[scheduled.sourceRequestId,...(scheduled.sourceRequestIds??[])];if(sources.some(source=>!allowed.includes(source)))throw Error('task_authority_source_denied');return;}
-  if(!message?.taskId||!message.taskVersion)throw Error('task_authority_source_denied');
-  const task=this.task(message.taskId);
-  if(message.taskVersion!==task.headVersion)throw Error('task_authority_source_denied');
-  if(message.kind==='task_archived'){
-   if(!this.archiveReview(actor))throw Error('task_authority_source_denied');
-  }else if(task.historyState!=='visible'||task.state!=='open'){
-   throw Error('task_authority_source_denied');
-  }
-  const origin=this.authority(task.id,message.taskVersion),allowed=[origin.sourceRequestId,...(origin.sourceRequestIds??[])];
-  if(sources.some(source=>!allowed.includes(source)))throw Error('task_authority_source_denied');
- }
  archiveReview(actor:Actor){
   this.requireMain(actor);const message=this.activeEvent(actor);
   if(message?.kind!=='task_archived'||!message.taskId)return;
   const task=this.task(message.taskId),op=this.operation(message.operationKey),receipt=JSON.parse(op.responseJson??'{}');
-  if(task.historyState!=='archived'||message.taskVersion!==task.headVersion||JSON.parse(message.payloadJson).revision!==task.revision||
-     op.kind!=='archive_work'||op.state!=='confirmed'||op.actorAgentId!==actor.agentId||op.scopeId!==task.id||
-     receipt.taskId!==task.id||receipt.state!=='archived'||receipt.revision!==task.revision)return;
-  const details=JSON.parse(op.detailsJson),version=this.version(task.id,task.headVersion);
-  const authority:Authority|undefined=version.authorityJson?JSON.parse(version.authorityJson):undefined;
-  const sources=authority?this.validateAuthority(actor,authority):[];
-  let sourceRequestId=details.sourceRequestId as string|undefined;
-  if(!sourceRequestId){
-   const report=this.one<AgentMessage>('SELECT * FROM agent_messages WHERE id=?',details.inputMessageId??null);
-   const run=report&&this.verifiedWorkerReply(report);
-   if(!authority||!run||run.taskId!==task.id||run.version>task.headVersion)return;
-   if(run.version!==task.headVersion){this.validateRunAuthority(run);this.reportAuthority(task,run,authority);}
-   sourceRequestId=authority.sourceRequestId;
-  }
-  if(!sources.includes(sourceRequestId)){this.trustedSource(actor,sourceRequestId);sources.push(sourceRequestId);}
-  for(const source of sources)this.lifecycle?.validateScheduledSource?.(source);
-  return {task,sourceRequestId,authority};
+  const latest=this.one<{id:string}>(`SELECT id FROM operations WHERE scopeId=? AND state='confirmed'
+    AND ((kind='archive_work' AND EXISTS(SELECT 1 FROM agent_messages notice WHERE notice.operationKey=operations.id AND notice.kind='task_archived'))
+      OR kind='restore_work' AND (json_extract(detailsJson,'$.expectedRevision') IS NULL OR json_extract(responseJson,'$.revision')=CAST(json_extract(detailsJson,'$.expectedRevision') AS INTEGER)+1))
+    ORDER BY rowid DESC LIMIT 1`,task.id);
+  if(task.historyState!=='archived'||op.kind!=='archive_work'||op.state!=='confirmed'||op.actorAgentId!==actor.agentId||op.scopeId!==task.id||
+     receipt.taskId!==task.id||receipt.state!=='archived'||receipt.revision!==JSON.parse(message.payloadJson).revision||
+     (latest?latest.id!==op.id:receipt.revision!==task.revision))return;
+  const details=JSON.parse(op.detailsJson);
+  return {task,sourceRequestId:typeof details.sourceRequestId==='string'?details.sourceRequestId:undefined,operationKey:op.id};
  }
  private verifiedWorkerReply(message:AgentMessage){
   if(message.kind!=='worker_reply'||message.senderAgentId!=='host'||message.recipientAgentId!==this.store.meta('mainAgentId')||!message.senderRunId)return;
@@ -214,102 +160,38 @@ export class RecursiveTasks{
   if(payload.runId!==run.id||payload.epoch!==message.senderEpoch||run.taskId!==message.taskId||run.version!==message.taskVersion||op.scopeId!==run.taskId||op.kind!=='worker_return'||op.actorAgentId!=='host'||op.state!=='confirmed'||JSON.parse(op.responseJson??'{}').messageId!==message.id)return;
   return run;
  }
- private reportAuthority(task:Task,run:TaskRun,authority:Authority){
-  const prior=this.authority(task.id,run.version),allowed=[authority.sourceRequestId,...(authority.sourceRequestIds??[])];
-  if([prior.sourceRequestId,...(prior.sourceRequestIds??[])].some(source=>!allowed.includes(source))||
-     this.one(`SELECT 1 FROM task_versions v JOIN operations o ON o.id=v.triggerOpId WHERE v.taskId=? AND v.version>? AND o.kind='task_control' AND json_extract(o.detailsJson,'$.action')='resume'`,task.id,run.version))throw Error('task_authority_source_denied');
- }
  authorizeReceiptDelivery(actor:Actor,taskId:string){
   this.requireMain(actor);const message=this.activeEvent(actor);
   if(!message||message.taskId!==taskId||!message.senderRunId||!message.taskVersion)throw Error('task_authority_source_denied');
   const task=this.task(taskId),run=this.run(message.senderRunId),op=this.operation(message.operationKey);
-  if(task.historyState!=='visible'||run.taskId!==taskId||run.version!==message.taskVersion||op.scopeId!==taskId||op.actorAgentId!=='host'||op.state!=='confirmed')throw Error('task_authority_source_denied');
+  if(run.taskId!==taskId||run.version!==message.taskVersion||op.scopeId!==taskId||op.actorAgentId!=='host'||op.state!=='confirmed')throw Error('task_authority_source_denied');
   if(message.kind==='worker_reply'){
    if(!this.verifiedWorkerReply(message))throw Error('task_authority_source_denied');
   }else if(message.kind!=='interaction_required'||op.kind!=='interaction_notice'||op.operationId!=='interaction:'+JSON.parse(message.payloadJson).interactionId)throw Error('task_authority_source_denied');
-  this.validateRunAuthority(run);
-  const authority=this.authority(taskId,task.headVersion);
-  if(message.taskVersion!==task.headVersion){
-   if(message.kind!=='worker_reply')throw Error('task_authority_source_denied');
-   this.validateAuthority(actor,authority);this.reportAuthority(task,run,authority);
-  }
-  return {task,version:task.headVersion,authority};
+  return {task,version:run.version};
  }
- private dispatchAuthority(actor:Actor,task:Task){
-  const authority=this.authority(task.id,task.headVersion);
-  this.validateAuthority(actor,authority);
-  if(actor.sourceRequestId){this.trustedSource(actor,actor.sourceRequestId);return authority;}
-  if(this.scheduledAuthority(actor)){this.creationSource(actor,authority);return authority;}
-  const message=this.activeEvent(actor),created=this.operation(this.version(task.id,1).triggerOpId);
-  if(message?.taskId!==task.id&&(!message||JSON.parse(created.detailsJson).inputMessageId!==message.id))throw Error('task_authority_source_denied');
-  if(message?.kind==='worker_reply'&&message.taskId===task.id&&message.taskVersion!==task.headVersion){
-   const run=this.verifiedWorkerReply(message);if(!run)throw Error('task_authority_source_denied');
-   this.validateRunAuthority(run);this.reportAuthority(task,run,authority);
-   return authority;
-  }
-  this.creationSource(actor,authority);
-  return authority;
+ visibleTask(actor:Actor,taskId:string){
+  this.requireMain(actor);const task=this.task(taskId);
+  if(task.historyState!=='visible')throw Error('task_history_not_visible');
+  return task;
  }
- authorizeTask(actor:Actor,taskId:string){
-  this.requireMain(actor);const task=this.task(taskId);this.writable(task);
-  return {task,authority:this.dispatchAuthority(actor,task)};
- }
- createTask(actor:Actor,input:{operationId:string;goal:string;notes?:string;title?:string;workingDirectory?:string;authority?:Authority}){
+ createTask(actor:Actor,input:{operationId:string;goal:string;notes?:string;title?:string;workingDirectory?:string}){
   this.requireMain(actor);
   return this.mutation(actor,'tasks',input.operationId,'task_create',input,key=>{
-   if(input.authority)this.creationSource(actor,input.authority);
-   else if(actor.sourceRequestId)this.trustedSource(actor,actor.sourceRequestId);
    text(input.goal);
    if(typeof (input.notes??'')!=='string'||(input.notes??'').length>24000)throw Error('task_invalid_input');
    const taskId=id('task'),now=Date.now(),title=input.title??defaultTaskTitle(input.goal);
    text(title,200);
    this.sql("INSERT INTO tasks VALUES(?,?,1,?,'open',1,'visible',?,?)",taskId,title,input.notes??'',now,now);
-   this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,input.authority?json(input.authority):null,
-     actor.sourceRequestId??input.authority?.sourceRequestId??null,key,directory(input.workingDirectory??this.files.workspace));
+   this.sql('INSERT INTO task_versions VALUES(?,1,?,?,?,?,?)',taskId,input.goal,null,
+     actor.sourceRequestId??null,key,directory(input.workingDirectory??this.files.workspace));
    return {taskId,version:1,revision:1,state:'open'};
   });
  }
- private sourceSequence(actor:Actor,source:string){
-  // Revoked history still establishes chronology, never execution authority.
-  const row=this.one<{seq:number}>(`SELECT m.seq FROM agent_messages m WHERE m.kind='user_input'
-    AND m.senderAgentId=? AND m.recipientAgentId=? AND json_extract(m.payloadJson,'$.requestId')=?`,
-    'user:'+actor.agentId,actor.agentId,source)
-    ??(!this.table('conversation_inputs')?this.one<{seq:number}>('SELECT rowid seq FROM requests WHERE id=?',source):undefined);
-  if(!row)throw Error('task_authority_source_denied');
-  return row.seq;
- }
- private bindRequirements(actor:Actor,task:Task,authority:Authority|undefined,strict:boolean){
-  const source=actor.sourceRequestId;
-  if(!source||authority&&authority.sourceRequestId!==source)throw Error('task_authority_source_denied');
-  const version=this.version(task.id,task.headVersion),prior:Authority|null=JSON.parse(version.authorityJson??'null');
-  const priorSources=prior?[prior.sourceRequestId,...(prior.sourceRequestIds??[])]:[];
-  const previous=[...new Set([version.sourceRequestId,...priorSources].filter((id):id is string=>!!id))];
-  if((prior||strict)&&!authority)throw Error('task_authority_source_denied');
-  this.trustedSource(actor,source);
-  const sourceRequestIds=[...new Set([...(authority?.sourceRequestIds??[]),...(strict?[]:priorSources)])].filter(id=>id!==source);
-  const bound=authority?{sourceRequestId:source,description:authority.description,...(sourceRequestIds.length?{sourceRequestIds}:{})}:null;
-  if(bound&&this.validateAuthority(actor,bound).some(id=>id!==source&&!previous.includes(id)))throw Error('task_authority_source_denied');
-  const sequence=this.sourceSequence(actor,source);
-  if(!previous.length){
-   const registration=this.one<{seq:number}>(`SELECT m.seq FROM operations o JOIN agent_messages m ON m.id=json_extract(o.detailsJson,'$.inputMessageId') WHERE o.id=?`,version.triggerOpId);
-   if(registration&&sequence<registration.seq)throw Error('task_authority_source_denied');
-  }
-  if(previous.some(id=>strict?sequence<=this.sourceSequence(actor,id):sequence<this.sourceSequence(actor,id)))throw Error('task_authority_source_denied');
-  if(strict){
-   const end=this.one<{source:string|null;seq:number|null}>(`SELECT json_extract(o.detailsJson,'$.sourceRequestId') source,m.seq
-    FROM operations o LEFT JOIN agent_messages m ON m.id=json_extract(o.detailsJson,'$.inputMessageId')
-    WHERE o.scopeId=? AND o.state='confirmed' AND ((o.kind='archive_work' AND json_extract(o.responseJson,'$.state')='archived') OR (o.kind='task_control' AND json_extract(o.responseJson,'$.state')='paused'))
-    ORDER BY o.rowid DESC LIMIT 1`,task.id);
-   if(end&&(end.seq!==null&&sequence<=end.seq||end.source&&sequence<=this.sourceSequence(actor,end.source)))throw Error('task_authority_source_denied');
-  }
-  return prior||strict?bound:null;
- }
- private updateRequirements(actor:Actor,task:Task,goal:string,authority:Authority|undefined,key:string,strict=false){
+ private updateRequirements(actor:Actor,task:Task,goal:string,key:string){
   text(goal);
-  const bound=this.bindRequirements(actor,task,authority,strict);
-  this.cancelQuestions(task.id);
   const version=task.headVersion+1;
-  this.sql('INSERT INTO task_versions VALUES(?,?,?,?,?,?,?)',task.id,version,goal,bound?json(bound):null,actor.sourceRequestId!,key,this.version(task.id,task.headVersion).workingDirectory);
+  this.sql('INSERT INTO task_versions VALUES(?,?,?,?,?,?,?)',task.id,version,goal,null,actor.sourceRequestId??null,key,this.version(task.id,task.headVersion).workingDirectory);
   return version;
  }
  listTasks(actor:Actor,query:{includeArchived?:boolean;threadId?:string;cursor?:string;limit?:number}={}){
@@ -319,31 +201,32 @@ export class RecursiveTasks{
  }
  readTask(actor:Actor,taskId:string){
   this.readAllowed(actor,taskId);const task=this.task(taskId),version=this.version(taskId,task.headVersion);
-  const sourceRequestIds=this.all<{sourceRequestId:string}>(taskSourceRequestsSql,taskId,taskId,taskId).map(row=>row.sourceRequestId);
+  const sourceRequestIds=this.all<{sourceRequestId:string}>(taskSourceRequestsSql,taskId,taskId,taskId,taskId).map(row=>row.sourceRequestId);
   const current=this.workers(taskId),summaries=this.runSummaries(current.map(worker=>worker.run),current.map(worker=>worker.run.id)),workers=current.map((worker,index)=>({...worker,run:summaries[index]!}));
-  return {task,version,goal:version.goal,sourceRequestIds:sourceRequestIds.filter(Boolean),workers};
+  const assignments=readWorkAssignments(this.db,taskId);
+  return {task,version,trigger:JSON.parse(this.operation(version.triggerOpId).detailsJson),goal:version.goal,sourceRequestIds:sourceRequestIds.filter(Boolean),workers:workers.map(worker=>({
+   ...worker,assignments:assignments.filter(item=>item.workerId===worker.workerId),
+  }))};
  }
- updateTask(actor:Actor,input:TaskMutation&{patch:{goal?:string;notes?:string};authority?:Authority}){
+ updateTask(actor:Actor,input:TaskMutation&{patch:{goal?:string;notes?:string}}){
   this.requireMain(actor);return this.mutation(actor,input.taskId,input.operationId,'task_update',input,key=>{
    const task=this.check(actor,input);const patch=input.patch;if(!patch||!Object.keys(patch).length||Object.keys(patch).some(key=>!['goal','notes'].includes(key)))throw Error('task_invalid_patch');
    if(patch.notes!==undefined&&(typeof patch.notes!=='string'||patch.notes.length>24000))throw Error('task_invalid_patch');if(task.historyState!=='visible')throw Error('task_history_not_visible');let version=task.headVersion;
    if(patch.goal!==undefined){
-    version=this.updateRequirements(actor,task,patch.goal,input.authority,key);
+    version=this.updateRequirements(actor,task,patch.goal,key);
    }
    this.sql('UPDATE tasks SET headVersion=?,notes=?,revision=revision+1,updatedAt=? WHERE id=?',version,patch.notes??task.notes,Date.now(),task.id);
    this.details(key,{action:'update',taskId:task.id,version});return {taskId:task.id,version,revision:task.revision+1,state:'updated',targets:[]};
   });
  }
  questionCurrent(item:{runId:string;threadId:string;turnId:string;runEpoch?:number;taskVersion?:number}){
-  const run=this.run(item.runId),task=this.task(run.taskId);
-  const current=this.worker(run.workerId).run;
-  // Recovery fences the old process by advancing its epoch after saving the terminal output.
-  const turnEpoch=run.status==='succeeded'?(JSON.parse(run.checkpointJson??'{}').outputEpoch??run.epoch):run.epoch;
-  return current.threadId===run.threadId && current.version===run.version && !current.stopRequestedAt
-   && ['queued','running','succeeded'].includes(current.status) && task.state==='open' && task.historyState==='visible'
-   && task.headVersion===item.taskVersion && run.version===item.taskVersion && turnEpoch===item.runEpoch
+  const run=this.run(item.runId);
+  // Recovery may fence the original epoch after saving terminal output.
+  const checkpoint=JSON.parse(run.checkpointJson??'{}');
+  const turnEpoch=checkpoint.outputEpoch??run.epoch;
+  return run.version===item.taskVersion && turnEpoch===item.runEpoch
    && run.threadId===item.threadId && run.turnId===item.turnId && !run.stopRequestedAt
-   && (run.status==='running'||run.status==='succeeded');
+   && (run.status==='running'||run.status==='succeeded'||(run.status==='failed'&&run.phase==='ended'));
  }
  questionDelivery(id:string,taskId:string){
   const key='question:'+id;
@@ -363,8 +246,8 @@ export class RecursiveTasks{
   this.sql('INSERT INTO agent_messages(id,senderAgentId,senderRunId,senderEpoch,recipientAgentId,taskId,taskVersion,targetRunId,kind,operationKey,payloadJson) VALUES(?,?,?,?,?,?,?,?,?,?,?)',messageId,actor.agentId,actor.runId??null,actor.epoch??null,to,taskId,version,target,kind,key,json(payload));
   this.sql("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES(?,?,'pending')",messageId,to);return messageId;
  }
- private newRun(task:Task,workerId:string,messageId:string,replace:string|null=null,workingDirectory?:string){
-  const runId=this.store.run(workerId)?id('run'):workerId,version=this.version(task.id,task.headVersion),authority=this.authority(task.id,task.headVersion),previous=this.one<TaskRun>('SELECT * FROM runs WHERE workerId=? ORDER BY rowid DESC LIMIT 1',workerId);
+ private newRun(actor:Actor,task:Task,workerId:string,messageId:string,replace:string|null=null,workingDirectory?:string){
+  const runId=this.store.run(workerId)?id('run'):workerId,version=this.version(task.id,task.headVersion),previous=this.one<TaskRun>('SELECT * FROM runs WHERE workerId=? ORDER BY rowid DESC LIMIT 1',workerId);
   if(this.activeRun(workerId))throw Error('worker_busy');
   if(this.one("SELECT 1 FROM operations WHERE kind='worker_steer' AND json_extract(detailsJson,'$.workerId')=? AND state IN ('accepted','dispatching','uncertain')",workerId))throw Error('operation_uncertain');
   if(previous&&(this.exitUnconfirmed(previous)||this.store.meta('lease:'+previous.id)||this.lifecycle?.reviewExitConfirmed?.(previous)===false))throw Error('run_stop_unconfirmed');
@@ -373,16 +256,16 @@ export class RecursiveTasks{
   const prompt=JSON.parse(message.payloadJson).text;
   const cwd=directory(workingDirectory??previous?.workingDirectory??version.workingDirectory);
   this.sql("INSERT INTO runs(id,taskId,workerId,version,sourceRequestId,goal,prompt,status,phase,epoch,threadId,replacesRunId,workingDirectory,createdAt) VALUES(?,?,?,?,?,?,?,'queued','ready',?,?,?,?,?)",
-    runId,task.id,workerId,task.headVersion,authority.sourceRequestId,version.goal,prompt,previous?previous.epoch+1:0,previous?.threadId??null,replace,cwd,Date.now());
+    runId,task.id,workerId,task.headVersion,actor.sourceRequestId??null,version.goal,prompt,previous?previous.epoch+1:0,previous?.threadId??null,replace,cwd,Date.now());
   this.sql('UPDATE agent_messages SET targetRunId=? WHERE id=?',runId,messageId);return runId;
  }
- private workerInput(actor:Actor,key:string,task:Task,workerId:string,input:{operationId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,target:string|null=null,version=task.headVersion){
+ private workerInput(actor:Actor,key:string,task:Task,workerId:string,input:{operationId:string;text:string;workTitle?:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,target:string|null=null,version=task.headVersion){
   const messageId=id('message');
   const attachments=prepare?.(key,{taskId:task.id,version,workerId,messageId,operationId:input.operationId})??input.attachments;
   return this.message(actor,key,recipient(workerId),task.id,version,'worker_input',
-    {workerId,text:input.text,...(attachments?.length?{attachments}:{})},target,messageId);
+    {workerId,text:input.text,...(input.workTitle?{workTitle:text(input.workTitle,80)}:{}),...(attachments?.length?{attachments}:{})},target,messageId);
  }
- workerOpen(actor:Actor,input:{operationId:string;taskId:string;text?:string;workingDirectory?:string;authority?:Authority;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,resolveAuthority?:()=>Authority|undefined){
+ workerOpen(actor:Actor,input:{operationId:string;taskId:string;text?:string;workTitle?:string;workingDirectory?:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments){
   this.requireMain(actor);
   if(Object.hasOwn(input,'title'))throw Error('invalid_tool_arguments');
   const taskId=text(input.taskId,200);
@@ -390,24 +273,8 @@ export class RecursiveTasks{
    const task=this.task(taskId);
    this.writable(task);
    const version=this.version(taskId,task.headVersion),message=text(input.text===undefined?version.goal:input.text);
-   if(version.authorityJson===null){
-    // creationSource below validates the shared source when registration and dispatch use one user request.
-    if(!actor.sourceRequestId||actor.sourceRequestId!==version.sourceRequestId){
-     const creationInput=JSON.parse(this.operation(version.triggerOpId).detailsJson).inputMessageId;
-     if(version.sourceRequestId)this.trustedSource(actor,version.sourceRequestId);
-     if(actor.sourceRequestId){
-      const creationSequence=version.sourceRequestId?this.sourceSequence(actor,version.sourceRequestId):
-        this.one<{seq:number}>('SELECT seq FROM agent_messages WHERE id=?',creationInput)?.seq;
-      if(creationSequence!==undefined&&this.sourceSequence(actor,actor.sourceRequestId)<creationSequence)throw Error('task_authority_source_denied');
-     }else if(!creationInput||creationInput!==actor.inputMessageId)throw Error('task_authority_source_denied');
-    }
-    const authority=input.authority??resolveAuthority?.();
-    if(!authority)throw Error('task_authority_source_denied');
-    this.creationSource(actor,authority);
-    this.sql('UPDATE task_versions SET authorityJson=?,sourceRequestId=coalesce(sourceRequestId,?) WHERE taskId=? AND version=?',json(authority),authority.sourceRequestId,taskId,task.headVersion);
-   }else this.dispatchAuthority(actor,task);
    const workerId=id('run'),messageId=this.workerInput(actor,key,task,workerId,{...input,text:message},prepare);
-   const runId=this.newRun(task,workerId,messageId,null,input.workingDirectory);
+   const runId=this.newRun(actor,task,workerId,messageId,null,input.workingDirectory);
    return {taskId,workerId,runId,messageId,version:task.headVersion,state:'queued'};
   });
  }
@@ -420,17 +287,17 @@ export class RecursiveTasks{
   const {run,taskId}=this.worker(workerId);
   if(this.one('SELECT 1 FROM operations WHERE actorAgentId=? AND scopeId=? AND operationId=?',actor.agentId,taskId,operationId))return;
   if(run.phase!=='ended'||run.stopRequestedAt!==null||this.stopExitUnconfirmed(run)||!this.workerEffectUnconfirmed(run)||this.workerMessageUnresolved(taskId,workerId))return;
-  const {task}=this.authorizeTask(actor,taskId);
+  const task=this.task(taskId);
+  this.writable(task);
   return {run,version:task.headVersion};
  }
- workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,questionId?:string,recovery?:{run:TaskRun;version:number;apply?:()=>void}){
+ workerMessage(actor:Actor,input:{operationId:string;workerId:string;text:string;workTitle?:string;attachments?:AttachmentRef[]},prepare?:PrepareAttachments,questionId?:string,recovery?:{run:TaskRun;version:number;apply?:()=>void},questionRunId?:string){
   this.requireMain(actor);const worker=this.worker(input.workerId);
   return this.mutation<WorkerMessageReceipt>(actor,worker.taskId,input.operationId,'worker_message',input,key=>{
    const task=this.task(worker.taskId),run=this.worker(worker.workerId).run;
    this.writable(task);
    // Host-bound question replies carry the complete user answer and Main's note.
    text(input.text,questionId?1024*1024:24000);
-   this.dispatchAuthority(actor,task);
    if(questionId)this.details(key,{questionId});
    const facts={taskId:task.id,workerId:run.workerId,runId:run.id,version:run.version,status:run.status,phase:run.phase,threadId:run.threadId};
    const blocked=(reason:string):WorkerMessageReceipt=>{
@@ -444,9 +311,8 @@ export class RecursiveTasks{
    if(run.phase==='uncertain')return blocked('run_stop_unconfirmed');
    if(active(run)){
     if(run.stopRequestedAt!==null)return blocked('worker_stop_requested');
-    if(run.status!=='running'||run.phase!=='executing'||!run.threadId||!run.turnId)return blocked('worker_not_ready');
-    this.validateRunAuthority(run);
-    const messageId=this.workerInput(actor,key,task,run.workerId,input,prepare,run.id,run.version);
+    if(run.status!=='running'||run.phase!=='executing'||!run.threadId||!run.turnId||questionRunId&&questionRunId!==run.id)return blocked('worker_not_ready');
+    const messageId=this.workerInput(actor,key,task,run.workerId,{...input,workTitle:undefined},prepare,run.id,run.version);
     this.sql("UPDATE operations SET kind='worker_steer' WHERE id=?",key);
     this.details(key,{toolName:'worker_message',workerId:run.workerId,runId:run.id,epoch:run.epoch,threadId:run.threadId,expectedTurnId:run.turnId,messageId});
     return {...facts,route:'steer',state:'requested',messageId,epoch:run.epoch,expectedTurnId:run.turnId};
@@ -457,14 +323,13 @@ export class RecursiveTasks{
    if(this.workerEffectUnconfirmed(run))return blocked('operation_uncertain');
    const neverSpawned=run.status==='failed'&&run.errorCode==='engine_spawn_failed'&&run.pid===null&&run.turnId===null;
    if(!run.threadId&&!neverSpawned)return blocked('worker_thread_unavailable');
-   if(!questionId)this.cancelQuestions(task.id,run.workerId);
-   const messageId=this.workerInput(actor,key,task,run.workerId,input,prepare);
-   const runId=this.newRun(task,run.workerId,messageId,run.status==='interrupted'||neverSpawned?run.id:null);
+   const messageId=this.workerInput(actor,key,task,run.workerId,neverSpawned?{...input,workTitle:undefined}:input,prepare);
+   const runId=this.newRun(actor,task,run.workerId,messageId,run.status==='interrupted'||neverSpawned?run.id:null);
    return {taskId:task.id,workerId:run.workerId,runId,version:task.headVersion,threadId:run.threadId,route:'followup',state:'queued',messageId};
   });
  }
  workerAttachments(actor:Actor){
-  const task=this.guard(actor,['executing','rpc_wait']),run=this.run(actor.runId!);
+  const task=this.guard(actor,['executing','rpc_wait'],true),run=this.run(actor.runId!);
   const rows=this.all<{messageId:string;refs:string}>(`SELECT m.id messageId,json_extract(m.payloadJson,'$.attachments') refs
    FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
    JOIN runs target ON target.id=m.targetRunId AND target.workerId=? AND target.threadId=?
@@ -485,7 +350,6 @@ export class RecursiveTasks{
  offeredWorkerAttachments(runId:string){
   const run=this.run(runId);
   if(run.status!=='running'||run.phase!=='starting'||!this.canStart(run)||run.stopRequestedAt)throw Error('run_phase_denied');
-  this.validateRunAuthority(run);
   const rows=this.all<{id:string;payloadJson:string}>(`SELECT m.id,m.payloadJson FROM agent_messages m
    JOIN agent_receipts r ON r.messageId=m.id AND r.recipientAgentId=m.recipientAgentId
    WHERE m.kind='worker_input' AND m.targetRunId=? AND m.taskId=? AND m.taskVersion=? AND m.recipientAgentId=?
@@ -525,8 +389,8 @@ export class RecursiveTasks{
    for(;;){
     const run=runId?this.run(runId):this.nextQueuedRun();
     if(!run||runId&&(run.status!=='queued'||run.stopRequestedAt!==null||!this.canStart(run)))return;
-    try{this.validateRunAuthority(run);}catch(error){
-     if(!(error instanceof Error)||error.message!=='task_authority_source_denied')throw error;
+    try{this.validateQueuedQuestion(run);}catch(error){
+     if(!(error instanceof Error)||error.message!=='question_not_deliverable')throw error;
      const closed=!this.stopExitUnconfirmed(run);
      this.finishSegment(run,run.epoch,{status:'failed',text:'',errorCode:error.message},closed);
      if(closed)this.sql("UPDATE agent_receipts SET state='rejected',revision=revision+1 WHERE state='pending' AND messageId IN (SELECT id FROM agent_messages WHERE targetRunId=?)",run.id);
@@ -537,15 +401,15 @@ export class RecursiveTasks{
     this.sql("UPDATE agent_receipts SET state='offered',offeredRunId=?,offeredEpoch=?,revision=revision+1 WHERE state='pending' AND messageId IN (SELECT id FROM agent_messages WHERE targetRunId=? AND recipientAgentId=?)",run.id,run.epoch,run.id,recipient(run.workerId));return this.run(run.id);
    }
   });
-  if(runId&&denied)throw Error('task_authority_source_denied');
+  if(runId&&denied)throw Error('question_not_deliverable');
   return claimed;
  }
- guardStarting(runId:string,epoch:number){
-  const run=this.run(runId);if(run.status!=='running'||run.epoch!==epoch||run.phase!=='starting'||run.stopRequestedAt||!this.canStart(run))throw Error('run_epoch_or_phase_conflict');
-  this.validateRunAuthority(run);return run;
+ guardStarting(runId:string,epoch:number,acknowledging=false){
+  const run=this.run(runId);if(run.status!=='running'||run.epoch!==epoch||run.phase!=='starting'||run.stopRequestedAt||!acknowledging&&!this.canStart(run))throw Error('run_epoch_or_phase_conflict');
+  if(!acknowledging)this.validateQueuedQuestion(run);return run;
  }
  bind(runId:string,epoch:number,threadId:string,turnId:string){
-  const bind=()=>{const run=this.guardStarting(runId,epoch);text(threadId,200);text(turnId,200);
+  const bind=()=>{const run=this.guardStarting(runId,epoch,true);text(threadId,200);text(turnId,200);
    if(run.threadId&&run.threadId!==threadId||this.one('SELECT 1 FROM runs WHERE threadId=? AND workerId<>? LIMIT 1',threadId,run.workerId))throw Error('worker_thread_conflict');
    this.sql("UPDATE runs SET threadId=?,turnId=?,phase='executing',stateRevision=stateRevision+1,checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.executionAcknowledged',1) WHERE id=?",threadId,turnId,run.id);
    this.sql("UPDATE agent_receipts SET state='received',offeredTurnId=?,revision=revision+1 WHERE offeredRunId=? AND offeredEpoch=? AND state='offered'",turnId,run.id,epoch);
@@ -559,10 +423,11 @@ export class RecursiveTasks{
  charge(runId:string,epoch:number,ms:number){const run=this.run(runId);if(run.epoch===epoch&&Number.isFinite(ms)&&ms>=0)this.sql('UPDATE runs SET activeMs=activeMs+? WHERE id=?',ms,runId);}
  markSteer(operationKey:string,state:'dispatching'|'received'|'failed'|'uncertain'){
   this.store.transaction(()=>{const op=this.operation(operationKey);if(op.kind!=='worker_steer')throw Error('operation_kind_conflict');if(['confirmed','cancelled','failed'].includes(op.state))return;const details=JSON.parse(op.detailsJson),run=this.run(details.runId);
-   const current=run.epoch===details.epoch&&run.turnId===details.expectedTurnId&&run.threadId===details.threadId&&!run.stopRequestedAt&&this.canStart(run);
+   const current=run.epoch===details.epoch&&run.turnId===details.expectedTurnId&&run.threadId===details.threadId&&!run.stopRequestedAt;
    if((state==='dispatching'||state==='received')&&!current)throw Error('message_target_stale');
+   if(state==='received'&&op.state!=='dispatching')throw Error('operation_state_conflict');
    if(state==='dispatching'){
-    if(run.status!=='running'||run.phase!=='executing')throw Error('message_target_stale');this.validateRunAuthority(run);
+    if(run.status!=='running'||run.phase!=='executing'||!this.canStart(run))throw Error('message_target_stale');
     const message=this.one<AgentMessage>('SELECT * FROM agent_messages WHERE id=?',details.messageId)!;
     for(const ref of JSON.parse(message.payloadJson).attachments??[])this.lifecycle?.validateWorkerAttachment?.(ref,message.id);
    }
@@ -599,7 +464,7 @@ export class RecursiveTasks{
  private finishSegment(run:TaskRun,epoch:number,terminal:TurnResult,engineClosed:boolean){
   if(run.epoch!==epoch||run.stopRequestedAt)return;if(!active(run))return this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND kind='worker_return' AND json_extract(responseJson,'$.messageId') IN (SELECT id FROM agent_messages WHERE senderRunId=?) ORDER BY rowid DESC LIMIT 1",run.taskId,run.id)?.responseJson?JSON.parse(this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND kind='worker_return' AND json_extract(responseJson,'$.messageId') IN (SELECT id FROM agent_messages WHERE senderRunId=?) ORDER BY rowid DESC LIMIT 1",run.taskId,run.id)!.responseJson!):undefined;
   const response=this.saveReturn(run,terminal,engineClosed),status=engineClosed?(terminal.status==='completed'?'succeeded':terminal.status==='failed'?'failed':'interrupted'):'interrupted';
-  this.sql('UPDATE runs SET status=?,phase=?,endedAt=?,errorCode=?,stateRevision=stateRevision+1 WHERE id=?',status,engineClosed?'ended':'uncertain',Date.now(),terminal.errorCode??(engineClosed?null:'engine_stop_unconfirmed'),run.id);if(engineClosed)this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1) WHERE id=?",run.id);this.cancelInteractions(run.id,'worker_turn_ended',status==='succeeded');return response;
+  this.sql('UPDATE runs SET status=?,phase=?,endedAt=?,errorCode=?,stateRevision=stateRevision+1 WHERE id=?',status,engineClosed?'ended':'uncertain',Date.now(),terminal.errorCode??(engineClosed?null:'engine_stop_unconfirmed'),run.id);if(engineClosed)this.sql("UPDATE runs SET checkpointJson=json_set(coalesce(checkpointJson,'{}'),'$.workerExitConfirmed',1) WHERE id=?",run.id);this.cancelInteractions(run.id,'worker_turn_ended',engineClosed&&['completed','failed'].includes(terminal.status));return response;
  }
  failRun(runId:string,epoch:number,code:string,uncertain=false){return this.endSegment(runId,epoch,{status:'failed',text:'',errorCode:code},!uncertain);}
  private cancelInteractions(runId:string,code:string,preserveQuestions=false){if(this.table('worker_interactions'))this.sql("UPDATE worker_interactions SET state='cancelled',code=?,updatedAt=? WHERE runId=? AND state IN ('pending_main','pending_user') AND (?=0 OR source<>'ask_main')",code,Date.now(),runId,Number(preserveQuestions));}
@@ -610,9 +475,10 @@ export class RecursiveTasks{
   for(const run of this.runs()){
    if(!['queued','running'].includes(run.status))continue;
    // A pending reply with no engine owner has never left the queue.
-   if(!pauseOldWork&&run.status==='queued'&&run.phase==='ready'&&run.startedAt===null&&!this.store.meta('lease:'+run.id)&&this.one(
+   if(!pauseOldWork&&this.table('worker_interactions')&&run.status==='queued'&&run.phase==='ready'&&run.startedAt===null&&!this.store.meta('lease:'+run.id)&&this.one(
     `SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN agent_receipts r ON r.messageId=m.id
-     WHERE m.targetRunId=? AND o.kind='worker_message' AND json_extract(o.detailsJson,'$.questionId') IS NOT NULL AND r.state='pending'`,run.id))continue;
+     JOIN worker_interactions i ON i.id=json_extract(o.detailsJson,'$.questionId')
+     WHERE m.targetRunId=? AND o.kind='worker_message' AND i.deliveredAt IS NULL AND i.state IN ('answered','denied') AND r.state='pending'`,run.id))continue;
    this.interruptWorker(run.id);
   }
   this.store.transaction(()=>{if(!pauseOldWork){this.sql("UPDATE agent_receipts SET state='uncertain',revision=revision+1 WHERE state='offered' OR state='received' AND recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId')");this.sql("UPDATE operations SET state='uncertain',revision=revision+1 WHERE state='dispatching'");}});}
@@ -631,26 +497,22 @@ export class RecursiveTasks{
  private unresolved(taskId:string,except=''){
   return this.one<Operation>("SELECT * FROM operations WHERE scopeId=? AND id<>? AND state IN ('accepted','dispatching','uncertain') LIMIT 1",taskId,except);
  }
- controlTask(actor:Actor,input:TaskMutation&{action:'pause'|'resume';reason?:string;goal?:string;authority?:Authority}){
+ controlTask(actor:Actor,input:TaskMutation&{action:'pause'|'resume';reason?:string}){
   this.requireMain(actor);return this.mutation(actor,input.taskId,input.operationId,'task_control',input,key=>{
    const task=this.check(actor,input);if(task.historyState!=='visible')throw Error('task_history_not_visible');if(!['pause','resume'].includes(input.action))throw Error('task_action_invalid');
+   if(Object.hasOwn(input,'goal')||Object.hasOwn(input,'authority'))throw Error('task_action_invalid');
+   if(input.action==='resume'){
+    if(task.state!=='paused')throw Error('task_resume_unconfirmed');
+    this.sql("UPDATE tasks SET state='open',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
+    this.details(key,{action:'resume',taskId:task.id});
+    return {taskId:task.id,version:task.headVersion,revision:task.revision+1,state:'open',targets:[]};
+   }
    const blockers:{reason:string;id?:string;workerId?:string;runId?:string;status?:string;phase?:string}[]=this.runs(task.id)
     .filter(run=>active(run)||this.stopExitUnconfirmed(run)).map(run=>({reason:run.stopRequestedAt!==null?'worker_stop_requested':'run_not_closed',workerId:run.workerId,runId:run.id,status:run.status,phase:run.phase}));
    for(const {run} of this.workers(task.id))if(this.workerEffectUnconfirmed(run))blockers.push({reason:'worker_effect_unconfirmed',workerId:run.workerId,runId:run.id});
-   if(input.action==='pause')this.cancelQuestions(task.id);
    const operation=this.unresolved(task.id,key),interaction=this.unresolvedInteractions(task.id);
    if(operation)blockers.push({reason:'operation_unresolved',id:operation.id});
    if(interaction)blockers.push({reason:'interaction_unresolved',id:interaction.id});
-   if(input.action==='resume'){
-    if(!actor.sourceRequestId)throw Error('task_authority_source_denied');
-    this.trustedSource(actor,actor.sourceRequestId);
-    if(task.state!=='paused'||blockers.length)throw Error('task_resume_unconfirmed');
-    const version=this.updateRequirements(actor,task,input.goal??this.version(task.id,task.headVersion).goal,input.authority,key,true);
-    this.sql("UPDATE tasks SET state='open',headVersion=?,revision=revision+1,updatedAt=? WHERE id=?",version,Date.now(),task.id);
-    this.details(key,{action:'resume',previousVersion:task.headVersion});
-    return {taskId:task.id,version,state:'open',targets:[]};
-   }
-   if(input.goal!==undefined||input.authority)throw Error('task_action_invalid');
    this.details(key,{action:input.action,taskId:task.id});
    const changed=this.sql("UPDATE tasks SET state='paused',revision=revision+1,updatedAt=? WHERE id=? AND state='open'",Date.now(),task.id);
    return {taskId:task.id,version:task.headVersion,revision:task.revision+Number(changed.changes),state:'paused',blockers,targets:[]};
@@ -708,98 +570,28 @@ export class RecursiveTasks{
   return this.table('worker_interactions')?this.one<{id:string}>(`SELECT i.id FROM worker_interactions i JOIN runs r ON r.id=i.runId
     WHERE (?=0 OR i.source<>'ask_main') AND r.taskId=?${workerId?' AND r.workerId=?':''} AND (i.state IN ('pending_main','pending_user') OR i.state IN ('approved','denied','answered') AND i.deliveredAt IS NULL) LIMIT 1`,Number(allowQuestions),taskId,...(workerId?[workerId]:[])):undefined;
  }
- private historyBlockers(task:Task,except:string,allowQuestions=true,processes?:ArchiveProcesses){
-  const blockers:{reason:string;id:string}[]=[];
-  const add=(reason:string,rows:{id:string}[])=>{for(const {id} of rows)blockers.push({reason,id});};
-  add('run_not_closed',this.runs(task.id).filter(run=>active(run)||this.stopExitUnconfirmed(run)));
-  add('worker_effect_unconfirmed',this.workers(task.id).map(worker=>worker.run).filter(run=>this.workerEffectUnconfirmed(run)));
-  add('message_unprocessed',this.all(`SELECT m.id FROM agent_messages m LEFT JOIN agent_receipts r ON r.messageId=m.id WHERE m.taskId=? AND
-    (r.state IS NULL OR r.recipientAgentId<>(SELECT value FROM meta WHERE key='mainAgentId') AND r.state NOT IN ('processed','rejected') OR
-      r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND (r.state NOT IN ('received','rejected') OR r.state='received' AND
-        ${processes?`((m.kind='user_input' AND json_extract(m.payloadJson,'$.terminal') IS NULL) OR (m.kind<>'user_input' AND m.id IN (SELECT value FROM json_each(?))))`:mainInputProcessingSql()}))`,task.id,...(processes?[processes.working]:[])));
-  const interaction=this.unresolvedInteractions(task.id,undefined,allowQuestions);
-  if(interaction)add('interaction_unresolved',[interaction]);
-  const relatedInputs=`SELECT m.id FROM agent_messages m WHERE m.taskId=? OR m.taskId IS NULL AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql})`;
-  add('operation_unresolved',this.all(`SELECT id FROM operations WHERE id<>? AND state IN ('accepted','dispatching','uncertain')
-    AND (scopeId=? OR NOT EXISTS(SELECT 1 FROM tasks WHERE id=operations.scopeId) AND json_extract(detailsJson,'$.inputMessageId') IN (${relatedInputs}))`,except,task.id,task.id,task.id,task.id,task.id));
-  add('source_input_unprocessed',this.all(`SELECT m.id FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId') IN (${taskSourceRequestsSql}) AND (r.state NOT IN ('received','rejected') OR r.state='received' AND (json_extract(m.payloadJson,'$.terminal') IS NULL OR json_extract(m.payloadJson,'$.terminal')='uncertain'))`,task.id,task.id,task.id));
-  if(this.table('media_assets'))add('attachment_in_progress',this.all(`SELECT id FROM media_assets WHERE requestId IN (${taskSourceRequestsSql}) AND (lease IS NOT NULL OR state IN ('received','downloading','retryable_failed'))`,task.id,task.id,task.id));
-  if(processes){
-   add('coordination_consumer_unresolved',this.all(`SELECT m.id FROM agent_messages m WHERE m.taskId=? AND m.id IN (SELECT value FROM json_each(?))`,task.id,processes.unsettled));
-   add('main_effect_unconfirmed',this.all(`SELECT value AS id FROM json_each(?) WHERE value IN (${relatedInputs})`,processes.effects,task.id,task.id,task.id,task.id));
-  }else{
-   add('coordination_consumer_unresolved',this.all(`SELECT DISTINCT m.id FROM agent_messages m JOIN meta p ON p.key GLOB 'publicMainNode:v1:*' JOIN json_each(p.value,'$.sourceMessageIds') source ON source.value=m.id WHERE m.taskId=? AND json_extract(p.value,'$.threadId')=? AND (json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown')`,task.id,this.store.meta('mainThread')!));
-   add('main_effect_unconfirmed',this.all(`SELECT json_extract(p.value,'$.id') AS id FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*'
-      AND json_extract(p.value,'$.threadId')=? AND EXISTS(SELECT 1 FROM json_each(p.value,'$.sourceMessageIds') source WHERE source.value IN (${relatedInputs}))
-      AND ${unconfirmedNativeEffectsSql()}`,this.store.meta('mainThread')!,task.id,task.id,task.id,task.id));
-  }
-  return blockers;
- }
- private archiveSource(actor:Actor,task:Task,archive:boolean){
-  if(actor.threadId!==this.store.meta('mainThread'))throw Error('history_source_required');
-  if(actor.sourceRequestId){
-   this.trustedSource(actor,actor.sourceRequestId);
-   if(actor.inputMessageId&&!this.one(`SELECT 1 FROM agent_messages m JOIN operations o ON o.id=m.operationKey JOIN agent_receipts r ON r.messageId=m.id
-    WHERE m.id=? AND m.recipientAgentId=? AND m.kind='user_input' AND json_extract(m.payloadJson,'$.requestId')=?
-      AND r.state='received' AND json_extract(o.detailsJson,'$.turnId')=?`,actor.inputMessageId,actor.agentId,actor.sourceRequestId,actor.turnId??''))throw Error('history_source_required');
-   this.lifecycle?.validateScheduledSource?.(actor.sourceRequestId);
-   return;
-  }
-  const message=this.activeEvent(actor);
-  if(!archive||message?.kind!=='worker_reply'||message.taskId!==task.id||!message.senderRunId||task.state!=='open'||task.historyState!=='visible')throw Error('history_source_required');
-  const {authority}=this.authorizeReceiptDelivery(actor,task.id);
-  if(!this.one("SELECT 1 FROM agent_receipts WHERE messageId=? AND recipientAgentId=? AND state='received' AND offeredTurnId=?",message.id,actor.agentId,actor.turnId??''))throw Error('history_source_required');
-  for(const source of [authority.sourceRequestId,...(authority.sourceRequestIds??[])])this.lifecycle?.validateScheduledSource?.(source);
- }
  private commitArchive(task:Task,key:string){
-  this.cancelQuestions(task.id);
+  this.details(key,{expectedRevision:task.revision});
   this.sql("UPDATE tasks SET historyState='archived',state='paused',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
   this.message({agentId:'host'},key,this.store.meta('mainAgentId')!,task.id,task.headVersion,'task_archived',{historyState:'archived',revision:task.revision+1});
   return {taskId:task.id,version:task.headVersion,state:'archived' as const,revision:task.revision+1,diskBytesReclaimed:null};
  }
  webArchiveBlockers(actor:Actor,taskIds:readonly string[]){
-  if(!taskIds.length)return new Map<string,string|null>();
-  const rows=this.all<{value:string;working:number;unsettled:number;effects:number}>(`WITH facts AS MATERIALIZED (
-    SELECT json_extract(p.value,'$.sourceMessageIds') sources,json_extract(p.value,'$.state')='working' working,
-      json_extract(p.value,'$.state')<>'worked' OR json_extract(p.value,'$.status')='unknown' unsettled,
-      ${unconfirmedNativeEffectsSql()} effects
-    FROM meta p WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=?
-   ) SELECT source.value,working,unsettled,effects FROM facts,json_each(sources) source WHERE working OR unsettled OR effects`,actor.threadId??null);
-  const processes={
-   working:json(rows.filter(row=>row.working).map(row=>row.value)),
-   unsettled:json(rows.filter(row=>row.unsettled).map(row=>row.value)),
-   effects:json(rows.filter(row=>row.effects).map(row=>row.value)),
-  };
-  return new Map(taskIds.map(taskId=>[taskId,this.webArchiveBlocker(actor,taskId,'',processes)]));
- }
- webArchiveBlocker(actor:Actor,taskId:string,except='',processes?:ArchiveProcesses){
   this.requireMain(actor);
-  const task=this.task(taskId);
-  if(task.historyState!=='visible')return 'task_history_not_visible';
-  const blockers=this.historyBlockers(task,except,false,processes);
-  if(blockers.length)return blockers.some(blocker=>blocker.reason==='interaction_unresolved')?'interaction_unresolved':blockers[0]!.reason;
-  try{
-   const {authorityJson,sourceRequestId}=this.version(task.id,task.headVersion);
-   if(!sourceRequestId)return 'archive_source_unavailable';
-   const sources=authorityJson?this.authoritySources(actor,JSON.parse(authorityJson)):[];
-   if(!sources.includes(sourceRequestId)){this.trustedSource(actor,sourceRequestId);sources.push(sourceRequestId);}
-   for(const source of sources)this.lifecycle?.validateScheduledSource?.(source);
-  }catch{return 'archive_source_unavailable';}
-  return null;
+  return new Map(taskIds.map(taskId=>[taskId,this.task(taskId).historyState==='visible'?null:'task_history_not_visible']));
  }
  archiveFromWeb(actor:Actor,input:TaskMutation){
   if(actor.inputMessageId||actor.sourceRequestId||actor.threadId!==this.store.meta('mainThread'))throw Error('history_source_required');
   return this.mutation(actor,input.taskId,input.operationId,'archive_work',input,key=>{
-   const task=this.check(actor,input),reason=this.webArchiveBlocker(actor,task.id,key);
-   if(reason)return {state:'skipped' as const,reason};
-   this.details(key,{origin:'work_status',sourceRequestId:this.version(task.id,task.headVersion).sourceRequestId});
+   const task=this.check(actor,input);
+   if(task.historyState!=='visible')throw Error('task_history_not_visible');
+   this.details(key,{origin:'work_status'});
    return this.commitArchive(task,key);
   });
  }
- workStatusArchiveOperation(messageId:string){
+ archiveOperation(messageId:string){
   return this.one<{id:string}>(`SELECT o.id FROM agent_messages m JOIN operations o ON o.id=m.operationKey
-   WHERE m.id=? AND m.kind='task_archived' AND m.senderAgentId='host' AND o.kind='archive_work'
-     AND json_extract(o.detailsJson,'$.origin')='work_status'`,messageId)?.id;
+   WHERE m.id=? AND m.kind='task_archived' AND m.senderAgentId='host' AND o.kind='archive_work'`,messageId)?.id;
  }
  recordArchiveReviewIssue(key:string,issue:'failed'|'unknown'){
   this.details(key,{reviewIssue:issue});
@@ -808,39 +600,11 @@ export class RecursiveTasks{
   this.requireMain(actor);
   return this.mutation(actor,input.taskId,input.operationId,archive?'archive_work':'restore_work',input,key=>{
    const task=this.check(actor,input);
-   this.archiveSource(actor,task,archive);
-   if(archive&&task.historyState==='visible'){
-    const blockers=this.historyBlockers(task,key);
-    const other=blockers.filter(blocker=>blocker.id!==actor.inputMessageId||!['message_unprocessed','source_input_unprocessed','coordination_consumer_unresolved'].includes(blocker.reason));
-    if(other.length)return {taskId:task.id,state:'skipped',blockers:other};
-    if(blockers.length){
-     this.details(key,{expectedRevision:task.revision,version:task.headVersion});
-     return {taskId:task.id,state:'requested',revision:task.revision,version:task.headVersion};
-    }
-    return this.commitArchive(task,key);
-   }
+   if(archive&&task.historyState==='visible')return this.commitArchive(task,key);
+   this.details(key,{expectedRevision:task.revision});
    if(!archive&&task.historyState==='archived')this.sql("UPDATE tasks SET historyState='visible',revision=revision+1,updatedAt=? WHERE id=?",Date.now(),task.id);
    return {taskId:task.id,version:task.headVersion,state:archive?'archived':'restored',revision:this.task(task.id).revision,diskBytesReclaimed:null};
   });
- }
- finishArchives(messageId:string,turnId:string|undefined,status:'completed'|'failed'|'interrupted'|'unknown'){
-  if(!this.db.isTransaction)throw Error('archive_transaction_required');
-  const pending=this.all<Operation>("SELECT * FROM operations WHERE kind='archive_work' AND state='accepted' AND json_extract(detailsJson,'$.inputMessageId')=?",messageId);
-  for(const op of pending){
-   const details=JSON.parse(op.detailsJson),task=this.task(op.scopeId),actor={agentId:op.actorAgentId,sourceRequestId:details.sourceRequestId,threadId:details.threadId,turnId,inputMessageId:messageId};
-   let blockers:{id:string;reason:string}[]=[];
-   if(status!=='completed'||!turnId||details.turnId!==turnId)blockers=[{id:messageId,reason:'turn_'+(status==='completed'?'unknown':status)}];
-   else if(task.revision!==details.expectedRevision||task.headVersion!==details.version||task.historyState!=='visible')blockers=[{id:task.id,reason:'task_revision_conflict'}];
-   else{
-    try{this.archiveSource(actor,task,true);}catch(error){
-     if(!(error instanceof Error)||!['history_source_required','task_authority_source_denied','channel_binding_denied','channel_input_preparing'].includes(error.message))throw error;
-     blockers=[{id:messageId,reason:error.message}];
-    }
-    if(!blockers.length)blockers=this.historyBlockers(task,op.id);
-   }
-   const result=blockers.length?{taskId:task.id,state:'skipped',blockers}:this.commitArchive(task,op.id);
-   this.sql("UPDATE operations SET state='confirmed',responseJson=?,revision=revision+1 WHERE id=?",json({...result,operationKey:op.id}),op.id);
-  }
  }
  recoverArchives(){
   this.sql(`UPDATE operations SET state='confirmed',revision=revision+1,responseJson=json_object('taskId',scopeId,'operationKey',id,'state','skipped',

@@ -10,7 +10,7 @@ export type PreviewSource =
  | ({kind:'attachment';messageId:string;sha256:string;title:string}&AttachmentRef)
  | {kind:'message-file';messageId:string;destination:string;title:string;sha256?:string}
  | {kind:'web';messageId:string;sourceId:string;url:string;title:string}
- | ({kind:'browser';url:string;title:string}&({requestId:string;messageId?:never}|{messageId:string;requestId?:never}));
+ | ({kind:'browser';url:string;title:string}&({requestId:string;messageId?:never}|{messageId:string;requestId?:never}|{messageId?:never;requestId?:never}));
 export type PreviewPageCapture={id:string;url:string;title:string};
 export type PreviewRegion={x:number;y:number;width:number;height:number};
 export type PreviewAnnotation={id:string;element:string;elementPath:string;comment:string;x:number;y:number;boundingBox?:PreviewRegion};
@@ -101,7 +101,7 @@ export function parsePreviewSource(value:unknown):PreviewSource{
   const url=text(s.url);
   const parsed=webSourceUrl(url);
   if(!parsed)return invalid();
-  source=s.kind==='web'?{kind:'web',messageId:text(s.messageId,100),sourceId:text(s.sourceId,100),url:parsed.href,title}:{kind:'browser',...(s.requestId!==undefined?{requestId:text(s.requestId,100)}:{messageId:text(s.messageId,100)}),url:parsed.href,title};
+  source=s.kind==='web'?{kind:'web',messageId:text(s.messageId,100),sourceId:text(s.sourceId,100),url:parsed.href,title}:{kind:'browser',...(s.requestId!==undefined?{requestId:text(s.requestId,100)}:s.messageId!==undefined?{messageId:text(s.messageId,100)}:{}),url:parsed.href,title};
  }else return invalid();
  return source;
 }

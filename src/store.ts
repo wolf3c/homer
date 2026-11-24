@@ -1,15 +1,17 @@
 import {randomUUID} from 'node:crypto';
 import {CommittedDatabase} from './committed-database.js';
 import {SCHEDULE_SCHEMA} from './schedules.js';
-export const STORE_SCHEMA_VERSION='9';
+export const STORE_SCHEMA_VERSION='10';
 export const READABLE_STORE_SCHEMA_VERSIONS:readonly string[]=[STORE_SCHEMA_VERSION];
+export const MIGRATABLE_STORE_SCHEMA_VERSIONS:readonly string[]=['8','9'];
+export const RUN_COLUMNS=`(id TEXT PRIMARY KEY,taskId TEXT NOT NULL REFERENCES tasks(id),workerId TEXT NOT NULL REFERENCES runs(id) DEFERRABLE INITIALLY DEFERRED,version INTEGER NOT NULL,sourceRequestId TEXT,goal TEXT NOT NULL,prompt TEXT NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL DEFAULT 'ready',epoch INTEGER NOT NULL DEFAULT 0,stateRevision INTEGER NOT NULL DEFAULT 0,threadId TEXT,turnId TEXT,pid INTEGER,startedAt INTEGER,endedAt INTEGER,stopRequestedAt INTEGER,stopReason TEXT,errorCode TEXT,checkpointJson TEXT,replacesRunId TEXT REFERENCES runs(id),workingDirectory TEXT NOT NULL,activeMs INTEGER NOT NULL DEFAULT 0,usage TEXT,createdAt INTEGER NOT NULL)`;
 export const TASK_COLUMNS=`(id TEXT PRIMARY KEY,title TEXT NOT NULL,headVersion INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',state TEXT NOT NULL CHECK(state IN ('open','paused')),revision INTEGER NOT NULL,historyState TEXT NOT NULL DEFAULT 'visible' CHECK(historyState IN ('visible','archived')),createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL)`;
 export const TASK_INDEXES=`CREATE INDEX IF NOT EXISTS tasks_history ON tasks(historyState);
     CREATE INDEX IF NOT EXISTS uncertain_operations_scope ON operations(scopeId) WHERE state='uncertain';
     CREATE INDEX IF NOT EXISTS pending_archive_inputs ON operations(json_extract(detailsJson,'$.inputMessageId')) WHERE kind='archive_work' AND state='accepted';`;
 export type Status='queued'|'running'|'succeeded'|'failed'|'cancelled'|'interrupted';
 export type Run={
- id:string;taskId:string;workerId:string;version:number;sourceRequestId:string;
+ id:string;taskId:string;workerId:string;version:number;sourceRequestId:string|null;
  goal:string;prompt:string;status:Status;phase:string;epoch:number;stateRevision:number;
  threadId:string|null;turnId:string|null;pid:number|null;startedAt:number|null;endedAt:number|null;
  stopRequestedAt:number|null;stopReason:string|null;errorCode:string|null;
@@ -30,6 +32,7 @@ export class Store {
    }
    if(tables.includes('meta')){
     const recursive=this.meta('recursiveSchemaVersion');
+    if(recursive&&MIGRATABLE_STORE_SCHEMA_VERSIONS.includes(recursive))throw Error('desktop_store_migration_required');
     if(recursive!==STORE_SCHEMA_VERSION)throw Error('recursive_schema_unsupported');
     if(['tasks','task_versions','operations','agent_messages','agent_receipts'].some(table=>!tables.includes(table)))throw Error('recursive_schema_unsupported');
     if(!tables.includes('schedules'))throw Error('recursive_schema_unsupported');
@@ -56,7 +59,7 @@ export class Store {
     }
     this.db.exec(`
     CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,taskId TEXT NOT NULL REFERENCES tasks(id),workerId TEXT NOT NULL REFERENCES runs(id) DEFERRABLE INITIALLY DEFERRED,version INTEGER NOT NULL,sourceRequestId TEXT NOT NULL,goal TEXT NOT NULL,prompt TEXT NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL DEFAULT 'ready',epoch INTEGER NOT NULL DEFAULT 0,stateRevision INTEGER NOT NULL DEFAULT 0,threadId TEXT,turnId TEXT,pid INTEGER,startedAt INTEGER,endedAt INTEGER,stopRequestedAt INTEGER,stopReason TEXT,errorCode TEXT,checkpointJson TEXT,replacesRunId TEXT REFERENCES runs(id),workingDirectory TEXT NOT NULL,activeMs INTEGER NOT NULL DEFAULT 0,usage TEXT,createdAt INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS runs${RUN_COLUMNS};
     CREATE UNIQUE INDEX IF NOT EXISTS one_live_run_per_worker ON runs(workerId) WHERE status IN ('queued','running') OR phase='uncertain';
     CREATE INDEX IF NOT EXISTS runs_task ON runs(taskId,createdAt);
     CREATE INDEX IF NOT EXISTS runs_worker ON runs(workerId);

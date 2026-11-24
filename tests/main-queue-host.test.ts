@@ -238,7 +238,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
   await app.start();app.inputs.accept({requestId:'seed',text:'Synthetic source'});const source=app.inputs.claim()!;app.inputs.started(source.messageId,source.revision,'synthetic-generation','synthetic-native');app.inputs.finish(source.messageId,source.revision,'completed');
   const agentId=app.store.meta('mainAgentId')!;
   const actor={agentId,threadId:app.store.meta('mainThread')!,sourceRequestId:'seed'};
-  const task=app.tasks.createTask(actor,{operationId:'root',title:'Synthetic old task',goal:'Synthetic',authority:{sourceRequestId:'seed',description:'Synthetic only'}});
+  const task=app.tasks.createTask(actor,{operationId:'root',title:'Synthetic old task',goal:'Synthetic'});
   const send=(id:string)=>{const opened=app.tasks.workerOpen(actor,{operationId:id,taskId:task.taskId,text:'Synthetic report'}),run=app.tasks.claim(opened.runId)!;app.tasks.bind(run.id,run.epoch,'worker-'+id,'turn-'+id);return app.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic report'},true)!.messageId;};
   const unknown=send('unknown'),pending=[send('pending-1'),send('pending-2')];
   app.store.db.prepare("UPDATE agent_receipts SET state='uncertain',revision=3,offeredTurnId='old-turn' WHERE messageId=?").run(unknown);
@@ -254,7 +254,7 @@ for(const outcome of ['completed','failed','interrupted'] as const)test('desktop
    await app.message('another message','another');await app.idle();assert.deepEqual(turns,['fresh requirements',...pending,'another message']);
   }else{
    const actor={agentId,threadId:app.store.meta('mainThread')!,sourceRequestId:'fresh'};
-   const task=app.tasks.createTask(actor,{operationId:'fresh-task',goal:'Synthetic later report',authority:{sourceRequestId:'fresh',description:'Synthetic only'}});
+   const task=app.tasks.createTask(actor,{operationId:'fresh-task',goal:'Synthetic later report'});
    const worker=app.tasks.workerOpen(actor,{operationId:'fresh-open',taskId:task.taskId,text:'Synthetic later report'}),freshRun=app.tasks.claim(worker.runId)!;app.tasks.bind(freshRun.id,freshRun.epoch,'later-worker','later-turn');
    const notice=app.tasks.endSegment(freshRun.id,freshRun.epoch,{status:'completed',text:'Synthetic later report'},true)!;
    // Direct task fixture writes need the same wake supplied by the Worker tool adapter.

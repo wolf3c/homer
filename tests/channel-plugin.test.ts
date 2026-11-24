@@ -12,7 +12,7 @@ import test from 'node:test';
 import {ChannelPlugin, type ChannelAdapter, type ChannelHealth, type ChannelPacket} from '../src/channel-plugin.js';
 import type {TurnResult} from '../src/engine.js';
 import {fixture, until} from './fixtures/worker-chat-host.js';
-import {mcpCall} from './fixtures/host-mcp-call.js';
+import {callEngineMcp,mcpCall} from './fixtures/host-mcp-call.js';
 import {commitSyntheticMessage} from './fixtures/synthetic-message.js';
 
 const address = (suffix: string) => ({adapterId:'simulation',accountKey:suffix,senderKey:'sender-'+suffix,conversationKey:'room-'+suffix});
@@ -247,23 +247,35 @@ test('a subscribed Worker final is caught up once with the exact linked file',as
   }finally{await plugin.close();await f.close();}
 });
 
-for(const variant of ['visible','archive-before-timer','archive-before-send','revoked','edited','edited-rebound','edited-grant-revoked','edited-grant-revoked-before-send','edited-body-revoked','edited-grant-preparing','edited-stale-version'] as const)test(`a scheduled result preserves the original subscription across restart: ${variant}`,async t=>{
+for(const variant of ['visible','archive-before-timer','archive-before-send','revoked','delivery-binding-revoked','edited','edited-rebound','edited-grant-revoked','edited-grant-revoked-before-send','edited-body-revoked','edited-grant-preparing','edited-stale-version'] as const)test(`a scheduled result preserves the original subscription across restart: ${variant}`,async t=>{
   const revoke=variant==='revoked';
   const edited=variant.startsWith('edited');
   const preparing=variant==='edited-grant-preparing';
-  const localOnly=preparing||variant==='edited-grant-revoked'||variant==='edited-stale-version';
-  const sends=!revoke&&!localOnly&&variant!=='edited-grant-revoked-before-send';
+  const sends=variant!=='delivery-binding-revoked';
   let now=Date.now(),taskId='',runs=0,scheduleId='',revision=0,planRequestId='';
   const timedErrors:unknown[]=[];
   let scheduleError:unknown;
   t.mock.method(Date,'now',()=>now);
-  const final='The timed report is ready.';
   const sent:ChannelPacket[]=[];
   const adapter={id:'simulation',async send(packet:ChannelPacket){sent.push(packet);return {state:'sent' as const};}};
   const f=fixture();
+  const attachment=variant==='visible', report=join(f.app.config.workspace,'timed-report.md');
+  const final='The timed report is ready.'+(attachment?` [Report](${pathToFileURL(report).href})`:'');
+  const previewActions:string[]=[];
   let plugin=new ChannelPlugin(f.app,[adapter]);
   try{
-    const originBinding=plugin.bind(A);plugin.bind(B);
+    if(attachment)f.app.bindBrowserPreview(async(owner,action,args)=>{
+      assert.equal(owner.requestId,undefined);
+      assert.ok(owner.turnId);
+      previewActions.push(action);
+      if(action==='open'){
+        assert.deepEqual(args.source,{kind:'browser',url:'https://example.com/report',title:'example.com'});
+        return {id:'timed-report-page',document:1};
+      }
+      assert.equal(args.pageId,'timed-report-page');
+      return {id:'timed-report-page',document:1,text:'# Timed report'};
+    });
+    const originBinding=plugin.bind(A),deliveryBinding=plugin.bind(B);
     f.setScript(async(main,text)=>{
       const mcp=main.options.interactionMcp!;
       const call=async(name:string,args:object)=>{
@@ -295,6 +307,12 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
         scheduleError=(await call('schedule_update',{scheduleId,expectedRevision:row.revision,taskId})).error;
       }else if(text.startsWith('[定时消息；')){
         runs++;
+        if(attachment){
+          const page=await callEngineMcp(main,'preview_open',{url:'https://example.com/report'});
+          assert.equal(page.historyReference,'unavailable');
+          const snapshot=await callEngineMcp(main,'preview_read',{pageId:page.pageId});
+          writeFileSync(report,snapshot.text);
+        }
         if(variant==='edited'){
           const row=f.app.schedules.get(scheduleId);
           timedErrors.push((await call('schedule_create',{text:'Another report',trigger:{at:new Date(now+60000).toISOString()},taskId})).error);
@@ -311,6 +329,13 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
     await f.app.idle();
     assert.ok(taskId);
     plugin.receiveText(input(B,'subscribe','subscribe'));await f.app.idle();
+    const readChannelDb=(sql:string,id:string)=>{
+      const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
+      try{return db.prepare(sql).get(id);}
+      finally{db.close();}
+    };
+    const subscription=attachment?readChannelDb('SELECT id,bindingId FROM channel_subscriptions WHERE taskId=?',taskId):undefined;
+    if(attachment)assert.equal(subscription?.bindingId,deliveryBinding);
     plugin.receiveText(input(A,'plan','plan'));await f.app.idle();
     assert.equal(scheduleError,undefined);
     assert.equal(f.app.store.db.prepare('SELECT count(*) AS n FROM schedules').get()!.n,1);
@@ -321,24 +346,19 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
     };
     if(edited){
       const before=JSON.parse(f.app.schedules.get(scheduleId).sourceRef);
-      if(variant==='edited'){
-        delete before.deliveryTask.authority;
-        f.app.store.db.prepare('UPDATE schedules SET sourceRef=? WHERE id=?').run(JSON.stringify(before),scheduleId);
-      }
-      planRequestId=before.authority.sourceRequestId;
+      planRequestId=String(f.app.store.db.prepare("SELECT requestId FROM conversation_messages WHERE role='user' AND text='plan'").get()!.requestId);
       assert.equal(await f.app.message('Edit only the report body','edited-report-body'),'Acknowledged');
       assert.equal(scheduleError,undefined);
       const after=f.app.schedules.get(scheduleId);
       assert.equal(after.revision,revision+1);
       const ref=JSON.parse(after.sourceRef);
-      assert.equal(ref.authority.sourceRequestId,'edited-report-body');
-      assert.deepEqual(ref.deliveryTask,{taskId,taskVersion:before.deliveryTask.taskVersion,authority:before.authority});
+      assert.deepEqual(ref,before);
       if(variant==='edited-rebound'){
         await f.app.message('Reauthorize the destination','edited-report-destination');
         assert.equal(scheduleError,undefined);
         const rebound=JSON.parse(f.app.schedules.get(scheduleId).sourceRef);
-        assert.deepEqual(rebound.authority,ref.authority);
-        assert.equal(rebound.deliveryTask.authority.sourceRequestId,'edited-report-destination');
+        assert.equal(rebound.creatorAgentId,ref.creatorAgentId);
+        assert.deepEqual(rebound.deliveryTask,ref.deliveryTask);
         revokeRequest(planRequestId);
       }
       if(variant==='edited-grant-revoked')revokeRequest(planRequestId);
@@ -357,26 +377,38 @@ for(const variant of ['visible','archive-before-timer','archive-before-send','re
     if(variant==='archive-before-timer')await archive();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
     const entry=f.app.history.list(thread).find(message=>message.text===final);
-    if(variant==='edited-body-revoked'){
-      assert.equal(runs,0);
-      assert.equal(entry,undefined);
-      assert.equal(sent.some(item=>item.part.kind==='text'&&item.part.text===final),false);
-      return;
-    }
     assert.equal(runs,1);
-    if(variant==='edited')assert.deepEqual(timedErrors,['schedule_scope_denied','schedule_scope_denied']);
+    if(variant==='edited')assert.deepEqual(timedErrors,[undefined,undefined]);
     assert.ok(entry);
-    assert.equal(entry.taskId,localOnly?null:taskId);
+    assert.equal(entry.taskId,taskId);
     assert.equal(entry.requestId,null);
     assert.equal(sent.length,0);
+    if(attachment){
+      assert.deepEqual(previewActions,['open','read']);
+      assert.equal(entry.attachments?.length,1);
+      writeFileSync(report,'# Changed after commit');
+    }
     if(variant==='archive-before-send')await archive();
     if(variant==='edited-grant-revoked-before-send')revokeRequest(planRequestId);
     if(revoke)plugin.revokeBinding(originBinding);
-    const deliveries=()=>sent.filter(item=>item.part.kind==='text'&&item.part.text===final);
+    if(variant==='delivery-binding-revoked')plugin.revokeBinding(deliveryBinding);
+    const deliveries=()=>sent.filter(item=>item.messageId===entry.id);
     for(let i=0;i<2;i++){
       await plugin.close();await f.restart(app=>{plugin=new ChannelPlugin(app,[adapter]);});
       await plugin.synchronize();
-      assert.deepEqual(deliveries().map(item=>[item.address,item.messageId]),sends?[[B,entry.id]]:[]);
+      assert.deepEqual(deliveries().map(item=>[item.address,item.part.kind==='text'?item.part.text:Buffer.from(item.part.data,'base64').toString()]),
+        !sends?[]:attachment?[[B,'The timed report is ready. Report'],[B,'# Timed report']]:[[B,final]]);
+      if(attachment){
+        assert.deepEqual(f.app.history.list(thread).filter(message=>message.text===final).map(message=>[message.id,message.attachments]),[[entry.id,entry.attachments]]);
+        const outbox=readChannelDb('SELECT subscriptionId,bindingId,state,nextPart,receipts FROM channel_outbox WHERE messageId=?',entry.id);
+        assert.ok(outbox);
+        assert.equal(outbox.subscriptionId,subscription!.id);
+        assert.equal(outbox.bindingId,deliveryBinding);
+        assert.equal(outbox.state,'sent');
+        assert.equal(outbox.nextPart,2);
+        assert.deepEqual(JSON.parse(String(outbox.receipts)).map(({state,attachment}:{state:string;attachment?:unknown})=>[state,attachment]),
+          [['sent',undefined],['sent',entry.attachments![0]]]);
+      }
     }
     assert.equal(runs,1);
   }finally{await plugin.close();await f.close();}
@@ -538,7 +570,7 @@ test('subscription survives a lost tool receipt and old retries cannot undo a la
     assert.equal(f.inputs.length,inputCount);
     // The production MCP path checks live turn identity. Exercise the registered
     // handler directly here to supply the original trusted request during replay.
-    const replay=()=>applySubscription({taskId},{requestId,authorizeTask:id=>assert.equal(id,taskId)});
+    const replay=()=>applySubscription({taskId},{requestId,readChannelMessage:()=>{throw Error("unexpected history lookup");},authorizeTask:id=>assert.equal(id,taskId)});
     plugin!.receiveText(input(B,'continue-1','continue'));
     await finishWorker();
     assert.deepEqual(replay(),{taskId,subscriptionId:firstSubscription,state:'active'});
@@ -960,4 +992,48 @@ for(const action of ['retry','cancel','revoke'])test('deferred Telegram backgrou
   else assert.equal(loads,1);
   assert.equal(plugin.takeTelegramBackground(requestId),undefined);
  }finally{release();await f.close();}
+});
+
+test('a background turn can subscribe a task using the selected verified channel message',async()=>{
+ const sent:ChannelPacket[]=[];
+ const f=fixture([{id:'simulation',async send(packet){sent.push(packet);return {state:'sent'};}}]);
+ let taskId='',destination='',subscribed=false;
+ const errors:unknown[]=[];
+ f.setScript(async(main,body)=>{
+  try{
+   if(body==='Remember the destination')return nativeFinal('Destination recorded');
+   if(body==='Create the report'){
+    taskId=(await main.call('task_create',{title:'Report',goal:'Prepare response'})).taskId;
+    return nativeFinal('Ready');
+   }
+   if(body.includes('[定时消息正文]')){
+    const args={taskId,messageId:destination},name='set_notification_destination',callId='background-subscribe';
+    main.emit('hostMcpToolStarted',{threadId:main.threadId,turnId:main.turnId,itemId:callId,tool:name,arguments:args});
+    const socket=main.options.interactionMcp!.args[main.options.interactionMcp!.args.indexOf('main')-1]!;
+    const receipt=await mcpCall(socket,name,args,{callId,'x-codex-turn-metadata':{turn_id:main.turnId}});
+    assert.equal(receipt.error,undefined);assert.equal(receipt.result.state,'active');
+    subscribed=true;
+    return nativeFinal('Report ready');
+   }
+   return nativeFinal('Acknowledged');
+  }catch(error){errors.push(error);throw error;}
+ });
+ try{
+  f.app.channels!.bind(A);
+  await f.app.start();
+  f.app.channels!.receiveText(input(A,'background-destination','Remember the destination'));
+  await f.app.idle();
+  destination=String(f.app.store.db.prepare("SELECT id FROM conversation_messages WHERE role='user' AND text='Remember the destination'").get()!.id);
+  await f.app.message('Create the report','background-channel-task');
+  const threadId=f.app.store.meta('mainThread')!,instanceId=f.app.store.meta('mainAgentId')!;
+  f.app.store.transaction(()=>f.app.inputs.enqueueScheduled({
+   deliveryId:'subscribe-background-hit',scheduleId:'synthetic-schedule',scheduledAt:Date.now(),text:'Deliver the report',
+   sourceRef:JSON.stringify({threadId,instanceId,creatorAgentId:instanceId,deliveryTask:{taskId,taskVersion:1}}),
+  }));
+  f.app.recheckScheduledMessages();
+  await f.app.idle();await f.app.channels!.synchronize();
+  assert.deepEqual(errors,[]);
+  assert.equal(subscribed,true);
+  assert.equal(sent.filter(packet=>packet.address.accountKey==='a'&&packet.part.kind==='text'&&packet.part.text==='Report ready').length,1);
+ }finally{await f.close();}
 });

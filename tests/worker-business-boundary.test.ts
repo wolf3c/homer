@@ -12,7 +12,7 @@ import {WORKER_HOST_MCP_TOOLS} from '../src/worker-interaction-mcp.js';
     const counts = () => ['tasks', 'runs', 'operations'].map(table => Number(f.store.db.prepare('SELECT count(*) n FROM ' + table).get()!.n));
     const before = counts();
     for (const attempt of [
-      () => f.tasks.createTask(actor, {operationId: 'forged-create', goal: 'New goal', authority: f.authority}),
+      () => f.tasks.createTask(actor, {operationId: 'forged-create', goal: 'New goal'}),
       () => f.tasks.updateTask(actor, {...mutation, patch: {notes: 'Forged'}}),
       () => f.tasks.controlTask(actor, {...mutation, action: 'pause'}),
       () => f.tasks.archiveHistory(actor, mutation, false),

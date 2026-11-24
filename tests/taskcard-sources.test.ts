@@ -9,7 +9,7 @@ test('only consumed authenticated scoped replies become sources, with immutable 
   const input=message(node([f.reply.messageId])),source=f.project(input);assert.equal(source.taskSources?.length,1);assert.equal(source.taskSources![0]!.phaseLabel,'收到 Worker 回复');assert.ok(source.taskSources![0]!.originalRequestMessageId);assert.doesNotMatch(JSON.stringify(source),/PRIVATE/);
   f.store.db.prepare("UPDATE agent_receipts SET state='rejected' WHERE messageId=?").run(f.reply.messageId);assert.deepEqual(f.project(input).taskSources,source.taskSources);
   assert.equal(f.project({...input,process:{...input.process!,turnIds:[]}}).taskSources,undefined);assert.equal(f.project(input,'other').taskSources,undefined);assert.deepEqual(f.project({...input,text:''}).taskSources,source.taskSources);assert.equal(f.project(message(node([]))).taskSources,undefined);
-  f.tasks.updateTask(f.actor,{operationId:'next',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},authority:f.authority});assert.equal(f.project(input).taskSources![0]!.target.version,1);
+  f.tasks.updateTask(f.actor,{operationId:'next',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'}});assert.equal(f.project(input).taskSources![0]!.target.version,1);
   for(const column of ['senderAgentId','senderRunId','recipientAgentId']){const previous=f.store.db.prepare(`SELECT ${column} value FROM agent_messages WHERE id=?`).get(f.reply.messageId)!.value;f.store.db.prepare(`UPDATE agent_messages SET ${column}=? WHERE id=?`).run(column==='senderRunId'?null:'forged',f.reply.messageId);assert.equal(f.project(input).taskSources,undefined);f.store.db.prepare(`UPDATE agent_messages SET ${column}=? WHERE id=?`).run(previous??null,f.reply.messageId);}
  }finally{f.close();}
 });
@@ -68,7 +68,7 @@ test('formal text and attachment replies keep their stored task version without 
    const id=f.store.transaction(()=>f.history.commitAssistant({threadId:f.actor.threadId!,text,taskId:task.taskId,taskVersion:1,operationKey:'send:formal-'+index,attachments:text?[]:[{assetId:'asset-demo',revision:1} as any]}));
    return f.history.message(id)!;
   });
-  f.tasks.updateTask(f.actor,{operationId:'next',taskId:task.taskId,expectedRevision:1,patch:{goal:'Next version'},authority:f.authority});
+  f.tasks.updateTask(f.actor,{operationId:'next',taskId:task.taskId,expectedRevision:1,patch:{goal:'Next version'}});
   const before=JSON.stringify(originals),projected=withTaskSources(f.store.db,originals,f.actor.threadId!);
   for(const [index,result] of projected.entries()){
    assert.equal(result.taskSources?.length,1);assert.equal(result.taskSources![0]!.title,'正式事项');
@@ -193,7 +193,7 @@ test('pause and resume use exact confirmed operation and input identities from t
   const paused=f.tasks.controlTask(actor,{...receipt('pause'),action:'pause'});
   f.consumeMain(String(db.prepare("SELECT id FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(worker.runId)!.id));
   const restart=f.source('resume-source'),resumeActor={...actor,sourceRequestId:'resume-source',inputMessageId:restart.messageId,turnId:'turn:resume-source'};
-  const resumed=f.tasks.controlTask(resumeActor,{...receipt('resume'),action:'resume',authority:{...f.authority,sourceRequestId:'resume-source'}});
+  const resumed=f.tasks.controlTask(resumeActor,{...receipt('resume'),action:'resume'});
   const processes=new MainProcessHistory(db);
   for(const result of [paused,resumed]){
    const source=result===resumed?resumeActor:actor,process={...node([source.inputMessageId!]),sourceKind:'user' as const,turnIds:[source.turnId]};
@@ -230,8 +230,7 @@ test('an archive on a Worker reply keeps its source across restore and rejects u
   f.consumeMain(input);
   const head=f.source('new-head-source');
   f.tasks.updateTask({...f.actor,sourceRequestId:'new-head-source',inputMessageId:head.messageId,turnId:'turn:new-head-source'},
-   {operationId:'new-head',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,patch:{goal:'Confirm the same finding'},
-    authority:{...f.authority,sourceRequestId:'new-head-source',sourceRequestIds:[f.authority.sourceRequestId]}});
+   {operationId:'new-head',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,patch:{goal:'Confirm the same finding'}});
   const turn=new MainProcessHistory(db).headers(['consumer:'+input])[0]!.turnIds[0]!;
   const actor={...f.actor,sourceRequestId:undefined,inputMessageId:input,turnId:turn};
   const archive=f.tasks.archiveHistory(actor,{operationId:'archive',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision},true);
@@ -244,8 +243,8 @@ test('an archive on a Worker reply keeps its source across restore and rejects u
   assert.equal(project().taskSources?.[0]?.phaseLabel,'事项已归档');
   for(const sql of ["UPDATE conversation_inputs SET threadId='other' WHERE requestId=?", "DELETE FROM conversation_inputs WHERE requestId=?"]){
    db.exec('SAVEPOINT bad_source');db.prepare(sql).run(f.authority.sourceRequestId);
-   assert.equal(project().taskSources,undefined);
-   assert.equal(project().taskSourceUnresolved,true);
+   assert.equal(project().taskSources?.[0]?.phaseLabel,'事项已归档');
+   assert.equal(project().taskSourceUnresolved,undefined);
    db.exec('ROLLBACK TO bad_source; RELEASE bad_source');
   }
   for(const sql of ["UPDATE agent_receipts SET offeredTurnId='other' WHERE messageId=?","UPDATE agent_messages SET senderRunId=NULL WHERE id=?","UPDATE agent_messages SET taskVersion=999 WHERE id=?"]){
@@ -269,6 +268,27 @@ test('a scheduled round binds task control to its delivery receipt',()=>{
   assert.deepEqual(project().taskSources?.[0]?.target,activity.target);
   assert.equal(project().taskSourceUnresolved,undefined);
   db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.threadId','other') WHERE id=?").run(notice);
+  assert.equal(project().taskSources,undefined);
+  assert.equal(project().taskSourceUnresolved,true);
+ }finally{f.close();}
+});
+
+test('an archive review can project task control bound to the Main archive operation',()=>{
+ const f=chatFixture();try{
+  const db=f.store.db,archived=f.create(),target=f.create('Independent target','other-target');
+  const archive=f.tasks.archiveFromWeb({agentId:f.actor.agentId,threadId:f.actor.threadId},
+   {operationId:'work-status:archive',taskId:archived.taskId,expectedRevision:1});
+  const notice=String(db.prepare('SELECT id FROM agent_messages WHERE operationKey=?').get(archive.operationKey)!.id);
+  f.consumeMain(notice);
+  const process=new MainProcessHistory(db).headers(['consumer:'+notice])[0]!;
+  const actor={...f.actor,sourceRequestId:undefined,inputMessageId:notice,turnId:process.turnIds[0]!};
+  const result=f.tasks.controlTask(actor,{operationId:'pause',taskId:target.taskId,expectedRevision:1,action:'pause'});
+  const activity=f.tasks.captureActivity(actor,'task_update',{taskId:target.taskId},result)!;
+  process.items.push({id:'pause',kind:'tool',seq:1,revision:1,status:'completed',label:'调整任务',activity});
+  const project=()=>withTaskSources(db,[message(process)],actor.threadId!)[0]!;
+  assert.ok(project().taskSources?.some(source=>source.target.taskId===target.taskId));
+  assert.equal(project().taskSourceUnresolved,undefined);
+  db.prepare("UPDATE operations SET actorAgentId='host' WHERE id=?").run(archive.operationKey);
   assert.equal(project().taskSources,undefined);
   assert.equal(project().taskSourceUnresolved,true);
  }finally{f.close();}

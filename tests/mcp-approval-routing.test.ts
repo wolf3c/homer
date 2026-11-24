@@ -13,7 +13,7 @@ const until=async(f:()=>boolean)=>{for(let n=0;n<100;n++){if(f())return;await ne
 function setup(){
  const f=fixture('.codex/scratch/mcp-routing'),interactions=new WorkerInteractions(f.store.db),history=new ConversationHistory(f.store.db),approvals=new MainNativeApprovals(interactions,history),host:any=Object.create(Homer.prototype);
  const generation={threadId:'thread:synthetic-main',turnId:'turn',generationId:'generation',sourceRequestId:'user-synthetic'},context={generation,userText:'Synthetic authorization'},config={codexHome:f.dir,nativeCodexHome:f.dir};
- Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,interactions,history,mainApprovals:approvals,mainContext:context,main:{threadId:'thread:synthetic-main',turnId:'turn'},workers:new Map(),hostActors:new WeakSet(),nativeRevision:0,validateMainContext(){},protectedExecutionPaths:()=>[],registerWebSurface(){}});
+ Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,inputs:f.inputs,interactions,history,mainApprovals:approvals,mainContext:context,main:{threadId:'thread:synthetic-main',turnId:'turn'},workers:new Map(),hostActors:new WeakSet(),nativeRevision:0,validateMainContext(){},protectedExecutionPaths:()=>[],registerWebSurface(){}});
  f.store.setMeta('mainThread','thread:synthetic-main');
  return {...f,interactions,history,approvals,host,context};
 }
@@ -55,25 +55,33 @@ test('a real Worker escalation projects command facts and full details without m
   assert.equal(card.approval?.details,'synthetic project operation\n工作目录：/synthetic\n写入：/synthetic/tmp');
  }finally{f.close();}
 });
-for(const role of ['main','worker'])for(const outcome of ['approve','deny','expire','cancel','unknown','lost-installed','changed'])test('native plugin '+role+' '+outcome+' keeps the installer and real status',async()=>{
+for(const role of ['main','worker'])for(const outcome of ['approve','deny','expire','cancel','unknown','lost-installed','changed',...(role==='worker'?['lost-installed-after-archive']:[])])test('native plugin '+role+' '+outcome+' keeps the installer and real status',async()=>{
  const f=setup();let installs=0;try{
+  const archivedDuringInstall=outcome==='lost-installed-after-archive';
   let installed=false,reads=0;
   f.host.nativeRpc=async(method:string,params:any)=>{
    if(method==='plugin/list'){if(role==='worker')assert.deepEqual(params.cwds,[f.dir]);return{marketplaces:[{name:'synthetic',path:f.dir+'/market.json',plugins:[{id:'sample@synthetic',name:'sample'}]}]};}
    if(method==='config/read')return{layers:[{name:{type:'user',file:f.dir+'/config.toml'},version:'1',config:{}}]};
    if(method==='skills/list')return{data:[]};
    if(method==='plugin/read')return{plugin:{summary:{id:'sample@synthetic',name:'sample',version:outcome==='changed'&&++reads>1?'2':'1',installed,source:{type:'local',path:f.dir+'/sample'}},skills:[],hooks:[],apps:[],mcpServers:[]}};
-   if(method==='plugin/install'){installs++;if(outcome==='unknown')throw new EngineRpcUnconfirmed('engine_disconnected');installed=true;if(outcome==='lost-installed')throw new EngineRpcUnconfirmed('engine_disconnected');return{authPolicy:'ON_USE',appsNeedingAuth:[]};}return{};
+   if(method==='plugin/install'){
+    installs++;if(outcome==='unknown')throw new EngineRpcUnconfirmed('engine_disconnected');installed=true;
+    if(archivedDuringInstall){
+     const {id,revision}=f.tasks.task(f.task.taskId);
+     assert.equal(f.tasks.archiveFromWeb({agentId:f.store.meta('mainAgentId')!,threadId:'thread:synthetic-main'},{taskId:id,operationId:'work-status:after-install',expectedRevision:revision}).state,'archived');
+    }
+    if(archivedDuringInstall||outcome==='lost-installed')throw new EngineRpcUnconfirmed('engine_disconnected');
+    return {authPolicy:'ON_USE',appsNeedingAuth:[]};
+   }return{};
   };
   const run=role==='worker'?f.tasks.workerOpen({agentId:f.store.meta('mainAgentId')!,threadId:'thread:synthetic-main',sourceRequestId:'user-synthetic'},{operationId:'plugin-worker',taskId:f.task.taskId,text:'Inspect plugin'}):undefined;
-  if(run)running(f,run.runId);
-  const worker=run?{id:run.runId,requests:new Map(),engine:{threadId:'child',turnId:'child-turn'}}:undefined;
+  const actor=run?running(f,run.runId):undefined;
+  const worker=actor?{id:actor.runId,epoch:actor.epoch,requests:new Map(),engine:{threadId:actor.threadId,turnId:actor.turnId}}:undefined;
   if(worker){f.host.liveNativeInteraction=()=>true;f.host.liveInteraction=()=>true;f.host.pauseClock=()=>{};f.host.resumeClock=()=>{};}
-  const params={threadId:worker?'child':'thread:synthetic-main',turnId:worker?'child-turn':'turn',serverName:'codex_apps',mode:'form',message:'Install reviewed plugin',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'tool_suggestion',tool_type:'plugin',suggest_type:'install',tool_id:'sample@synthetic'}};
+  const params={threadId:actor?.threadId??'thread:synthetic-main',turnId:actor?.turnId??'turn',serverName:'codex_apps',mode:'form',message:'Install reviewed plugin',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'tool_suggestion',tool_type:'plugin',suggest_type:'install',tool_id:'sample@synthetic'}};
   const native={...nativeInteraction('mcpServer/elicitation/request',params)!,requestId:1,isCurrent:()=>true};
   const response=worker?f.host.openNativePluginInteraction(native,worker,f.dir):f.host.openMainNativeInteraction(native);
-  void response.catch(()=>{});
-  await until(()=>f.interactions.list().length>0);
+  await Promise.race([until(()=>f.interactions.list().length>0),response.then(()=>{throw Error('approval_resolved_before_prompt');})]);
   const pending=f.interactions.list()[0]!;assert.equal(installs,0);
   if(worker){
    assert.equal(pending.state,'pending_main');
@@ -96,7 +104,7 @@ for(const role of ['main','worker'])for(const outcome of ['approve','deny','expi
    await assert.rejects(response,outcome==='unknown'?/capability_plugin_install_unconfirmed/:/capability_plugin_review_conflict/);
    assert.equal(installs,outcome==='unknown'?1:0);return;
   }
-  const didInstall=outcome==='approve'||outcome==='lost-installed';
+  const didInstall=outcome==='approve'||outcome==='lost-installed'||archivedDuringInstall;
   const result=await response;assert.equal(result.status,didInstall?'approved':outcome==='deny'?'denied':outcome==='expire'?'expired':'cancelled');assert.equal(installs,didInstall?1:0);if(['expire','cancel'].includes(outcome))assert.equal(result.decision,undefined);
  }finally{f.close();}
 });

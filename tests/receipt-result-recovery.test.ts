@@ -12,7 +12,7 @@ import {fixture,main,authority,openWorker,running,complete,mutation} from './rec
 
 test('committed Worker open survives lost tool response; same native call replays, different payload conflicts',async()=>{
  const f=fixture();try{
-  let lose=true;const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>authority(),wake(){if(lose)throw Error('synthetic_response_lost');},stop:async r=>r,steer:async r=>r});
+  let lose=true;const tools=new RecursiveTools(f.tasks,{wake(){if(lose)throw Error('synthetic_response_lost');},stop:async r=>r,steer:async r=>r});
   const args={taskId:f.task.taskId,message:'Inspect exact source'},callId='native-open';
   await assert.rejects(()=>tools.call(main,'worker_open',args,callId),/synthetic_response_lost/);assert.equal(f.tasks.workers(f.task.taskId).length,1);
   const recovered=f.tasks.inspectOperation({...main,sourceRequestId:undefined},toolOperationId(main,callId),f.task.taskId).operations[0]!;assert.equal(recovered.state,'confirmed');
@@ -35,7 +35,7 @@ test('task-create receipt remains discoverable without its lost taskId or origin
 
 for(const count of [2,20,21])test('same-name operation scopes stay bounded and require explicit selection: '+count,()=>{
  const f=fixture();try{
-  for(let i=0;i<count;i++){const task=f.tasks.createTask(main,{operationId:'create:'+i,goal:'Scope '+i,authority:authority()});openWorker(f,'same-name',task.taskId);}
+  for(let i=0;i<count;i++){const task=f.tasks.createTask(main,{operationId:'create:'+i,goal:'Scope '+i});openWorker(f,'same-name',task.taskId);}
   const page=f.tasks.inspectOperation(main,'same-name');assert.equal(page.operations.length,Math.min(count,20));assert.equal(page.truncated,count>20);
   assert.equal(new Set(page.operations.map(op=>op.scopeId)).size,page.operations.length);assert.deepEqual(f.tasks.inspectOperation(main,'same-name'),page);
   const chosen=page.operations[0]!;assert.deepEqual(f.tasks.inspectOperation(main,'same-name',chosen.scopeId).operations,[chosen]);
@@ -92,7 +92,7 @@ test('original committed actions travel with their received input and unknown ef
 test('a cached pre-change final remains readable under its original version after requirements are withdrawn',()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId);f.tasks.recordWorkerTerminal(w.runId,actor.epoch!,{status:'completed',text:'Original-version draft'});
-  const source=f.source('changed','Read only now');f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New read-only goal'},authority:authority(source.sourceRequestId)});
+  const source=f.source('changed','Read only now');f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New read-only goal'}});
   const stop=f.tasks.workerStop(source,{operationId:'stop',workerId:w.workerId});
   assert.equal(complete(f,actor,'Late output'),undefined);f.tasks.confirmWorkerExit(w.runId,undefined);f.tasks.confirmStop(stop.operationKey,true);
   const reply=f.tasks.inbox(main).find(message=>message.kind==='worker_reply')!;assert.equal(reply.taskVersion,1);assert.equal(reply.payload.text,'Original-version draft');
@@ -205,6 +205,7 @@ test('full-length Chinese messages and task notes remain readable over paged MCP
   const w=openWorker(f);running(f,w.runId);
   for(let index=0;index<32;index++){
    const next=f.tasks.workerMessage(main,{operationId:'send-'+index,workerId:w.workerId,text:body});
+   f.tasks.markSteer(next.operationKey,'dispatching');
    f.tasks.markSteer(next.operationKey,'received');
    f.tasks.createTask(main,{operationId:'create-'+index,title:'Large '+index,goal:'Synthetic history',notes:body});
   }

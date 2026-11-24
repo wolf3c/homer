@@ -120,12 +120,11 @@ export class MainProcessHistory {
     }
     const source=this.db.prepare(`SELECT v.sourceRequestId,CASE WHEN m.senderAgentId='host' AND m.kind='interaction_required' THEN json_extract(m.payloadJson,'$.interactionId') END interactionId FROM agent_messages m
       JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-      JOIN conversation_inputs i ON i.requestId=v.sourceRequestId
-      JOIN conversation_messages h ON h.id=? AND h.threadId=i.threadId
+      JOIN conversation_messages h ON h.id=?
       WHERE m.id=? AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')
-        AND i.threadId=? AND h.text=?`).get(node.messageId,node.sourceMessageIds[0]!,node.threadId,node.final.text);
+        AND m.senderAgentId='host' AND h.threadId=? AND h.text=?`).get(node.messageId,node.sourceMessageIds[0]!,node.threadId,node.final.text);
     if(!source)return;
-    return {messageId:node.messageId,text:node.final.text,sourceRequestId:String(source.sourceRequestId),...(typeof source.interactionId==='string'?{interactionId:source.interactionId}:{})};
+    return {messageId:node.messageId,text:node.final.text,sourceRequestId:typeof source.sourceRequestId==='string'?source.sourceRequestId:undefined,...(typeof source.interactionId==='string'?{interactionId:source.interactionId}:{})};
   }
   coordinationIds(threadId:string){
     return this.db.prepare("SELECT json_extract(value,'$.id') id FROM meta WHERE key GLOB 'publicMainNode:v1:*' AND json_extract(value,'$.threadId')=? AND json_extract(value,'$.sourceKind')='worker' AND json_extract(value,'$.state')='worked' AND json_extract(value,'$.final.id')=json_extract(value,'$.messageId') ORDER BY json_extract(value,'$.seq')").all(threadId).map(row=>String(row.id));

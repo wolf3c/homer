@@ -40,14 +40,14 @@ export function readMembershipAudio(db:DatabaseSync,conversation:string,receipt:
   }catch{throw Error('membership_audio_receipt_unavailable');}
 }
 
-export async function runMembershipAudio(db:DatabaseSync,gateway:Gateway,conversation:string,sourceRequestId:string,cwd:string,args:Speech,
+export async function runMembershipAudio(db:DatabaseSync,gateway:Gateway,conversation:string,operationScope:string,cwd:string,args:Speech,
   guard:()=>void,outputGuard:()=>void,approve:(receipt:string,signal:AbortSignal)=>Promise<boolean>){
   guard();
   const receipt='audio-'+randomUUID();
   const payloadHash=createHash('sha256').update(JSON.stringify(args)).digest('hex');
   const claimed=db.prepare(`INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson)
     VALUES(?,'host',?,?, 'membership_audio',?,'accepted','{}')
-    ON CONFLICT(actorAgentId,scopeId,operationId) DO NOTHING`).run(receipt,'membership_audio:'+conversation,sourceRequestId,payloadHash);
+    ON CONFLICT(actorAgentId,scopeId,operationId) DO NOTHING`).run(receipt,'membership_audio:'+conversation,operationScope,payloadHash);
   if(claimed.changes===0)throw Error('membership_audio_already_requested');
   const setState=(state:string)=>db.prepare('UPDATE operations SET state=? WHERE id=?').run(state,receipt);
   const live=new AbortController();

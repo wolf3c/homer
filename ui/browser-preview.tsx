@@ -28,7 +28,7 @@ type LocationPanel={scope:string;session:symbol;grants?:string[];history?:boolea
 const locationLabel=(type:string)=>type==='geolocation-approximate'?'近似位置':'位置';
 type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
 export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true,onLocationApproval}:Props){
- const enabled=referenceEnabled&&!page.resource;
+ const enabled=referenceEnabled&&!page.resource&&(page.source.kind!=='browser'||!!(page.source.requestId||page.source.messageId));
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
  const locationPanel=useRef<HTMLElement>(null),locationButton=useRef<HTMLButtonElement>(null);
  const locationHistoryButton=useRef<HTMLButtonElement>(null),locationId=useId();

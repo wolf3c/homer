@@ -22,7 +22,7 @@ test('independent conversations claim together and editing a task leaves both or
   const a=f.create(),b=f.create('Independent task','other');
   const aa=f.tasks.workerOpen(f.actor,{operationId:'a',taskId:a.taskId,text:'A'}),bb=f.tasks.workerOpen(f.actor,{operationId:'b',taskId:b.taskId,text:'B'}),ar=f.start(aa.workerId),br=f.start(bb.workerId);
   assert.equal(f.store.runs().filter(run=>run.status==='running').length,2);
-  const change=f.tasks.updateTask(f.actor,{operationId:'change',taskId:a.taskId,expectedRevision:1,patch:{goal:'Revised scope'},authority:f.authority});
+  const change=f.tasks.updateTask(f.actor,{operationId:'change',taskId:a.taskId,expectedRevision:1,patch:{goal:'Revised scope'}});
   assert.deepEqual(change.targets,[]);assert.deepEqual(f.tasks.run(ar.id),ar);assert.deepEqual(f.tasks.run(br.id),br);
   assert.equal(f.tasks.task(a.taskId).historyState,'visible');assert.equal(f.tasks.task(b.taskId).historyState,'visible');
  }finally{f.close();}

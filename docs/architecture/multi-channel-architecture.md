@@ -139,7 +139,7 @@ flowchart LR
 这个事项后续的消息和附件都发到这里。
 ```
 
-主 Agent 只把该指令用于理解当前消息的「这里」。订阅工具继续使用宿主绑定的本轮 `requestId`，由渠道插件解析入口并核验授权。
+主 Agent 只把该指令用于理解当前消息的「这里」。订阅工具使用当前渠道消息，或传入同会话可见的用户消息 ID 指定已验证聊天。渠道插件解析现有绑定并核验其状态。
 
 消息来源已接入 Telegram。离线回归覆盖双 Bot、用户名缺失或重复、解绑后的历史标签和本地正文中的同形指令。固定 Codex 0.163.0 在同一会话经回环模型替身验证了两个渠道请求的完整 `InputText`、页面原文和伪造指令无法取得订阅授权。实际 Homer Web 界面用模拟账号验收了双 Bot 标签、历史分页和复制到剪贴板接口的原文。真实模型判断订阅意图单独验收。[Telegram 回归](../../tests/telegram-channel.test.ts) · [固定引擎专项](../../tests/channel-native.engine.test.ts)
 
@@ -360,3 +360,7 @@ macOS ARM64 本地候选包已通过签名校验和同线程重启回归。包�
 | Slack Events API 区分应用、安装授权、事件 ID 与发件人，并可能重投。 | 将账号授权和事件去重分开，先持久接收，再确认渠道收件。[Slack 事件结构与重投](https://docs.slack.dev/apis/events-api/#callback-field-overview) |
 | AWS 的 transactional outbox 在一个数据库事务里提交业务事实和待发记录。 | 主程序提交用户消息。插件补读后在自己的 SQLite 中按 `messageId` 唯一入队，事务外发送。[AWS Transactional Outbox](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html) |
 | Stripe 的安全重试依赖服务端对相同幂等键、参数和有效期的承诺。 | 本地稳定 ID 用于认领和去重。渠道效果未知时以原回执为准，只有具备相应服务端保证时才安全重试。[Stripe 幂等请求](https://docs.stripe.com/api/idempotent_requests) |
+
+## 后台调整渠道订阅
+
+Homer 可以在后台用同主会话的用户可见消息 ID 选择用户要求的已验证聊天。渠道插件核对现有账号绑定、群组与话题，并按原基线事务切换订阅。已有出箱保留原路由与分段尝试，按原回执处理撤销和未知结果。

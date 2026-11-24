@@ -15,7 +15,7 @@ function fixture(database=':memory:'){
  const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'generation:source','native:source');f.inputs.finish(source.messageId,source.revision,'completed');
  const agentId=f.store.meta('mainAgentId')!;
  const actor={agentId,threadId:'synthetic-history',turnId:'main-turn',sourceRequestId:'source'};
- const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work',authority:{sourceRequestId:'source',description:'Synthetic work only'}});
+ const task=f.tasks.createTask(actor,{operationId:'root',title:'Same title',goal:'Synthetic work'});
  const send=(operationId:string,text='Same text')=>{
   const opened=f.tasks.workerOpen(actor,{operationId,taskId:task.taskId,text:'Synthetic work'}),run=f.tasks.claim(opened.runId);
   if(run)f.tasks.bind(run.id,run.epoch,'thread:'+run.workerId,'turn:'+run.id);
@@ -159,13 +159,13 @@ test('paused Tasks reject new Worker execution until explicitly resumed; old coo
   const snapshot=()=>['tasks','runs','operations'].map(table=>f.store.db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all());const before=snapshot();
   assert.throws(()=>f.tasks.workerOpen(f.actor,{operationId:'open-paused',taskId:f.task.taskId,text:'Do work'}),/task_not_open/);
   assert.deepEqual(snapshot(),before);
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>{throw Error('unexpected_authority');},wake(){},async stop(){},async steer(){}});
+  const tools=new RecursiveTools(f.tasks,{wake(){},async stop(){},async steer(){}});
   for(const name of ['task_delegate','task_continue','inbox_read','inbox_ack','dispatch_work'])await assert.rejects(tools.call(f.actor,name,{},'legacy-'+name),/tool_denied/);
   const text='Resume synthetic work explicitly';
   f.inputs.accept({requestId:'resume-request',text});
   const resumed=f.inputs.claim()!;f.inputs.started(resumed.messageId,resumed.revision,'generation:resume','native:resume');
   const actor={...f.actor,sourceRequestId:'resume-request',inputMessageId:resumed.messageId,turnId:'native:resume'};
-  f.tasks.controlTask(actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume',authority:{sourceRequestId:'resume-request',description:text}});
+  f.tasks.controlTask(actor,{operationId:'resume',taskId:f.task.taskId,expectedRevision:f.tasks.task(f.task.taskId).revision,action:'resume'});
   assert.equal(f.tasks.workerOpen(actor,{operationId:'open-resumed',taskId:f.task.taskId,text:'Do work'}).state,'queued');
  }finally{f.close();}
 });
@@ -173,7 +173,7 @@ test('historical source text cannot gain authority in another Main thread',()=>{
  const f=fixture();try{
   f.store.setMeta('mainThread','new-thread');const actor={...f.actor,threadId:'new-thread'};
   assert.throws(()=>f.tasks.source(actor,'source'),/task_authority_source_denied/);
-  assert.throws(()=>f.tasks.createTask(actor,{operationId:'cross-thread',goal:'Do work',authority:{sourceRequestId:'source',description:'Forged'}}),/task_authority_source_denied/);
+  assert.throws(()=>f.tasks.createTask(f.actor,{operationId:'cross-thread',goal:'Do work'}),/agent_identity_denied/);
  }finally{f.close();}
 });
 test('main queue: Worker order survives reopen and pagination; source identity cannot be forged',()=>{
@@ -233,9 +233,8 @@ test('main queue: U1/W1/U2/W2 interleave and orphan sources never gain current-t
   const expected=[w2.messageId,page.items[0]!.messageId,w1.messageId,page.items[2]!.messageId];
   for(const messageId of expected){const next=f.inputs.claim([],'all')!;assert.equal(next.messageId,messageId);if(next.origin==='user')f.inputs.finish(next.messageId,next.revision,'completed');else f.consume(next);}
   const orphan=f.send('orphan');f.store.db.prepare('UPDATE agent_messages SET taskVersion=999 WHERE id=?').run(orphan.messageId);
-  assert.equal(f.inputs.dispatchSummary().unscoped,1);assert.equal(f.inputs.runnableHead('all'),undefined);
-  assert.deepEqual(f.inputs.dispatchPage(undefined,'epoch','all').items,[]);
-  assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(orphan.messageId)!.state,'pending');
+  const offered=f.inputs.claim([],'all')!;assert.equal(offered.messageId,orphan.messageId);
+  assert.throws(()=>f.tasks.authorizeReceiptDelivery({...f.actor,inputMessageId:offered.messageId},f.task.taskId),/task_authority_source_denied/);
  }finally{f.close();}
 });
 test('main queue: mixed segments keep a locked pending barrier and rejected races leave no operation or rank writes',()=>{

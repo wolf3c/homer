@@ -12,6 +12,8 @@
 
 [会话架构实施计划](superpowers/plans/2026-11-05-worker-chat-architecture.md)：已实现单一会话路径，普通回复直接回传，不保留旧库迁移与旧调用兼容。七个 chat 分工及独立审核，离线、桌面与实际 ChatGPT 验证分别记录；尚未部署到日常实例。
 
+[Homer 协作优化评审稿](main-worker-collaboration-optimization-proposal.md)汇总 Worker 分工标题、后台目标更新、暂停与恢复、跨事项联系及增派、聊天原文读取。第 25 版已接入源码，验收范围见[协作架构索引](architecture/README.md#协作优化与数据库升级)。
+
 旧协作链路的故障复现、宿主恢复和渠道回执可查阅当时的[工作架构收敛方案](work-coordination-architecture.md)。
 
 [协作身份与接口精简方案（历史）](collaboration-identity-simplification.md)：保留当时的接口精简与验证依据。普通文件仍用地址，稳定引用以当前消息与附件方案为准；旧合同、Matter、Result／Delivery 及旧调用兼容不作为新架构要求。
@@ -39,7 +41,7 @@
 
 | 顺序 | 文档 | 唯一负责的内容 |
 | --- | --- | --- |
-| 1 | [产品定义](01-product-definition.md) | 用户价值、交互原则、长期能力目标 |
+| 1 | [产品定义](01-product-definition.md) | 用户价值、交互原则（含工具能力与权限透明）、长期能力目标 |
 | 2 | [需求与首版范围](02-requirements-and-mvp.md) | 需求编号、优先级、功能边界及行为要求 |
 | 3 | [技术方案](03-technical-design.md) | 数据归属、执行机制、引擎集成和故障处理 |
 | 4 | [实施与验收](04-delivery-and-acceptance.md) | 当前 M0 的实施步骤、里程碑和完成标准 |

@@ -1,7 +1,7 @@
 // Real business and projection owners with isolated synthetic history.
 import test from 'node:test';import assert from 'node:assert/strict';
 import {chatFixture} from './task-chat-fixture.js';import {MainProcessHistory} from '../src/main-process.js';import {Homer} from '../src/service.js';
-function fixture(){const f=chatFixture(),processes=new MainProcessHistory(f.store.db),make=(id:string,title='同名事项')=>f.tasks.createTask(f.actor,{operationId:id,title,goal:'PRIVATE_GOAL',authority:f.authority});return {...f,processes,make};}
+function fixture(){const f=chatFixture(),processes=new MainProcessHistory(f.store.db),make=(id:string,title='同名事项')=>f.tasks.createTask(f.actor,{operationId:id,title,goal:'PRIVATE_GOAL'});return {...f,processes,make};}
 test('owner records exact public action and receipt, never raw payload or arbitrary transport success',()=>{
  const f=fixture();try{
   const a=f.make('a'),b=f.make('b');for(const task of [a,b]){const result=f.tasks.readTask(f.actor,task.taskId),fact=f.tasks.captureActivity(f.actor,'work_inspect',{taskId:task.taskId},result)!;assert.equal(fact.action,'inspect_task');assert.equal(fact.objectName,'同名事项');assert.equal(fact.target?.taskId,task.taskId);assert.equal(fact.target?.version,1);assert.doesNotMatch(JSON.stringify(fact),/PRIVATE_|goal|authority|payload/);}
@@ -39,8 +39,7 @@ test('later requirements preserve the original delegation evidence and Run versi
   f.processes.finish('generation:return','completed','turn:turn:return:terminal:completed');
   const input=f.source('source:new','Use changed scope');
   const actor={...f.actor,sourceRequestId:'source:new',inputMessageId:input.messageId};
-  f.tasks.updateTask(actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Changed scope'},
-    authority:{sourceRequestId:'source:new',description:'Use changed scope'}});
+  f.tasks.updateTask(actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Changed scope'}});
   assert.equal(before.operations[0]?.response.runId,run.id);
   assert.equal(run.version,1);
   assert.deepEqual(f.tasks.inspectOperation(actor,'open',task.taskId),before);

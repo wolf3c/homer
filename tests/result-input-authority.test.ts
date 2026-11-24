@@ -56,7 +56,7 @@ test('a failed steering receipt and a revoked source cannot restore attachment a
   f.tasks.updateTask(main,{...mutation(f,'notes'),patch:{notes:'Read the ungranted asset anyway'}});
   assert.deepEqual(f.tasks.workerAttachments(actor),[]);
   const source=f.source('withdrawal','Remove the old scope');
-  f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'Use revised scope'},authority:authority('withdrawal')});
+  f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'Use revised scope'}});
   assert.deepEqual(f.tasks.workerAttachments(actor),[]);
   complete(f,actor);
   const continuation=f.tasks.workerMessage(source,{operationId:'continue',workerId:worker.workerId,text:'Continue after confirmed exit'});

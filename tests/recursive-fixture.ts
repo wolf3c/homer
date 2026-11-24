@@ -30,7 +30,7 @@ export function fixture(scratch='.codex/scratch/chat-architecture-implementation
   return {...main,sourceRequestId:requestId};
  };
  source(main.sourceRequestId!);
- const task=tasks.createTask(main,{operationId:'create',goal:'Check synthetic input; preserve unknown dates',authority:authority()});
+ const task=tasks.createTask(main,{operationId:'create',goal:'Check synthetic input; preserve unknown dates'});
  return {dir,store,tasks,files,history,inputs,processes,source,task,close(){store.close();rmSync(dir,{recursive:true,force:true});}};
 }
 export type Fixture=ReturnType<typeof fixture>;

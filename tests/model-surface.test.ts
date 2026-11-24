@@ -107,15 +107,20 @@ test('new Main validates titles before staging and commits one original dispatch
   } finally {await f.close();}
 });
 
-test('role instructions and archive Skill refer only to tools actually available to that role', () => {
+test('role instructions and archive Skill refer only to tools actually available to that role', async () => {
   const prompts = loadPrompts();
-  const main = HOST_MCP_TOOLS;
+  const f=fixture([{id:'synthetic',async send(){throw Error('unexpected_channel_send');}}]);
   const worker = WORKER_HOST_MCP_TOOLS;
   const archive = readFileSync(new URL('../.codex/skills/homer-archive-review/SKILL.md', import.meta.url), 'utf8');
-  for (const [source, tools] of [[prompts.main, main], [archive, main], [prompts.worker, worker]] as const) {
-    const names = new Set(tools.map(tool => tool.name));
-    for (const match of source.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) assert.ok(names.has(match[1]!), match[1]);
-  }
+  try{
+    await f.app.start();
+    const main=f.engines[0]!.options.interactionMcp!.catalog;
+    assert.ok(main);
+    for (const [source, tools] of [[prompts.main, main], [archive, HOST_MCP_TOOLS], [prompts.worker, worker]] as const) {
+      const names = new Set(tools.map(tool => tool.name));
+      for (const match of source.matchAll(/`([a-z]+(?:_[a-z]+)+)`/g)) assert.ok(names.has(match[1]!), match[1]);
+    }
+  }finally{await f.close();}
 });
 
 test('the real host exposes business tools once in its role MCP catalog', async () => {

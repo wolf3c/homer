@@ -17,17 +17,17 @@ test('first dispatch is atomic and reuses its original task and run',()=>{
  } finally {f.close();}
 });
 
-test('recording an idea without authority creates no Worker and cannot dispatch',()=>{
+test('recording an idea leaves dispatch to a separate call',()=>{
  const f=fixture();
  try {
   const idea=f.tasks.createTask(main,{operationId:'idea',goal:'Possibly write a handbook'});
   assert.equal(f.tasks.version(idea.taskId,1).authorityJson,null);
-  assert.throws(()=>f.tasks.workerOpen(main,{operationId:'idea-dispatch',taskId:idea.taskId,text:'Write the handbook'}),/task_authority_source_denied/);
   assert.equal(f.tasks.runs(idea.taskId).length,0);
+  assert.equal(f.tasks.workerOpen({...main,sourceRequestId:undefined},{operationId:'idea-dispatch',taskId:idea.taskId,text:'Write the handbook'}).state,'queued');
  } finally {f.close();}
 });
 
-test('archiving a record made without a user source routes its fact without granting execution',()=>{
+test('archiving a record made without a user source routes its fact and preserves its receipt',()=>{
  const f=fixture();
  try {
   const idea=f.tasks.createTask({...main,sourceRequestId:undefined},{operationId:'internal-idea',goal:'Note an idea for later'});
@@ -42,7 +42,7 @@ test('archiving a record made without a user source routes its fact without gran
   f.store.transaction(()=>{f.processes.start({id:'archive-generation',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'archive-generation'},'archive-turn');f.tasks.receiveMainMessagesInTransaction([input.messageId],'archive-turn');});
   const event={...main,sourceRequestId:undefined,inputMessageId:input.messageId};
   const {taskId}=f.tasks.createTask(event,{operationId:'record-followup',goal:'Start work'});
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'dispatch-from-record',taskId,authority:authority('archive-idea')}),/task_authority_source_denied/);
+  assert.equal(f.tasks.version(taskId,1).sourceRequestId,null);
   f.processes.reconcileUnknown(main.threadId!,true);f.inputs.reconcile();
   assert.equal(f.inputs.claim([],'all'),undefined,'confirmed receipt is never reoffered after owner closure');
   assert.equal(f.store.db.prepare('SELECT state FROM agent_receipts WHERE messageId=?').get(input.messageId)!.state,'received');
@@ -51,21 +51,20 @@ test('archiving a record made without a user source routes its fact without gran
  } finally {f.close();}
 });
 
-test('paused edits do not start work and resuming requires newer real input',()=>{
+test('paused edits wait and resuming does not change the accepted version',()=>{
  const f=fixture();
  try {
   f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});
   const revised=f.source('revised');
-  f.tasks.updateTask(revised,{...mutation(f,'edit'),patch:{goal:'Change requirements'},authority:authority('revised')});
+  f.tasks.updateTask(revised,{...mutation(f,'edit'),patch:{goal:'Change requirements'}});
   assert.equal(f.tasks.task(f.task.taskId).state,'paused');
   assert.equal(f.tasks.claim(),undefined);
-  assert.throws(()=>f.tasks.controlTask(revised,{...mutation(f,'invalid-resume'),action:'resume',authority:authority('revised')}),/task_authority_source_denied/);
-  const next=f.source('next');
-  const input={...mutation(f,'continue'),action:'resume' as const,authority:authority('next'),goal:'Continue with a new requirement'};
-  const receipt=f.tasks.controlTask(next,input);
-  assert.deepEqual(f.tasks.controlTask(next,input),receipt);
+  const actor={...main,sourceRequestId:undefined};
+  const input={...mutation(f,'continue'),action:'resume' as const};
+  const receipt=f.tasks.controlTask(actor,input);
+  assert.deepEqual(f.tasks.controlTask(actor,input),receipt);
   const current=f.tasks.task(f.task.taskId);
-  assert.equal(current.headVersion,3);
+  assert.equal(current.headVersion,2);
   assert.equal(current.state,'open');
   assert.equal(f.tasks.version(f.task.taskId,2).goal,'Change requirements');
   assert.equal(f.tasks.claim(),undefined);
@@ -77,16 +76,16 @@ test('a long-running task keeps the required sources across many incremental edi
  try {
   for(let n=0;n<24;n++){
    const source='edit-'+n,actor=f.source(source);
-   f.tasks.updateTask(actor,{...mutation(f,source),patch:{goal:'Revised goal '+n},authority:authority(source)});
+   f.tasks.updateTask(actor,{...mutation(f,source),patch:{goal:'Revised goal '+n}});
   }
   const version=f.tasks.task(f.task.taskId).headVersion;
-  const current=f.tasks.authority(f.task.taskId,version);
+  const current=f.tasks.version(f.task.taskId,version);
   assert.equal(current.sourceRequestId,'edit-23');
-  assert.equal(f.tasks.validateAuthority(main,current).length,25);
+  assert.equal(f.tasks.readTask(main,f.task.taskId).sourceRequestIds.length,25);
  } finally {f.close();}
 });
 
-test('revocation removes authority while a later real request can supersede it',()=>{
+test('revocation removes the original message from readable history while resume keeps version',()=>{
  const f=fixture();
  try {
   const requestId=main.sourceRequestId!,threadId=main.threadId!;
@@ -94,11 +93,10 @@ test('revocation removes authority while a later real request can supersede it',
   const old=f.history.list(threadId).find(message=>message.requestId===requestId&&message.role==='user')!;
   assert.equal(f.history.revokeMessage(threadId,old.id),true);
   assert.throws(()=>f.tasks.source(main,requestId),/source_denied/);
-  assert.throws(()=>f.tasks.validateAuthority(main,authority()),/source_denied/);
   const fresh=f.source('renewed','Authorize continuation');
-  const resumed=f.tasks.controlTask(fresh,{...mutation(f,'resume-revoked'),action:'resume',authority:authority('renewed')});
-  assert.equal(resumed.version,2);
-  assert.equal(f.tasks.authority(f.task.taskId,2).sourceRequestId,'renewed');
+  const resumed=f.tasks.controlTask(fresh,{...mutation(f,'resume-revoked'),action:'resume'});
+  assert.equal(resumed.version,1);
+  assert.equal(f.tasks.version(f.task.taskId,1).sourceRequestId,requestId);
   assert.equal(f.tasks.claim(),undefined);
  } finally {f.close();}
 });

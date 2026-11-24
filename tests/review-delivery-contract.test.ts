@@ -45,7 +45,7 @@ test('one user-visible attachment message records the exact task version without
 test('public tool validation exposes schema paths without echoing private property names or values',async()=>{
  const f=fixture();
  try{
-  const api=new RecursiveTools(f.tasks,{rootAuthority:()=>authority(),wake(){},stop:async r=>r,steer:async r=>r});
+  const api=new RecursiveTools(f.tasks,{wake(){},stop:async r=>r,steer:async r=>r});
   await assert.rejects(()=>api.call(main,'worker_open',{message:'Check scope',taskId:f.task.taskId,private_argument_name:'PRIVATE_VALUE'},'invalid'),error=>{
    assert.equal((error as Error).message,'invalid_tool_arguments');assert.doesNotMatch(JSON.stringify(error),/private_argument_name|PRIVATE_VALUE/);return true;
   });
@@ -61,7 +61,7 @@ test('new requirements preserve the version and text of a previously committed a
    threadId:main.threadId!,taskId:f.task.taskId,taskVersion:1,text:'Earlier answer',operationKey:'earlier-answer',
   }));
   const source=f.source('changed','Change the requirements');
-  f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New requirements'},authority:authority(source.sourceRequestId)});
+  f.tasks.updateTask(source,{...mutation(f,'change'),patch:{goal:'New requirements'}});
   assert.equal(f.tasks.task(f.task.taskId).headVersion,2);
   assert.equal(f.history.message(id)?.taskVersion,1);
   assert.equal(f.history.message(id)?.text,'Earlier answer');
@@ -91,7 +91,7 @@ for(const entry of ['conversation','work status'])test(`${entry} archive review 
     const record=await main.call('work_inspect',{taskId});
     assert.equal(record.task.historyState,'archived');
     assert.equal(record.goal,instruction);
-    assert.equal(f.app['rootAuthority'](f.app['mainActor'](true))?.sourceRequestId,'original');
+    assert.equal(f.app.tasks.version(taskId,1).sourceRequestId,'original');
     assert.equal(readFileSync(preview,'utf8'),'Temporary preview');
     assert.equal(readFileSync(source,'utf8'),'Editable original');
     unlinkSync(preview);
@@ -106,43 +106,18 @@ for(const entry of ['conversation','work status'])test(`${entry} archive review 
   writeFileSync(source,'Editable original');writeFileSync(preview,'Temporary preview');
   const request=(operationId:string)=>({taskId,operationId,expectedRevision:f.app.tasks.task(taskId).revision,
    threadId:f.app.store.meta('mainThread')!,readEpoch:f.app.webReadEpoch});
-  if(entry==='work status'){
-   const result=await chat('tasks.archive',request('running')) as {state:string;reason?:string};
-   assert.equal(result.state,'skipped');
-   assert.equal(result.reason,'run_not_closed');
-   assert.equal(f.app.tasks.task(taskId).historyState,'visible');
-  }
   worker()!.finish!({status:'completed',text:'Source and preview are ready.'});
   await f.app.idle();
   assert.equal(f.app.tasks.task(taskId).historyState,'visible');
   assert.ok(existsSync(preview));
   if(entry==='conversation')await f.app.message('Archive this record','archive');
   else{
-   const store=f.app.store.db,run=f.app.tasks.runs(taskId)[0]!;
-   const projected=async()=>(await bridge.taskOverview!.list()).tasks.find(task=>task.id===taskId)?.archiveBlocker;
-   const archive=async(operationId:string)=>await chat('tasks.archive',request(operationId)) as {state:string;reason?:string};
    const pending=request('valid');
    await assert.rejects(()=>chat('tasks.archive',{...pending,readEpoch:'stale'}),/history_epoch_changed/);
    await assert.rejects(()=>chat('tasks.archive',{...pending,threadId:'foreign'}),/queue_thread_conflict/);
    await assert.rejects(()=>chat('tasks.archive',{...pending,sourceRequestId:'forged'}),/task_archive_invalid/);
    await assert.rejects(()=>chat('tasks.archive',{...pending,expectedRevision:pending.expectedRevision+1}),/task_revision_conflict/);
 
-   store.prepare("INSERT INTO operations VALUES('fake-uncertain',? ,?,'fake-op','synthetic','synthetic','uncertain','{}',NULL,0)").run(f.app.store.meta('mainAgentId')!,taskId);
-   assert.equal(await projected(),'operation_unresolved');
-   assert.equal((await archive('uncertain')).reason,'operation_unresolved');
-   store.exec("DELETE FROM operations WHERE id='fake-uncertain'");
-   store.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt)
-     VALUES('fake-question','fake-question','fake-question',?,?,?,'ask','ask_main','question','{}','{}','pending_user',0,0)`).run(run.id,run.threadId!,run.turnId!);
-   assert.equal(await projected(),'interaction_unresolved');
-   assert.equal((await archive('pending')).reason,'interaction_unresolved');
-   store.exec("DELETE FROM worker_interactions WHERE id='fake-question'");
-   assert.equal(await projected(),null);
-   const main=f.app['main']!;
-   const listSkills=main.request!.bind(main);
-   main.request=async()=>({data:[]});
-   await assert.rejects(()=>chat('tasks.archive',pending),/archive_review_skill_unavailable/);
-   assert.equal(f.app.tasks.task(taskId).historyState,'visible');
-   main.request=listSkills;
    const [receipt,replay]=await Promise.all([chat('tasks.archive',pending),chat('tasks.archive',pending)]);
    assert.equal((receipt as {state:string}).state,'archived');
    assert.deepEqual(replay,receipt);
@@ -172,7 +147,7 @@ test('work status keeps an archived receipt and exposes a review failure without
   const task=f.app.tasks.task(taskId);
   const main=f.app['main']!,listSkills=main.request!.bind(main);
   let reads=0;
-  main.request=async(method,...args)=>method==='skills/list'&&++reads>1?{data:[]}:listSkills(method,...args);
+  main.request=async(method,...args)=>method==='skills/list'&&++reads>=1?{data:[]}:listSkills(method,...args);
   const request={taskId,expectedRevision:task.revision,operationId:'click',threadId:f.app.store.meta('mainThread')!,readEpoch:f.app.webReadEpoch};
   const receipt=await chat('tasks.archive',request);
   assert.equal((receipt as {state:string}).state,'archived');
@@ -182,6 +157,6 @@ test('work status keeps an archived receipt and exposes a review failure without
   assert.equal(archived?.id,taskId);
   assert.equal(archived?.archiveReviewIssue,'failed');
   assert.equal(reviewTurns,0);
-  assert.equal(reads,2);
+  assert.equal(reads,1);
  }finally{await f.close();}
 });

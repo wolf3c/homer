@@ -252,7 +252,7 @@ test('explicit user recovery answers the original live request without requeuing
  const f=await fixture('answer',1,{skipDecision:true,reply:{status:'completed',text:''}});
  try{
   await f.app.message('dispatch','synthetic-dispatch');
-  await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
+  await until(()=>f.app.processes.list(f.app.store.meta('mainThread')!).some(node=>node.sourceKind==='worker'&&node.status==='completed'));
   const item=f.app.interactions.list()[0]!,query=f.app.store.db.prepare("SELECT m.id,r.state FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='interaction_required' AND json_extract(m.payloadJson,'$.interactionId')=?");
   const before=query.get(item.id)!;
   await f.app.message('reply '+item.id,'synthetic-recovery');
@@ -276,7 +276,7 @@ test('a cancelled original callback can be consumed silently without dropping th
 });
 
 test('mailbox receipt remains received when a nonempty reply fails to handle a live approval',async()=>{
- const f=await fixture('answer',1,{skipDecision:true,reply:{status:'completed',text:'Synthetic statement without decision'}});
+ const f=await fixture('direct',1,{skipDecision:true,reply:{status:'completed',text:'Synthetic statement without decision'}});
  try{
   await f.app.message('dispatch','synthetic-pending');
   await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
@@ -341,16 +341,16 @@ test('replying to a historical approval after inspecting the current one preserv
  }finally{await f.cleanup();}
 });
 
-test("HMR-INTERACTION-002: a successful file write without a decision does not excuse an empty reply", async () => {
+test("HMR-INTERACTION-002: an unanswered business question can stay pending after a silent internal turn", async () => {
   const f = await fixture("answer", 1, { reply: { status: "completed", text: "" }, skipDecision: true, handoff: true });
   try {
     await f.app.message("dispatch", "user-task");
-    await until(()=>f.events().some(event=>event.type==='internal_processing_failed'));
-    assert.equal(f.app.interactions.list()[0]?.state, "pending_main","failed coordination preserves the original question for recovery");
+    await until(()=>f.app.processes.list(f.app.store.meta('mainThread')!).some(node=>node.sourceKind==='worker'&&node.status==='completed'));
+    assert.equal(f.app.interactions.list()[0]?.state, "pending_main","silent coordination preserves the original question for recovery");
     assert.equal(f.resumes.length, 0);
     assert.equal(f.handoffs.length, 1);
     assert.equal(JSON.parse(readFileSync(f.handoffs[0]!, "utf8")).source, "synthetic");
-    assert.ok(f.events().some(event => event.type === "internal_processing_failed" && event.code === "main_empty_reply"));
+    assert.ok(!f.events().some(event => event.type === "internal_processing_failed"));
   } finally { await f.cleanup(); }
 });
 

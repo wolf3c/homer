@@ -85,3 +85,39 @@ test('the desktop resumes a partially published migration without replacing its 
   const store=new Store(f.database);try{assert.equal(store.meta('mainToolsHash'),MAIN_TOOLS_HASH);}finally{store.close();}
  }finally{f.close();}
 });
+
+test('v9 migration rolls back on a copy error and preserves Run rowids, references and queue order on retry',async()=>{
+ const f=fixture();try{
+  await migrateDesktopBaseline(f.runtime,f.codexHome);
+  const db=new DatabaseSync(f.database,{enableForeignKeyConstraints:false});
+  try{
+   db.exec(`UPDATE meta SET value='9' WHERE key='recursiveSchemaVersion';
+    UPDATE tasks SET state='open',historyState='visible';
+    UPDATE runs SET rowid=13;
+    INSERT INTO runs(rowid,id,taskId,workerId,version,sourceRequestId,goal,prompt,status,phase,workingDirectory,createdAt,replacesRunId)
+      SELECT 20,'next',taskId,id,version,sourceRequestId,goal,prompt,'queued','ready',workingDirectory,1,id FROM runs WHERE id='run';
+    INSERT INTO runs(rowid,id,taskId,workerId,version,sourceRequestId,goal,prompt,status,phase,workingDirectory,createdAt)
+      SELECT 25,'peer',taskId,'peer',version,sourceRequestId,goal,prompt,'queued','ready',workingDirectory,1 FROM runs WHERE id='run';
+    INSERT INTO events(runId,type,at) VALUES('next','synthetic',1);
+    ALTER TABLE runs ADD COLUMN unrecognized TEXT;`);
+   assert.throws(()=>new Store(f.database),/desktop_store_migration_required/);
+   await assert.rejects(migrateDesktopBaseline(f.runtime,f.codexHome),/unrecognized/);
+   assert.equal(db.prepare("SELECT value FROM meta WHERE key='recursiveSchemaVersion'").get()?.value,'9');
+   assert.equal(db.prepare("SELECT rowid FROM runs WHERE id='next'").get()?.rowid,20);
+   assert.equal(db.prepare("SELECT name FROM sqlite_schema WHERE name='runs_v10'").get(),undefined);
+   db.exec('ALTER TABLE runs DROP COLUMN unrecognized;');
+   const before=db.prepare('SELECT rowid,* FROM runs ORDER BY rowid').all();
+   const indexes=db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name='runs' ORDER BY name").all();
+   await migrateDesktopBaseline(f.runtime,f.codexHome);
+   assert.deepEqual(db.prepare('SELECT rowid,* FROM runs ORDER BY rowid').all(),before);
+   assert.deepEqual(db.prepare("SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name='runs' ORDER BY name").all(),indexes);
+   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+   assert.equal(db.prepare('SELECT runId FROM events').get()?.runId,'next');
+   const store=new Store(f.database);try{
+    assert.deepEqual(store.runs().map(run=>run.id),['run','next','peer']);
+    assert.equal(store.run('next')!.replacesRunId,'run');
+    assert.equal(store.db.prepare("SELECT \"notnull\" AS required FROM pragma_table_info('runs') WHERE name='sourceRequestId'").get()?.required,0);
+   }finally{store.close();}
+  }finally{db.close();}
+ }finally{f.close();}
+});

@@ -47,23 +47,10 @@ export type ChannelAdapter = {
 };
 export type ChannelMessageSource = {source:string;entryLabel:string};
 
-export function channelSourceAuthorization(runtime:string,requestId:string){
-  let db:DatabaseSync|undefined;
-  try{
-    db=new DatabaseSync(join(runtime,'channels.sqlite'),{readOnly:true});
-    const row=db.prepare(`SELECT b.id,b.revokedAt,g.chatId,g.changeId FROM channel_requests r JOIN channel_bindings b ON b.id=r.bindingId
-      LEFT JOIN telegram_group_routes g ON g.requestId=r.id WHERE r.id=?`).get(requestId);
-    if(!row||row.revokedAt!==null)return 'denied';
-    if(row.chatId===null)return 'private';
-    return db.prepare('SELECT 1 FROM telegram_groups WHERE bindingId=? AND chatId=? AND changeId=? AND active=1').get(row.id!,row.chatId!,row.changeId!)?'group':'denied';
-  }catch{return 'unavailable';}
-  finally{db?.close();}
-}
-
 const subscriptionTool = {
   type:'function', name:'set_notification_destination',
-  description:'Subscribe this verified chat to all future user-facing background messages and attachments for the task. Call only when the user explicitly asks to receive those messages here. Ordinary replies keep their original route.',
-  inputSchema:{type:'object',properties:{taskId:{type:'string',minLength:1,maxLength:200}},required:['taskId'],additionalProperties:false},
+  description:'Subscribe a verified chat to future user-facing background messages and attachments for the task. Use the current channel chat or pass the visible user messageId for the requested destination in a background turn. Call only when the user explicitly asks for that delivery. Ordinary replies retain their routes.',
+  inputSchema:{type:'object',properties:{taskId:{type:'string',minLength:1,maxLength:200},messageId:{type:'string',minLength:1,maxLength:200}},required:['taskId'],additionalProperties:false},
 } as const;
 
 // Adapters submit verified private-conversation identities. Binding is a trusted
@@ -120,10 +107,12 @@ export class ChannelPlugin {
         this.db.exec('ALTER TABLE channel_outbox ADD COLUMN notice TEXT');
       this.recoverSending();
       app.registerMainPluginTool({...subscriptionTool},(args,context)=>{
-        const {taskId}=args as {taskId:string};
+        const {taskId,messageId}=args as {taskId:string;messageId?:string};
         this.requireOpen();
         context.authorizeTask(taskId);
-        return this.subscribe(taskId,context.requestId);
+        const requestId=messageId?context.readChannelMessage(messageId):context.requestId;
+        if(!requestId)throw Error('channel_destination_required');
+        return this.subscribe(taskId,requestId);
       });
     } catch (error) { this.db.close(); throw error; }
   }

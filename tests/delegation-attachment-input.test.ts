@@ -43,7 +43,7 @@ test('Worker attachment input rejects malformed selectors and foreign sources be
  }finally{await f.close();}
 });
 
-for(const scope of ['attachment','task'] as const)test('Worker attachment reads and export receipts after revoking the '+scope,async()=>{
+for(const scope of ['attachment','source message'] as const)test('Worker attachment reads and export receipts after revoking the '+scope,async()=>{
  const f=fixture();let selected:Opened|undefined,other:Opened|undefined;
  try{
   await f.app.start();
@@ -77,12 +77,10 @@ for(const scope of ['attachment','task'] as const)test('Worker attachment reads 
   assert.equal(operation.state,'confirmed');
   if(scope==='attachment')f.app.media.revoke(requestId);
   else assert.ok(f.app.history.revokeMessage(source.threadId,source.id));
-  const denied=scope==='attachment'?/^Error: media_scope_denied$/:/^Error: task_authority_source_denied$/;
+  const denied=/^Error: media_scope_denied$/;
   await assert.rejects(read(receiver),denied);
   await assert.rejects(peer.call('stage_file_result',{...ref,filename:'revoked.txt'}),denied);
-  const replay=peer.call('stage_file_result',exportArgs,'retained-export');
-  if(scope==='attachment')assert.deepEqual(await replay,exported);
-  else await assert.rejects(replay,denied);
+  assert.deepEqual(await peer.call('stage_file_result',exportArgs,'retained-export'),exported);
   assert.equal(existsSync(join(dirname(exported.path),'revoked.txt')),false);
   assert.deepEqual(f.app.tasks.operation(exported.operationKey),operation);
   assert.equal(readFileSync(exported.path,'utf8'),'Synthetic source');

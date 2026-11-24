@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync,symlinkSync} from 'node:fs';
 import {dirname,join} from 'node:path';
-import {fixture,openWorker,running,complete,main,mutation,authority} from './recursive-fixture.js';
+import {fixture,openWorker,running,complete,main,mutation} from './recursive-fixture.js';
 import {MediaStore} from '../src/media-store.js';
 import {htmlAttachmentFixture} from './canvas-html-publication-fixture.js';
 
@@ -83,7 +83,7 @@ test('explicit interruption after a goal change fences the old writer and keeps 
  try{
   const worker=openWorker(f),actor=running(f,worker.runId);
   const source=f.source('changed-requirement','Prepare replacement files');
-  f.tasks.updateTask(source,{...mutation(f,'replace'),patch:{goal:'Prepare replacement files'},authority:authority(source.sourceRequestId)});
+  f.tasks.updateTask(source,{...mutation(f,'replace'),patch:{goal:'Prepare replacement files'}});
   const prior=f.tasks.writeFile(actor,{operationId:'original',filename:'original.md',bytes:Buffer.from('original grant')});
   assert.equal(readFileSync(prior.path,'utf8'),'original grant');
   const stop=f.tasks.workerStop(source,{operationId:'stop-writer',workerId:worker.workerId});

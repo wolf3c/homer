@@ -17,7 +17,7 @@ export function chatFixture(lifecycle?:RecursiveTaskLifecycle){
  }
  const original=source('source:test');actor.inputMessageId=original.messageId;
  const authority:Authority={sourceRequestId:'source:test',description:'Investigate only'};
- function create(goal='Investigate without edits',operationId='create',extra:Partial<Authority>={}){return tasks.createTask(actor,{operationId,goal,authority:{...authority,...extra}});}
+ function create(goal='Investigate without edits',operationId='create'){return tasks.createTask(actor,{operationId,goal});}
  function consumeMain(messageId:string){
   let receipt=store.db.prepare('SELECT state,offeredTurnId FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(messageId,actor.agentId)!;
   if(receipt.state==='pending'){if(inputs.claim([],'all')?.messageId!==messageId)throw Error('fixture_consumer_order');receipt=store.db.prepare('SELECT state,offeredTurnId FROM agent_receipts WHERE messageId=? AND recipientAgentId=?').get(messageId,actor.agentId)!;}

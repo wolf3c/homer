@@ -28,7 +28,7 @@ test('same-session followup replaces its latest Run projection and preserves his
  }finally{f.close();}
 });
 
-test('pending questions retain exact Run epoch version thread and turn ownership',()=>{
+for(const terminal of ['completed','failed'] as const)test('pending questions retain exact Run ownership after '+terminal,()=>{
  const f=overviewFixture();try{
   const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt,runEpoch,taskVersion) VALUES('question','identity','fingerprint',?,'thread:page','turn:page','request','ask_main','question','{}','{}','pending_user',100,100,?,?)`).run(run.id,run.epoch,run.version);
@@ -42,7 +42,7 @@ test('pending questions retain exact Run epoch version thread and turn ownership
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(value);row=readTaskOverview(f.store.db).tasks[0]!;assert.equal(row.workers[0]!.pendingMain,0,column);
    f.store.db.prepare(`UPDATE worker_interactions SET ${column}=?`).run(before??null);
   }
-  f.tasks.recordWorkerTerminal(run.id,run.epoch,{status:'completed',text:'Waiting for the answer'});
+  f.tasks.recordWorkerTerminal(run.id,run.epoch,{status:terminal,text:'Waiting for the answer'});
   f.tasks.confirmWorkerExit(run.id,undefined);
   f.tasks.reconcile();
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.workers[0]!.pendingMainQuestions,1);
@@ -55,10 +55,16 @@ test('pending questions retain exact Run epoch version thread and turn ownership
 
 test('overview stays batched and excludes message bodies and historical execution payloads',()=>{
  const f=overviewFixture();try{
-  const a=f.open('page'),run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'large reply'.repeat(10000)},true);
+  const a=f.tasks.workerOpen(f.actor,{taskId:f.taskId,operationId:'open-page',text:'Page',workTitle:'First stage'});
+  const b=f.tasks.workerOpen(f.actor,{taskId:f.taskId,operationId:'open-build',text:'Build',workTitle:'Separate stage'});
+  const run=f.tasks.claim(a.runId)!;f.tasks.bind(run.id,run.epoch,'thread:page','turn:page');f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'large reply'.repeat(10000)},true);
+  f.tasks.workerMessage(f.actor,{operationId:'new-stage',workerId:a.workerId,text:'Later',workTitle:'Second stage'});
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   f.store.db.exec('PRAGMA query_only=ON');const before=f.store.db.prepare('SELECT total_changes() n').get();const data=readTaskOverview(db);
-  assert.equal(statements.length,4);assert.ok(statements.every(sql=>/^SELECT/.test(sql)));assert.ok(statements.every(sql=>!/(payloadJson|checkpointJson|filePath)/.test(sql)));assert.equal(data.tasks[0]!.workers.length,1);assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
+  assert.equal(statements.length,5);assert.equal(statements.filter(sql=>sql.includes('$.workTitle')).length,1);
+  assert.ok(statements.every(sql=>/^SELECT/.test(sql)));assert.ok(statements.every(sql=>!/(payloadJson|checkpointJson|filePath)/.test(sql.replaceAll(/json_(?:extract|type)\(m\.payloadJson,'\$\.workTitle'\)/g,''))));
+  assert.deepEqual(data.tasks[0]!.workers.map(worker=>[worker.id,worker.assignments?.map(item=>item.title)]),[[a.workerId,['First stage','Second stage']],[b.workerId,['Separate stage']]]);
+  assert.deepEqual(f.store.db.prepare('SELECT total_changes() n').get(),before);
   assert.throws(()=>readTaskDetail(f.store.db,'unknown'),/task_not_found/);assert.throws(()=>readTaskDetail(f.store.db,'../outside'),/task_not_found/);
  }finally{f.close();}
 });
@@ -67,7 +73,7 @@ test('overview counts a pending reply from the latest Worker run under its origi
  const f=overviewFixture();try{
   const w=f.open('page'),run=f.tasks.claim(w.runId)!;
   f.tasks.bind(run.id,run.epoch,'thread:page','turn:original');
-  f.tasks.updateTask(f.actor,{operationId:'revise',taskId:f.taskId,expectedRevision:f.tasks.task(f.taskId).revision,patch:{goal:'Revise future work'},authority:f.authority});
+  f.tasks.updateTask(f.actor,{operationId:'revise',taskId:f.taskId,expectedRevision:f.tasks.task(f.taskId).revision,patch:{goal:'Revise future work'}});
   const reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original observation'},true)!;
   const task=readTaskOverview(f.store.db).tasks[0]!;
   assert.equal(task.headVersion,2);assert.equal(task.workers[0]!.run.version,1);

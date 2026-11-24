@@ -1,7 +1,7 @@
 // Requirements-derived synthetic inputs; no model, channel or daily runtime.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
 
 test('two Workers share one Task, open replay is exact and failure keeps the Task current',()=>{
  const f=fixture();try{
@@ -17,11 +17,11 @@ test('two Workers share one Task, open replay is exact and failure keeps the Tas
  }finally{f.close();}
 });
 
-test('notes CAS and operation replay preserve goal, version and authority',()=>{
+test('notes CAS and operation replay preserve goal, version and sources',()=>{
  const f=fixture();try{
-  const before=f.tasks.authority(f.task.taskId,1),input={...mutation(f,'notes'),patch:{notes:'Unknown date; inspect both sources'}};
+  const before=f.tasks.version(f.task.taskId,1),input={...mutation(f,'notes'),patch:{notes:'Unknown date; inspect both sources'}};
   const receipt=f.tasks.updateTask(main,input);assert.deepEqual(f.tasks.updateTask(main,input),receipt);
-  assert.equal(f.tasks.task(f.task.taskId).headVersion,1);assert.deepEqual(f.tasks.authority(f.task.taskId,1),before);
+  assert.equal(f.tasks.task(f.task.taskId).headVersion,1);assert.deepEqual(f.tasks.version(f.task.taskId,1),before);
   assert.throws(()=>f.tasks.updateTask(main,{...input,operationId:'stale'}),/revision_conflict/);
   assert.equal(f.tasks.task(f.task.taskId).notes,input.patch.notes);
  }finally{f.close();}
@@ -93,27 +93,29 @@ test('restart preserves raw checkpoint, invalidates old epoch and needs confirme
  }finally{f.close();}
 });
 
-for(const confirmed of [false,true])test('archiving waits for execution, exit and Main receipt confirmation: '+confirmed,()=>{
+for(const confirmed of [false,true])test('archiving preserves execution and Main receipt facts: '+confirmed,()=>{
  const f=fixture();try{
   const w=openWorker(f),actor=running(f,w.runId);
   const archive=(id:string)=>f.tasks.archiveHistory(main,mutation(f,id),true);
-  assert.equal(archive('too-early').state,'skipped');complete(f,actor,'Readable answer',confirmed);
-  if(!confirmed){assert.equal(archive('unknown').state,'skipped');f.tasks.confirmWorkerExit(w.runId,undefined);}
+  assert.equal(archive('while-running').state,'archived');assert.equal(f.tasks.run(w.runId).status,'running');
+  complete(f,actor,'Readable answer',confirmed);
+  if(!confirmed){assert.equal(f.tasks.run(w.runId).phase,'uncertain');f.tasks.confirmWorkerExit(w.runId,undefined);}
   processReplies(f);const input=mutation(f,'archive');assert.equal(f.tasks.archiveHistory(main,input,true).state,'archived');
   assert.equal(f.tasks.task(f.task.taskId).historyState,'archived');assert.equal(f.tasks.archiveHistory(main,input,true).taskId,f.task.taskId);
   assert.equal(f.tasks.workerRead(main,{workerId:w.workerId}).messages.at(-1)?.text,'Readable answer');
  }finally{f.close();}
 });
 
-test('goal changes bind the actual user source and cannot be authorized by work notes',()=>{
+test('goal changes record direct user sources and background triggers',()=>{
  const f=fixture();try{
   const before=f.tasks.task(f.task.taskId);
-  assert.throws(()=>f.tasks.updateTask(main,{...mutation(f,'no-source'),patch:{goal:'New execution'}}),/authority_source_denied/);
-  assert.deepEqual(f.tasks.task(before.id),before);
+  assert.equal(f.tasks.updateTask({...main,sourceRequestId:undefined,inputMessageId:'background-test'},{...mutation(f,'no-source'),patch:{goal:'New execution'}}).version,2);
+  assert.equal(f.tasks.version(before.id,2).sourceRequestId,null);
+  assert.equal(JSON.parse(f.tasks.operation(f.tasks.version(before.id,2).triggerOpId).detailsJson).inputMessageId,'background-test');
   const actor=f.source('user:changed','New request: inspect only');
-  const changed=f.tasks.updateTask(actor,{...mutation(f,'change'),patch:{goal:'Inspect only'},authority:authority(actor.sourceRequestId)});
-  assert.equal(changed.version,2);assert.equal(f.tasks.version(before.id,2).sourceRequestId,actor.sourceRequestId);
-  assert.equal(f.tasks.operation(f.tasks.version(before.id,2).triggerOpId).operationId,'change');
+  const changed=f.tasks.updateTask(actor,{...mutation(f,'change'),patch:{goal:'Inspect only'}});
+  assert.equal(changed.version,3);assert.equal(f.tasks.version(before.id,3).sourceRequestId,actor.sourceRequestId);
+  assert.equal(f.tasks.operation(f.tasks.version(before.id,3).triggerOpId).operationId,'change');
  }finally{f.close();}
 });
 
@@ -128,7 +130,7 @@ test('exit confirmation clears only the exact persisted execution lease before a
  }finally{f.close();}
 });
 
-test('a pause survives restart and only a later authorized request can reopen execution',()=>{
+test('a pause survives restart and a background input can reopen without changing the version',()=>{
  const f=fixture();try{
   const {taskId}=f.task;
   const registered=f.source('prior-paused-request');
@@ -136,11 +138,9 @@ test('a pause survives restart and only a later authorized request can reopen ex
   f.tasks.reconcile();
   assert.equal(f.tasks.task(taskId).historyState,'visible');
   assert.throws(()=>openWorker(f),/task_not_open/);
-  assert.throws(()=>f.tasks.controlTask(registered,{...mutation(f,'stale'),action:'resume',authority:authority(registered.sourceRequestId)}),/task_authority_source_denied/);
-  const fresh=f.source('fresh-resume-request');
-  const resumed=f.tasks.controlTask(fresh,{...mutation(f,'resume'),action:'resume',authority:authority(fresh.sourceRequestId)});
-  assert.equal(resumed.version,2);assert.equal(f.tasks.claim(),undefined);
-  assert.equal(f.tasks.authority(taskId,2).sourceRequestId,fresh.sourceRequestId);
+  const resumed=f.tasks.controlTask({...main,sourceRequestId:undefined},{...mutation(f,'resume'),action:'resume'});
+  assert.equal(resumed.version,1);assert.equal(f.tasks.claim(),undefined);
+  assert.equal(f.tasks.version(taskId,1).authorityJson,null);
  }finally{f.close();}
 });
 
@@ -155,5 +155,17 @@ test('a recovered successful terminal keeps the question bound to its original t
   assert.ok(f.tasks.questionCurrent(scope));
   assert.equal(f.tasks.questionCurrent({...scope,runEpoch:run.epoch+1}),false);
   assert.throws(()=>f.tasks.guard(actor),/epoch|live/);
+ }finally{f.close();}
+});
+
+test('confirmed interruption allows a new named phase on the same Worker thread',()=>{
+ const f=fixture();try{
+  const opened=f.tasks.workerOpen(main,{operationId:'named-open',taskId:f.task.taskId,workTitle:'Original phase'});
+  const actor=running(f,opened.runId);
+  f.tasks.endSegment(opened.runId,actor.epoch!,{status:'interrupted',text:''},true);
+  const next=f.tasks.workerMessage(main,{operationId:'named-next',workerId:opened.workerId,text:'Review the findings',workTitle:'Review phase'});
+  assert.equal(next.state,'queued');
+  assert.equal(next.threadId,actor.threadId);
+  assert.deepEqual(f.tasks.readTask(main,f.task.taskId).workers[0]!.assignments.map(item=>item.title),['Original phase','Review phase']);
  }finally{f.close();}
 });

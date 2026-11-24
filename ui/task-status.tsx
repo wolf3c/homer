@@ -42,10 +42,10 @@ function TaskStatusRow({label,workerCount,running,archived,onReference,archive}:
   </span>}
   {workerCount>0&&<span className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
  </div>
- {archive&&!running&&<button type="button" className="status-task-archive" aria-label={(archive.pending?'正在归档：':'归档事项：')+label}
+ {archive&&<button type="button" className="status-task-archive" aria-label={(archive.pending?'正在归档：':'归档事项：')+label}
   title={archive.reason??(archive.pending?'正在归档…':'归档事项')} disabled={!!archive.reason&&!archive.pending}
   aria-disabled={archive.pending||undefined} aria-describedby={archive.reason?archiveReasonId:undefined} onClick={archive.activate}><ArchiveIcon size={16} aria-hidden/></button>}
- {archive?.reason&&!running&&<span id={archiveReasonId} className="sr-only">{archive.reason}</span>}
+ {archive?.reason&&<span id={archiveReasonId} className="sr-only">{archive.reason}</span>}
  {onReference&&<button type="button" className="status-task-reference" aria-label={'引用事项：'+label} title="引用到对话" onClick={onReference}><MessageCirclePlus size={16} aria-hidden/></button>}
  </div>;
 }
@@ -75,6 +75,14 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onA
    return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title} tabIndex={-1}>
     <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archived={archived} archive={archive}
      onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}/>
+    {task.workers.some(worker=>worker.workTitle)&&<ul className="status-worker-assignments" aria-label="Worker 分工">
+     {task.workers.filter(worker=>worker.workTitle).map(worker=>{
+      const previous=worker.assignments?.slice(0,-1)??[];
+      return <li key={worker.id}>{worker.workTitle}{previous.length>0&&<details>
+       <summary>此前分工</summary><ul>{previous.map(item=><li key={item.messageId}>{item.title}</li>)}</ul>
+      </details>}</li>;
+     })}
+    </ul>}
     {archived&&task.archiveReviewIssue&&<p className="status-archive-notice" role="status">{task.archiveReviewIssue==='failed'?'归档复核失败，事项已归档。':'归档复核结果待确认。'}</p>}
    </section>;
   })}</div>
@@ -217,7 +225,7 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated,a
  },[archived]);
 
  async function archiveTask(task:OverviewTask){
-  if(!archiveScope||!connected||task.archiveBlocker!==null||running?.has(task.id)||archiveRequests.current.has(task.id))return;
+  if(!archiveScope||!connected||task.archiveBlocker!==null||archiveRequests.current.has(task.id))return;
   const title=taskName(task).text;
   const requests=archiveRequests.current;
   requests.add(task.id);

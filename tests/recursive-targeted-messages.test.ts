@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,main,openWorker,running,complete,mutation,authority} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,complete,mutation} from './recursive-fixture.js';
 const receipt=(f:ReturnType<typeof fixture>,id:string)=>f.store.db.prepare('SELECT * FROM agent_receipts WHERE messageId=?').get(id)!;
 
 test('an idle followup targets only its successor and original receipt retains its exact Run identity',()=>{
@@ -50,7 +50,7 @@ test('a legacy unbound input survives a goal edit without launching or joining a
   db.prepare("INSERT INTO agent_messages(id,senderAgentId,recipientAgentId,taskId,taskVersion,kind,operationKey,payloadJson) VALUES('old-message',?,?,?,1,'worker_input','old-send',?)").run(main.agentId,actor.agentId,f.task.taskId,JSON.stringify(old));
   db.prepare("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES('old-message',?,'pending')").run(actor.agentId);
   const source=f.source('edit','Revise the task goal');
-  f.tasks.updateTask(source,{...mutation(f,'edit-goal'),patch:{goal:'Revised goal'},authority:authority('edit')});
+  f.tasks.updateTask(source,{...mutation(f,'edit-goal'),patch:{goal:'Revised goal'}});
   complete(f,actor);assert.equal(f.tasks.claim(),undefined);
   const next=f.tasks.workerMessage(source,{operationId:'explicit',workerId:worker.workerId,text:'New explicit request'});
   assert.equal(f.tasks.claim(next.runId)?.prompt,'New explicit request');

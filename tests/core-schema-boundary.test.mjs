@@ -29,13 +29,13 @@ test('task owner remains part of the source schema fingerprint',()=>{
  const files=new Map(),before=schemaHash({files});files.set('src/recursive-tasks.ts',Buffer.from('changed'));assert.notEqual(schemaHash({files}),before);
 });
 
-for(const version of ['5','6','7','8','999','unmapped'])test('unsupported '+version+' database is refused with identical bytes and no new files',()=>{
+for(const version of ['5','6','7','8','9','999','unmapped'])test('unsupported '+version+' database is refused with identical bytes and no new files',()=>{
  const dir=mkdtempSync(join(base,'refused-')),path=join(dir,'old.sqlite'),db=new DatabaseSync(path);
  try{
   db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);CREATE TABLE tasks(id TEXT PRIMARY KEY);INSERT INTO tasks VALUES('keep-original')");
   if(version!=='unmapped')db.prepare('INSERT INTO meta VALUES(?,?)').run('recursiveSchemaVersion',version);
   db.close();
-  const bytes=readFileSync(path),files=readdirSync(dir).sort();assert.throws(()=>new Store(path),/recursive_schema_unsupported/);
+  const bytes=readFileSync(path),files=readdirSync(dir).sort();assert.throws(()=>new Store(path),version==='8'||version==='9'?/desktop_store_migration_required/:/recursive_schema_unsupported/);
   assert.deepEqual(readFileSync(path),bytes);assert.deepEqual(readdirSync(dir).sort(),files);
   const check=new DatabaseSync(path);try{assert.equal(check.prepare('SELECT id FROM tasks').get().id,'keep-original');assert.equal(check.prepare("SELECT 1 FROM sqlite_master WHERE name='runs'").get(),undefined);}finally{check.close();}
  }finally{rmSync(dir,{recursive:true,force:true});}

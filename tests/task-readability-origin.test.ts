@@ -58,7 +58,7 @@ test('archived history includes both registration and later delegation, scoped t
   const {taskId}=f.tasks.createTask(f.actor,{operationId:'register',goal:'Record this for later'});
   const requestId='source:start',later=f.source(requestId,'Start work on the registered task');
   const actor={...f.actor,sourceRequestId:requestId,inputMessageId:later.messageId,turnId:'turn:'+requestId};
-  const worker=f.tasks.workerOpen(actor,{operationId:'dispatch',taskId,authority:{sourceRequestId:requestId,description:'Start work'}});
+  const worker=f.tasks.workerOpen(actor,{operationId:'dispatch',taskId});
   const run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Done'},true)!;
   f.consumeMain(reply.messageId);
   const archived=f.tasks.archiveHistory(actor,{operationId:'archive',taskId,expectedRevision:f.tasks.task(taskId).revision},true);

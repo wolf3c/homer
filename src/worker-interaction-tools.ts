@@ -9,8 +9,8 @@ function tool(name: string, description: string, properties: Record<string, unkn
 }
 
 export const MAIN_INTERACTION_TOOLS: Tool[] = [
-  tool("inspect_interaction", "Read one pending Worker question or authorization request, its exact operation and captured user authority. Inspect the run/material too when necessary. No decision is made by inspection.", { interactionId: str }),
-  tool("respond_interaction", "Record a reasoned answer, approval or denial for the inspected Worker request. Before escalation, directly approve or deny within the captured user delegation, including necessary bounded implementation, verification and temporary permissions. After escalation, approval requires the actual user decision. Answering a question never grants action permission. Only requested permission subsets and a single operation are supported. A user reply is associated by the host, not by tool arguments.", {
+  tool("inspect_interaction", "Read a Worker question or native operation request by its exact interactionId in the active Main turn. Read the original task context and user instructions when needed. Inspection records no decision. Main's own native approvals go to the user through the host approval prompt.", { interactionId: str }),
+  tool("respond_interaction", "Inspect this Worker request in the same Main turn first. A pending business question can be answered during background work. A pending native request requires the Main turn handling that request or an active user turn authorized to handle it. Before escalation, decide within the user's actual instructions for the specific operation and requested permission subset. After escalation, follow the actual user decision recorded by the host. Answering a business question grants no action permission.", {
     interactionId: str,
     action: { type: "string", enum: ["answer", "approve", "deny"] },
     reason: str,
@@ -36,7 +36,7 @@ export const MAIN_INTERACTION_TOOLS: Tool[] = [
       }, required: ["network", "fileSystem"], additionalProperties: false,
     },
   }),
-  tool("escalate_interaction", "Wait for the user only when the request exceeds the captured delegation, its authority or impact is unclear, needed information is missing, or personal confirmation is required. A read-only sandbox, temporary permission request or changed command alone is not a reason to escalate. End this main turn with a brief, nonempty final reply asking for the user's decision and explaining the necessity, scope and impact; the question stays open until answered. For a Worker business question, optionally supply two to eight choices with distinct IDs, a label and the complete consequence of selecting each. Free text remains available.", {
+  tool("escalate_interaction", "Inspect this Worker request in the same Main turn first. Escalate when the user's instructions do not cover the operation, its impact is unclear, information is missing, or personal confirmation is required. A pending native request requires the Main turn handling that request or an active user turn authorized to handle it. End with a brief nonempty final reply explaining the necessity, scope and impact and asking for the user's decision. For a Worker business question you can offer two to eight choices with distinct IDs, labels and consequences. Free text remains available.", {
     interactionId:str,question:str,reason:str,
     options:{type:'array',minItems:2,maxItems:8,items:{type:'object',properties:{id:str,label:str,description:str},required:['id','label','description'],additionalProperties:false}},
   },['interactionId','question','reason']),

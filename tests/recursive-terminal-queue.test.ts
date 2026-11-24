@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
 function snapshot(f:ReturnType<typeof fixture>){return Object.fromEntries(['tasks','runs','task_versions','operations','agent_messages','agent_receipts'].map(table=>[table,f.store.db.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));}
 
 test('a confirmed first spawn failure allows a new attempt under the same Worker identity',()=>{
@@ -67,10 +67,9 @@ test('pause names the blocking Workers until each individual interruption is con
   }
   const result=control('all-exited');assert.deepEqual(result.targets,[]);
   assert.equal(f.tasks.task(f.task.taskId).state,'paused');
-  const paused=snapshot(f);assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'old-resume'),action:'resume',authority:authority()}),/task_authority_source_denied/);
-  assert.deepEqual(snapshot(f),paused);
-  const permit=f.source('resume-request');
-  f.tasks.controlTask(permit,{...mutation(f,'resume'),action:'resume',authority:authority(permit.sourceRequestId)});assert.equal(f.tasks.runs().length,2);assert.equal(f.tasks.claim(),undefined);
+  const permit={...main,sourceRequestId:undefined};
+  f.tasks.controlTask(permit,{...mutation(f,'resume'),action:'resume'});
+  assert.equal(f.tasks.runs().length,2);assert.equal(f.tasks.claim(),undefined);
   const fresh=f.tasks.workerMessage(permit,{operationId:'fresh',workerId:a.workerId,text:'Explicit followup after resume'});
   assert.equal(f.tasks.claim(fresh.runId!)?.threadId,aa.threadId);
  }finally{f.close();}

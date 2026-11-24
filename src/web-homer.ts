@@ -26,15 +26,25 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    AND json_extract(io.detailsJson,'$.turnId')=json_extract(o.detailsJson,'$.turnId')
    AND EXISTS(SELECT 1 FROM conversation_inputs c WHERE c.requestId=io.scopeId AND c.threadId=json_extract(o.detailsJson,'$.threadId')
      AND c.replyId=json_extract(io.responseJson,'$.replyId'))`;
- const workerArchiveInput=`json_extract(o.detailsJson,'$.sourceRequestId') IS NULL
-   AND i.kind='worker_reply' AND i.senderAgentId='host' AND i.taskId=m.taskId AND i.taskVersion<=m.taskVersion
-   AND io.kind='worker_return' AND io.actorAgentId='host' AND io.state='confirmed' AND io.scopeId=i.taskId
-   AND json_extract(io.responseJson,'$.messageId')=i.id AND ir.state IN ('received','processed')
-   AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
-   AND EXISTS(SELECT 1 FROM runs r JOIN task_versions v ON v.taskId=r.taskId AND v.version=r.version
-     JOIN conversation_inputs source ON source.requestId=v.sourceRequestId AND source.threadId=json_extract(o.detailsJson,'$.threadId')
-     WHERE r.id=i.senderRunId AND r.id=json_extract(i.payloadJson,'$.runId') AND r.taskId=i.taskId AND r.version=i.taskVersion
-       AND i.senderEpoch=json_extract(i.payloadJson,'$.epoch') AND i.senderEpoch<=r.epoch)`;
+ const hostInput=`i.senderAgentId='host' AND io.state='confirmed'
+   AND ir.state IN ('received','processed') AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
+   AND CASE i.kind
+    WHEN 'scheduled_message' THEN io.actorAgentId='host' AND io.kind='schedule_delivery' AND io.scopeId='scheduled-deliveries'
+      AND io.operationId=json_extract(i.payloadJson,'$.deliveryId') AND json_extract(io.responseJson,'$.messageId')=i.id
+      AND json_extract(i.payloadJson,'$.instanceId')=i.recipientAgentId
+      AND json_extract(i.payloadJson,'$.threadId')=json_extract(o.detailsJson,'$.threadId')
+      AND json_extract(io.detailsJson,'$.threadId')=json_extract(o.detailsJson,'$.threadId')
+    WHEN 'task_archived' THEN io.actorAgentId=i.recipientAgentId AND io.kind='archive_work' AND io.scopeId=i.taskId
+      AND json_extract(io.detailsJson,'$.threadId')=json_extract(o.detailsJson,'$.threadId')
+      AND json_extract(io.responseJson,'$.state')='archived' AND json_extract(io.responseJson,'$.taskId')=i.taskId
+      AND json_extract(io.responseJson,'$.version')=i.taskVersion
+      AND json_extract(io.responseJson,'$.revision')=json_extract(i.payloadJson,'$.revision')
+    ELSE io.actorAgentId='host' AND io.scopeId=i.taskId AND EXISTS(SELECT 1 FROM runs r
+      WHERE r.id=i.senderRunId AND r.taskId=i.taskId AND r.version=i.taskVersion AND i.senderEpoch<=r.epoch)
+      AND (i.kind='worker_reply' AND io.kind='worker_return' AND json_extract(io.responseJson,'$.messageId')=i.id
+        OR i.kind='interaction_required' AND io.kind='interaction_notice'
+          AND io.operationId='interaction:'||json_extract(i.payloadJson,'$.interactionId'))
+   END`;
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
  const notices=new Map(batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId,
    coalesce(ar.offeredTurnId,ar.processedBy) AS receivedTurnId,
@@ -45,25 +55,23 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
      AND json_extract(o.responseJson,'$.version')=m.taskVersion
      AND json_type(m.payloadJson,'$.revision')='integer' AND json_extract(m.payloadJson,'$.revision')>0
      AND json_extract(o.responseJson,'$.revision')=json_extract(m.payloadJson,'$.revision')
-     AND (EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ((${userInput}) OR (${workerArchiveInput})))
-       OR json_extract(o.detailsJson,'$.origin')='work_status' AND o.operationId GLOB 'work-status:*'
-         AND EXISTS(SELECT 1 FROM task_versions v JOIN conversation_inputs c ON c.requestId=v.sourceRequestId
-           WHERE v.taskId=m.taskId AND v.version=m.taskVersion AND c.threadId=json_extract(o.detailsJson,'$.threadId')
-             AND v.sourceRequestId=json_extract(o.detailsJson,'$.sourceRequestId')))
+     AND (EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=m.recipientAgentId AND ((${userInput}) OR (${hostInput})))
+       OR json_extract(o.detailsJson,'$.origin')='work_status' AND o.operationId GLOB 'work-status:*')
    END AS archiveMatches
    FROM agent_messages m JOIN agent_receipts ar ON ar.messageId=m.id AND ar.recipientAgentId=m.recipientAgentId
    JOIN operations o ON o.id=m.operationKey WHERE m.id IN ($keys) AND m.targetRunId IS NULL AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')`,sourceIds).map(row=>[row.id,row]));
  const interactionNoticeIds=[...notices.values()].filter(n=>n.kind==='interaction_required'&&n.operationKind==='interaction_notice').map(n=>n.id);
  const interactions=new Map((interactionNoticeIds.length&&db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='worker_interactions'").get()?batch(`
-   SELECT m.id,c.threadId,json_extract(w.details,'$.historyThreadId') AS historyThread
+   SELECT m.id,coalesce(c.threadId,(SELECT value FROM meta WHERE key='mainThread')) threadId,json_extract(w.details,'$.historyThreadId') AS historyThread
    FROM agent_messages m JOIN operations o ON o.id=m.operationKey
    JOIN worker_interactions w ON w.id=json_extract(m.payloadJson,'$.interactionId')
    JOIN runs r ON r.id=m.senderRunId
-   JOIN conversation_inputs c ON c.requestId=json_extract(w.authority,'$.sourceRequestId')
+   LEFT JOIN conversation_inputs c ON c.requestId=json_extract(w.authority,'$.sourceRequestId')
    WHERE m.id IN ($keys) AND o.id='interaction:'||w.id AND o.operationId=o.id
      AND w.runId=r.id AND json_extract(m.payloadJson,'$.runId')=r.id AND json_extract(m.payloadJson,'$.workerId')=r.workerId
      AND w.runEpoch=m.senderEpoch AND w.taskVersion=m.taskVersion
-     AND w.threadId=json_extract(m.payloadJson,'$.threadId') AND w.turnId=json_extract(m.payloadJson,'$.turnId')`,interactionNoticeIds):[]).map(row=>[row.id,row]));
+     AND w.threadId=json_extract(m.payloadJson,'$.threadId') AND w.turnId=json_extract(m.payloadJson,'$.turnId')
+     AND (json_extract(w.authority,'$.sourceRequestId') IS NULL OR c.requestId IS NOT NULL)`,interactionNoticeIds):[]).map(row=>[row.id,row]));
  const taskActions=(node:DisplayMessage['process'])=>node?.threadId===threadId?node.items.flatMap(item=>{
   if(item.kind!=='tool'||!item.activity?.target||item.activity.action.startsWith('inspect_'))return [];
   return [{item,activity:item.activity,target:item.activity.target}];
@@ -81,18 +89,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
        WHEN 'resume' THEN json_extract(o.responseJson,'$.state')='open'
      END
      AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=o.actorAgentId AND (
-       (${userInput}) OR (i.senderAgentId='host' AND json_extract(o.detailsJson,'$.sourceRequestId') IS NULL
-         AND coalesce(ir.offeredTurnId,ir.processedBy)=json_extract(o.detailsJson,'$.turnId')
-         AND CASE WHEN i.kind='scheduled_message' THEN io.kind='schedule_delivery' AND io.actorAgentId='host' AND io.state='confirmed'
-           AND io.scopeId='scheduled-deliveries' AND io.operationId=json_extract(i.payloadJson,'$.deliveryId')
-           AND json_extract(io.responseJson,'$.messageId')=i.id AND json_extract(i.payloadJson,'$.instanceId')=i.recipientAgentId
-           AND json_extract(io.detailsJson,'$.threadId')=json_extract(i.payloadJson,'$.threadId')
-           AND json_extract(io.detailsJson,'$.threadId')=json_extract(o.detailsJson,'$.threadId')
-           ELSE EXISTS(SELECT 1 FROM task_versions v JOIN conversation_inputs c
-             ON c.requestId=CASE WHEN i.kind='task_archived' AND io.kind='archive_work' THEN coalesce(json_extract(io.detailsJson,'$.sourceRequestId'),v.sourceRequestId) ELSE v.sourceRequestId END
-             WHERE v.taskId=i.taskId AND v.version=i.taskVersion AND c.threadId=json_extract(o.detailsJson,'$.threadId')
-               AND i.kind IN ('task_archived','worker_reply','interaction_required'))
-         END)
+       (${userInput}) OR (${hostInput})
      )) END AS updateMatches
    FROM operations o WHERE o.id IN ($keys)`,[...new Set(actions.flatMap(({target})=>target.operationKey?[target.operationKey]:[]))]).map(o=>[o.id,o]));
  const runIds=[...new Set([...notices.values()].flatMap(n=>typeof n.senderRunId==='string'?[n.senderRunId]:[]).concat(actions.flatMap(({target})=>target.runId?[target.runId]:[])))];
@@ -101,7 +98,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
  const keys=[...new Set(targets.filter(([id,version])=>typeof id==='string'&&Number.isSafeInteger(version)).map(pair=>JSON.stringify(pair)))];
  const versions=new Map<string,Record<string,any>>();
  for(let at=0;at<keys.length;at+=200){
-  const rows=db.prepare(`SELECT v.taskId,v.version,t.title,c.id AS sourceMessageId FROM json_each(?) k JOIN task_versions v ON v.taskId=json_extract(k.value,'$[0]') AND v.version=json_extract(k.value,'$[1]') JOIN tasks t ON t.id=v.taskId JOIN conversation_inputs i ON i.requestId=v.sourceRequestId AND i.threadId=? LEFT JOIN conversation_messages c ON c.threadId=i.threadId AND c.requestId=i.requestId AND c.role='user'`).all('['+keys.slice(at,at+200).join(',')+']',threadId);
+  const rows=db.prepare(`SELECT v.taskId,v.version,t.title,c.id AS sourceMessageId FROM json_each(?) k JOIN task_versions v ON v.taskId=json_extract(k.value,'$[0]') AND v.version=json_extract(k.value,'$[1]') JOIN tasks t ON t.id=v.taskId LEFT JOIN conversation_inputs i ON i.requestId=v.sourceRequestId AND i.threadId=? LEFT JOIN conversation_messages c ON c.threadId=i.threadId AND c.requestId=i.requestId AND c.role='user' WHERE v.sourceRequestId IS NULL OR i.requestId IS NOT NULL`).all('['+keys.slice(at,at+200).join(',')+']',threadId);
   for(const row of rows){const key=JSON.stringify([row.taskId,row.version]),old=versions.get(key);versions.set(key,old?{...old,sourceMessageId:null}:row);}
  }
  const out=new Map<string,TaskMessageSource[]>(),unresolved=new Set<string>(),seen=new Set<string>();
@@ -173,7 +170,12 @@ export function withInteractionResponses(db:DatabaseSync,messages:readonly Displ
   JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user'
   LEFT JOIN conversation_inputs source ON source.requestId=json_extract(w.authority,'$.sourceRequestId') AND source.threadId=c.threadId
   WHERE w.responseUserMessageId IN (${requests.map(()=>'?').join(',')})
-  AND (source.requestId IS NOT NULL OR (json_extract(w.details,'$.method')='homer_preview_location' AND json_extract(w.details,'$.historyThreadId')=c.threadId))
+  AND (source.requestId IS NOT NULL
+    OR ((json_extract(w.authority,'$.sourceRequestId') IS NULL OR json_extract(w.details,'$.method')='homer_preview_location')
+      AND json_extract(w.details,'$.historyThreadId')=c.threadId)
+    OR (json_extract(w.authority,'$.sourceRequestId') IS NULL AND w.source='ask_main'
+      AND c.threadId=(SELECT value FROM meta WHERE key='mainThread')
+      AND EXISTS(SELECT 1 FROM runs r WHERE r.id=w.runId AND r.threadId=w.threadId AND r.turnId=w.turnId AND r.version=w.taskVersion)))
   AND (json_type(w.details,'$.historyThreadId') IS NULL OR json_extract(w.details,'$.historyThreadId')=c.threadId)`)
   .all(threadId,...requests) as {id:string;kind:'authorization'|'question';source:string;runId:string;userQuestion:string|null;responseUserText:string;userText:string;userQuote:string|null;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;requestId:string;replyId:string;userId:string}[];
  const byRequest=new Map<string,typeof rows[number]|null>();
@@ -305,8 +307,8 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         if(id!==undefined){
           const row=app.store.db.prepare(`SELECT w.rowid AS position FROM worker_interactions w
             WHERE w.id=? AND coalesce(json_extract(w.details,'$.historyThreadId'),?)=?
-              AND EXISTS(SELECT 1 FROM conversation_inputs c WHERE c.threadId=?
-                AND c.requestId=json_extract(w.authority,'$.sourceRequestId'))`).get(id,threadId,threadId,threadId);
+              AND (json_extract(w.details,'$.historyThreadId')=?
+                OR EXISTS(SELECT 1 FROM runs r WHERE r.id=w.runId AND r.threadId=w.threadId AND r.turnId=w.turnId))`).get(id,threadId,threadId,threadId);
           if(!row||!app.interactions.actionable(id))throw Error('interaction_not_live');
           const current=interactionPage(after);
           if(current.items.some(item=>item.id===id))return {...current,threadId,readEpoch:app.webReadEpoch,revision:pageReader().revision};
@@ -356,7 +358,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
         for(const task of overview.tasks){
           if(task.historyState==='visible'&&task.workers.some(worker=>app.isWorkerExecuting?.(worker.run)===true))task.hasExecutingWorker=true;
         }
-        const candidates=overview.tasks.filter(task=>task.historyState==='visible'&&!task.hasExecutingWorker);
+        const candidates=overview.tasks.filter(task=>task.historyState==='visible');
         if(candidates.length&&app.taskArchiveBlockers){
           const blockers=app.taskArchiveBlockers(candidates.map(task=>task.id));
           for(const task of candidates)task.archiveBlocker=blockers.get(task.id);
@@ -381,13 +383,13 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
           SELECT m.rowid,m.id,m.role,m.text FROM conversation_messages m
           JOIN conversation_inputs input ON input.requestId=m.requestId AND input.threadId=m.threadId
           WHERE m.threadId=? AND m.role='user' AND m.audience='user' AND m.revokedAt IS NULL AND m.requestId IN (${taskSourceRequestsSql})
-          ) ORDER BY position DESC LIMIT 81`).all(thread,id,thread,id,id,id) as NonNullable<typeof detail.publicMessages>;
+          ) ORDER BY position DESC LIMIT 81`).all(thread,id,thread,id,id,id,id) as NonNullable<typeof detail.publicMessages>;
         return {...detail,...taskFiles(id),publicMessages:rows.slice(0,80),moreMessages:rows.length>80};
       },
       origin:async(id,messageId)=>{
         if(!/^[\w:-]{1,100}$/.test(id)||!/^[\w:-]{1,100}$/.test(messageId))throw Error('task_origin_not_found');
         const source=app.store.db.prepare(`SELECT c.id FROM conversation_messages c JOIN conversation_inputs input ON input.requestId=c.requestId AND input.threadId=c.threadId
-          WHERE c.id=? AND c.role='user' AND c.audience='user' AND c.requestId IN (${taskSourceRequestsSql})`).get(messageId,id,id,id);
+          WHERE c.id=? AND c.role='user' AND c.audience='user' AND c.requestId IN (${taskSourceRequestsSql})`).get(messageId,id,id,id,id);
         const message=app.history.message(messageId);
         if(!message||message.threadId!==app.store.meta('mainThread')||message.revokedAt!=null||
           !(source&&message.role==='user')&&!(message.taskId===id&&message.role==='assistant'&&message.audience==='user'))throw Error('task_origin_not_found');

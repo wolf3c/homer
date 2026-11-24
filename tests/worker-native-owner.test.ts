@@ -14,7 +14,7 @@ function setup(){
  engine.threadId=actor.threadId;engine.turnId=actor.turnId;engine['active']={} as any;
  const sent:any[]=[],slot={id:actor.runId!,epoch:actor.epoch!,engine,requests:new Map()},workers=new Map([[slot.id,slot]]),history=new ConversationHistory(f.store.db);
  const interactions=new WorkerInteractions(f.store.db,{waiting:()=>host.syncInteractionWaiting(slot)}),approvals=new MainNativeApprovals(interactions,history);
- Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,workers,interactions,mainApprovals:approvals,hostActors:new WeakSet(),protectedExecutionPaths:()=>[],invalidateState(){}});
+ Object.assign(host,{config,store:f.store,tasks:f.tasks,files:f.files,inputs:f.inputs,workers,interactions,mainApprovals:approvals,hostActors:new WeakSet(),protectedExecutionPaths:()=>[],invalidateState(){}});
  engine['send']=m=>{sent.push(m);};
  engine.on('interactionWaiting',()=>host.syncInteractionWaiting(slot));
  engine.on('interactionDelivered',id=>interactions.markDelivered(slot.requests.get(JSON.stringify(['native',id]))));

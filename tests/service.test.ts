@@ -366,7 +366,7 @@ test("T08: cancellation is separate from confirmation; unconfirmed stop never su
   await until(() => !!f.workerEngines[0]?.pendingResolve);
   await new Promise(resolve=>setTimeout(resolve,200));
   assert.equal(f.app.store.runs()[0]?.status, "running");
-  assert.equal(Object.hasOwn(JSON.parse(f.app.tasks.version(f.app.store.runs()[0]!.taskId,1).authorityJson!),'maxActiveMs'),false);
+  assert.equal(f.app.tasks.version(f.app.store.runs()[0]!.taskId,1).authorityJson,null);
   await f.app.stop(f.app.store.runs()[0]!.id);
   await f.app.idle();
   assert.equal(f.app.store.runs()[0]?.status, "cancelled");

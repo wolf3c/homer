@@ -13,7 +13,7 @@ export type InteractionInput = {
   details: Record<string, unknown>;
   runEpoch?:number;taskVersion?:number;
   // Captured by the host from the authorized task, never taken from Worker arguments.
-  authority: { description: string; sourceRequestId: string; nativeApprovals: boolean };
+  authority: { description: string; sourceRequestId?: string; nativeApprovals: boolean };
 };
 export type InteractionState = "pending_main" | "pending_user" | "approved" | "denied" | "answered" | "cancelled" | "expired";
 export type InteractionResolution = {
@@ -102,8 +102,7 @@ export class WorkerInteractions {
     return !!this.db.prepare("SELECT 1 FROM worker_interactions WHERE runId=? AND (?=0 OR source='native') AND state IN ('pending_main','pending_user') LIMIT 1").get(runId,Number(nativeOnly));
   }
   pendingForMain(historyThreadId:string){
-    // Worker threadId is not the main conversation. Follow captured user source.
-    const scope="FROM worker_interactions w JOIN conversation_inputs c ON c.requestId=json_extract(w.authority,'$.sourceRequestId') WHERE c.threadId=? AND w.state='pending_user' AND w.kind='question' AND w.runId NOT LIKE 'main-native:%'";
+    const scope="FROM worker_interactions w JOIN runs r ON r.id=w.runId AND r.threadId=w.threadId AND r.turnId=w.turnId WHERE ?=(SELECT value FROM meta WHERE key='mainThread') AND w.state='pending_user' AND w.kind='question' AND w.runId NOT LIKE 'main-native:%'";
     const total=Number(this.db.prepare('SELECT count(*) total '+scope).get(historyThreadId)!.total);
     const items=this.db.prepare("SELECT w.id interactionId,w.runId,substr(w.userQuestion,1,300) question "+scope+' ORDER BY w.rowid LIMIT 16').all(historyThreadId);
     return {total,items};
@@ -136,7 +135,7 @@ export class WorkerInteractions {
     if ((typeof input.requestId !== "number" || !Number.isSafeInteger(input.requestId)) && !text(input.requestId, 200)) throw new Error("interaction_invalid_request");
     if (!["native", "ask_main"].includes(input.source) || !["authorization", "question"].includes(input.kind) ||
       !input.details || typeof input.details !== "object" || Array.isArray(input.details) ||
-      !text(input.authority?.description, 24000) || !text(input.authority?.sourceRequestId, 200) || typeof input.authority?.nativeApprovals !== "boolean" ||
+      !text(input.authority?.description, 24000) || input.authority?.sourceRequestId !== undefined && !text(input.authority.sourceRequestId, 200) || typeof input.authority?.nativeApprovals !== "boolean" ||
       JSON.stringify(input).length > 160 * 1024) throw new Error("interaction_invalid_request");
     if (input.source === "ask_main" && (input.kind !== "question" || !text(input.details.question, 16000))) throw new Error("interaction_invalid_request");
     if (!isCurrent()) throw new Error("interaction_not_live");

@@ -7,7 +7,7 @@ export type MainApprovalScope = {
     threadId: string;
     turnId: string;
     generationId: string;
-    sourceRequestId: string;
+    sourceRequestId?: string;
     userText: string;
     isCurrent: () => boolean;
     historyThreadId?: string;

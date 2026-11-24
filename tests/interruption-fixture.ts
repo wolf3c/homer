@@ -15,10 +15,10 @@ export function fixture(t:TestContext){
  const files=new Proxy({workspace:realpathSync(process.cwd())},{get(target,key){if(key==='workspace')return target.workspace;return ()=>{throw Error('unexpected_file_capability:'+String(key));};}}) as Files;
  const tasks=new RecursiveTasks(store,files);tasks.migrate();
  const authority={sourceRequestId:main.sourceRequestId!,description:'Synthetic structured work only',materials:[],resultIds:[]};
- const task=tasks.createTask(main,{operationId:'create',goal:'核对合成材料',authority});
+ const task=tasks.createTask(main,{operationId:'create',goal:'核对合成材料'});
  const worker=tasks.workerOpen(main,{operationId:'open',taskId:task.taskId,text:'核对合成材料'});
  const effects:string[]=[];
- const tools=new RecursiveTools(tasks,{rootAuthority:()=>authority,wake:()=>{effects.push('wake');},stop:async r=>{effects.push('stop');return r;},steer:async r=>{effects.push('steer');return r;}});
+ const tools=new RecursiveTools(tasks,{wake:()=>{effects.push('wake');},stop:async r=>{effects.push('stop');return r;},steer:async r=>{effects.push('steer');return r;}});
  return {store,interactions,tasks,task,worker,authority,tools,effects};
 }
 export type Fixture=ReturnType<typeof fixture>;

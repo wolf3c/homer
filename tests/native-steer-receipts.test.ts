@@ -7,7 +7,7 @@ import {CodexEngine} from '../src/engine.js';
 import {Homer} from '../src/service.js';
 import {RecursiveTools} from '../src/recursive-tools.js';
 import type {Config} from '../src/config.js';
-import {fixture,openWorker,running,main,mutation,authority,processReplies} from './recursive-fixture.js';
+import {fixture,openWorker,running,main,mutation,processReplies} from './recursive-fixture.js';
 
 const flush=()=>new Promise<void>(done=>setImmediate(done));
 async function peer(){
@@ -17,7 +17,7 @@ async function peer(){
  const receive=(message:unknown)=>engine['receive'](JSON.stringify(message));
  const turn=engine.turn('synthetic');turn.catch(()=>{});await flush();await receive({id:sent[0]!.id,result:{turn:{id:actor.turnId}}});await flush();
  const app=Object.assign(Object.create(Homer.prototype),{store:f.store,tasks:f.tasks,workers:new Map([[actor.runId,{id:actor.runId,epoch:actor.epoch,engine}]])}) as Homer;
- const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.tasks.authority(f.task.taskId,1),wake(){},stop:async r=>r,steer:r=>app['applySteer'](r)});
+ const tools=new RecursiveTools(f.tasks,{wake(){},stop:async r=>r,steer:r=>app['applySteer'](r)});
  const input={workerId:worker.workerId,message:'Synthetic immediate correction'};
  const steer=()=>{const work=tools.call(main,'worker_message',input,'steer-receipt') as Promise<Record<string,any>>;work.catch(()=>{});return work;};
  const operation=()=>f.store.db.prepare("SELECT * FROM operations WHERE kind='worker_steer'").get() as {id:string;state:string;detailsJson:string;responseJson:string};
@@ -85,7 +85,7 @@ for(const reason of ['before-send','not-applicable','sync-send'])test('definite 
 test('an old-version return survives a goal change and retains its original version',async()=>{
  const p=await peer();try{
   const pending=p.steer();await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});await pending;
-  p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'},authority:authority()});
+  p.tasks.updateTask(main,{...mutation(p,'goal-change'),patch:{goal:'New explicit user requirement'}});
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original version draft'},true);
   const reply=p.tasks.workerRead(main,{workerId:p.worker.workerId}).messages.find(message=>message.kind==='worker_reply')!;
   assert.equal(reply.taskVersion,1);assert.equal(reply.text,'Original version draft');assert.equal(p.tasks.task(p.task.taskId).headVersion,2);assert.equal(p.tasks.task(p.task.taskId).historyState,'visible');
@@ -143,7 +143,7 @@ for(const state of ['dispatching','uncertain','confirmed'] as const)test('archiv
   const returned=p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Original draft'},true)!;
   processReplies(p);
   const archive=p.tasks.archiveHistory(main,mutation(p,'archive'),true);
-  assert.equal(archive.state,state==='confirmed'?'archived':'skipped');
+  assert.equal(archive.state,'archived');
   assert.equal(p.tasks.workerRead(main,{workerId:p.worker.workerId,messageId:returned.messageId}).messages[0]!.text,'Original draft');
   assert.equal(p.tasks.operation(sent.operationKey).state,state);
  }finally{await p.dispose();}
@@ -175,7 +175,7 @@ test('ACK after a returned draft cannot launch a successor before the exact exit
  }finally{await p.dispose();}
 });
 
-test('lost file-write receipt preserves the raw return and blocks archive without replaying the write',async()=>{
+test('lost file-write receipt preserves the raw return through archive without replaying the write',async()=>{
  const p=await peer();try{
   const write=p.files.writeBinary.bind(p.files);p.files.writeBinary=(...args)=>{write(...args);throw Error('synthetic_write_receipt_lost');};
   assert.throws(()=>p.tasks.writeFile(p.actor,{operationId:'unfinished-write',filename:'pending.md',bytes:Buffer.from('Actual preserved bytes')}),/synthetic_write_receipt_lost/);
@@ -184,7 +184,7 @@ test('lost file-write receipt preserves the raw return and blocks archive withou
   const blocked=p.tasks.workerMessage(main,{operationId:'followup-after-write',workerId:p.worker.workerId,text:'Continue'});
   assert.equal(blocked.reason,'operation_uncertain');assert.equal(p.store.runs().length,1);
   const operation=p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get()!;
-  assert.equal(operation.state,'accepted');processReplies(p);assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive'),true).state,'skipped');
+  assert.equal(operation.state,'accepted');processReplies(p);assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive'),true).state,'archived');
   assert.deepEqual(p.store.db.prepare("SELECT * FROM operations WHERE operationId='unfinished-write'").get(),operation);
   const runDirectory=p.files.prepareRun(p.task.taskId,p.actor.runId!);
   assert.equal(readFileSync(join(runDirectory,'pending.md'),'utf8'),'Actual preserved bytes');
@@ -194,7 +194,7 @@ test('lost file-write receipt preserves the raw return and blocks archive withou
 
 test('another Task unknown steer does not block this Task archive or alter its receipt',async()=>{
  const p=await peer();try{
-  const other=p.tasks.createTask(main,{operationId:'other-task',goal:'Separate goal',authority:authority()}),worker=p.tasks.workerOpen(main,{operationId:'other-worker',taskId:other.taskId,text:'Inspect separate input'}),actor=running(p,worker.runId);
+  const other=p.tasks.createTask(main,{operationId:'other-task',goal:'Separate goal'}),worker=p.tasks.workerOpen(main,{operationId:'other-worker',taskId:other.taskId,text:'Inspect separate input'}),actor=running(p,worker.runId);
   const sent=p.tasks.workerMessage(main,{operationId:'steer-other',workerId:worker.workerId,text:'Separate supplement'});
   p.tasks.markSteer(sent.operationKey,'dispatching');p.tasks.markSteer(sent.operationKey,'uncertain');
   p.tasks.endSegment(actor.runId!,actor.epoch!,{status:'completed',text:'Separate checked facts'},true);
@@ -202,5 +202,18 @@ test('another Task unknown steer does not block this Task archive or alter its r
   p.tasks.endSegment(p.actor.runId!,p.actor.epoch!,{status:'completed',text:'Current checked facts'},true);
   processReplies(p);assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive'),true).state,'archived');
   assert.deepEqual(p.tasks.operation(sent.operationKey),original);
+ }finally{await p.dispose();}
+});
+
+test('an ACK for an already dispatched steer is confirmed after archival',async()=>{
+ const p=await peer();try{
+  const pending=p.steer();
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(p.writes().length,1);
+  assert.equal(p.tasks.archiveHistory(main,mutation(p,'archive-in-flight'),true).state,'archived');
+  await p.receive({id:p.writes()[0]!.id,result:{turnId:p.actor.turnId}});
+  assert.equal((await pending).state,'received');
+  assert.equal(p.operation().state,'confirmed');
+  assert.throws(()=>p.tasks.workerMessage(main,{operationId:'after',workerId:p.worker.workerId,text:'New send'}),/task_history_not_visible/);
  }finally{await p.dispose();}
 });

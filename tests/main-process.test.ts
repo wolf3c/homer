@@ -377,8 +377,8 @@ test('a final with a missing authorized file keeps the conclusion and shows the 
 });
 
 for(const mode of ['legacy text without phase evidence','final with revoked user source'] as const){
- test(`a Worker return keeps ${mode} out of the chat`,async()=>{
-  const f=chatFixture(),text='这段文字不能作为正式答复。';
+ test(`a Worker return uses native final evidence for ${mode}`,async()=>{
+  const f=chatFixture(),text='已核对 Worker 的原始回报。';
   try{
    f.setScript(async(main,input)=>{
     if(input==='请整理材料'){
@@ -398,7 +398,7 @@ for(const mode of ['legacy text without phase evidence','final with revoked user
    if(mode==='legacy text without phase evidence'){
     assert.equal(reply?.status,'completed');assert.equal(reply?.text,'');
    }else{
-    assert.equal(reply?.status,'failed');assert.match(reply?.text??'',/授权已变化/);
+    assert.equal(reply?.status,'completed');assert.equal(reply?.text,text);
    }
   }finally{await f.close();}
  });

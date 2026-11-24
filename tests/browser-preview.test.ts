@@ -182,3 +182,65 @@ test('document links keep the attachment resource rules for each original format
   }
  }finally{await f.close();}
 });
+
+test('a scheduled background turn opens and reads a Preview URL without a historical request',async()=>{
+ const f=fixture(),requests:any[]=[];
+ const results:any[]=[];
+ f.app.bindBrowserPreview(async(owner,action,input)=>{
+  requests.push({owner,action,input});
+  return {id:'synthetic-background-page',document:1};
+ });
+ f.setScript(async(main,body)=>{
+  if(!body.includes('[定时消息正文]'))return {status:'completed',text:'Ready'};
+  results.push(await call(main,'preview_open',{url:'https://example.com/report'},'background-preview'));
+  results.push(await call(main,'preview_read',{pageId:'synthetic-background-page'},'background-read'));
+  return {status:'completed',text:''};
+ });
+ try{
+  await f.app.start();
+  const instanceId=f.app.store.meta('mainAgentId')!,threadId=f.app.store.meta('mainThread')!;
+  f.app.store.transaction(()=>f.app.inputs.enqueueScheduled({deliveryId:'background-preview-delivery',scheduleId:'synthetic-schedule',scheduledAt:Date.now(),text:'Read a browser result',sourceRef:JSON.stringify({instanceId,threadId,creatorAgentId:instanceId})}));
+  f.app.recheckScheduledMessages();
+  await f.app.idle();
+  assert.equal(results[0].result.historyReference,'unavailable');
+  assert.equal(results[0].result.pageId,'synthetic-background-page');
+  assert.equal(results[1].error,undefined);
+  assert.deepEqual(requests.map(request=>request.action),['open','read']);
+  assert.equal(requests[0].owner.requestId,undefined);
+  assert.ok(requests[0].owner.turnId);
+ }finally{await f.close();}
+});
+
+test('background location uses an active native turn and expires a stale turn',async()=>{
+ const f=fixture();
+ const actions:{action:string;input:Record<string,unknown>}[]=[];
+ f.app.bindBrowserPreview(async(_actor,action,input)=>{actions.push({action,input});});
+ const active='c4bd32b7-44f1-46ea-927c-9c06bac83050',stale='c4bd32b7-44f1-46ea-927c-9c06bac83051';
+ const failures:unknown[]=[];
+ f.setScript(async(main,body)=>{
+  if(!body.includes('[定时消息正文]'))return {status:'completed',text:'Ready'};
+  const scope={threadId:main.threadId,owner:'main:'+main.threadId,pageId:'page-synthetic-location',origin:'https://example.com',permission:'geolocation',interactive:false};
+  try{
+   await f.app.browserPermission({...scope,id:stale,turnId:'an-expired-turn'});
+   const decision=f.app.browserPermission({...scope,id:active,turnId:main.turnId});
+   await until(()=>actions.some(entry=>entry.action==='location-card'));
+   const card=actions.find(entry=>entry.action==='location-card')!;
+   const id=String(card.input.cardId);
+   assert.equal(f.app.interactions.inspect(id).authority.sourceRequestId,undefined);
+   f.app.submitMessage({interactionId:id,requestId:'deny-background-location',text:'拒绝本次操作'});
+   await decision;
+  }catch(error){failures.push(error);throw error;}
+  return {status:'completed',text:''};
+ });
+ try{
+  await f.app.start();
+  const threadId=f.app.store.meta('mainThread')!,instanceId=f.app.store.meta('mainAgentId')!;
+  f.app.store.transaction(()=>f.app.inputs.enqueueScheduled({deliveryId:'location-background',scheduleId:'synthetic-schedule',scheduledAt:Date.now(),text:'Read location',sourceRef:JSON.stringify({threadId,instanceId,creatorAgentId:instanceId})}));
+  f.app.recheckScheduledMessages();
+  await f.app.idle();
+  assert.deepEqual(failures,[]);
+  assert.deepEqual(actions.map(entry=>[entry.action,entry.input.id,entry.input.allow]),[
+   ['location-decision',stale,false],['location-card',active,undefined],['location-decision',active,false],
+  ]);
+ }finally{await f.close();}
+});

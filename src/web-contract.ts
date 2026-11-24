@@ -47,7 +47,7 @@ export type ArtifactOrigin={message:import('./web-history.js').ConversationMessa
 export type WebWork={id:string;title:string;status:string;summary:string|null};
 export type WebApproval = { title: string; scope: string; canApprove?: false; context?: string; explanation?: string; detailLabel?: string; details?: string; rememberLocation?: true; previewPageId?: string };
 export type WebInteraction = { options?:import('./question-schema.js').BusinessOption[]; approval?: WebApproval; canCancel?:true; id: string; runId: string; workTitle?: string; sourceRequestId?: string; sourceMessageId?:string; kind: "question" | "authorization"; question: string; reason: string | null; questions?: import('./question-schema.js').WebQuestion[] };
-export type InactiveInteraction = {code?:string;id:string;kind:"question"|"authorization";state:"expired"|"cancelled";sourceRequestId:string;messageId?:string;processId?:string};
+export type InactiveInteraction = {code?:string;id:string;kind:"question"|"authorization";state:"expired"|"cancelled";sourceRequestId?:string;messageId?:string;processId?:string};
 export type WebState = {
   observedAtMs?:number;
   history?:{protocol:3;readEpoch:string;page:Omit<import('./web-history-pages.js').HistoryPage,'messages'|'queue'>;moreQueue:number|null;moreInteractions:number|null};

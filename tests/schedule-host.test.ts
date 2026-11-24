@@ -7,6 +7,7 @@ import {homerWebBridge} from '../src/web-homer.js';
 import {ChannelPlugin} from '../src/channel-plugin.js';
 import {renameSync} from 'node:fs';
 import {join} from 'node:path';
+import {migrateDesktopBaseline} from '../src/desktop-baseline-migration.js';
 
 async function call(peer:any,name:string,args:unknown,id:string){
   const role=peer.options.role==='worker'?'worker':'main';
@@ -69,7 +70,7 @@ test('Worker shares all four tools and its completed turn does not revoke a remi
   }finally{await f.close();}
 });
 
-for(const route of ['open','steer'] as const)test(`scheduled Worker ${route} cannot supply a new delivery grant`,async t=>{
+for(const route of ['open','steer'] as const)test(`scheduled Worker ${route} can target its existing task`,async t=>{
   let now=Date.now(),taskId='',dispatched=false;
   t.mock.method(Date,'now',()=>now);
   const f=fixture(),trigger={cron:'0 9 * * *',timeZone:'Asia/Shanghai'};
@@ -100,15 +101,15 @@ for(const route of ['open','steer'] as const)test(`scheduled Worker ${route} can
     await until(()=>dispatched&&workers().length===1);
     const worker=workers()[0]!;
     assert.equal(worker===direct,route==='steer');
-    assert.equal((await call(worker,'schedule_create',{text:'Binding from timer',trigger,taskId},'timed-binding')).error,'schedule_scope_denied');
+    assert.equal((await call(worker,'schedule_create',{text:'Binding from timer',trigger,taskId},'timed-binding')).error,undefined);
     const unbound=await call(worker,'schedule_create',{text:'Unbound timer',trigger},'timed-unbound');
     assert.equal(unbound.error,undefined);
     const {scheduleId,revision}=unbound.result as {scheduleId:string;revision:number};
-    assert.equal((await call(worker,'schedule_update',{scheduleId,expectedRevision:revision,taskId},'timed-rebinding')).error,'schedule_scope_denied');
+    assert.equal((await call(worker,'schedule_update',{scheduleId,expectedRevision:revision,taskId},'timed-rebinding')).error,undefined);
   }finally{await f.close();}
 });
 
-test('only a Worker report from a scheduled dispatch is denied a new delivery grant',async t=>{
+test('Main can associate a schedule after either a direct or scheduled Worker dispatch',async t=>{
   let now=Date.now(),taskId='';
   t.mock.method(Date,'now',()=>now);
   const f=fixture(),bindingErrors:unknown[]=[];
@@ -138,7 +139,7 @@ test('only a Worker report from a scheduled dispatch is denied a new delivery gr
     assert.deepEqual(bindingErrors,[undefined]);
     now+=60000;f.app.recheckScheduledMessages();
     await finish();
-    assert.deepEqual(bindingErrors,[undefined,'schedule_scope_denied']);
+    assert.deepEqual(bindingErrors,[undefined,undefined]);
   }finally{await f.close();}
 });
 
@@ -157,7 +158,7 @@ test('Worker cannot read receipts or change schedules owned by another delegatio
   }finally{await f.close();}
 });
 
-test('a later real user body change binds its new source while model-supplied source fields are rejected',async()=>{
+test('a later user can edit schedule text while model-supplied source fields are rejected',async()=>{
   const f=fixture();let record:any;
   try{
     f.setScript(async(main,text)=>{
@@ -171,7 +172,7 @@ test('a later real user body change binds its new source while model-supplied so
     await f.app.start();assert.equal(await f.app.message('Original recurring task','original-body-source'),'Updated');
     assert.equal(await f.app.message('Change body within this new request','new-body-source'),'Updated');
     const ref=JSON.parse(f.app.schedules.get(record.scheduleId).sourceRef);
-    assert.equal(ref.authority.sourceRequestId,'new-body-source');
+    assert.equal(ref.authority,undefined);
   }finally{await f.close();}
 });
 
@@ -201,6 +202,39 @@ test('a model-source switch keeps old reminders paused across consecutive same-s
   }finally{await f.close();}
 });
 
+test('desktop v9 upgrade preserves an existing schedule pause boundary and permits new schedules',async()=>{
+ const f=fixture(),consumed:string[]=[];
+ try{
+  f.setScript(async(_main,text)=>{
+   const body=text.split('[定时消息正文]\n')[1];
+   if(body)consumed.push(body);
+   return {status:'completed',text:'Recorded'};
+  });
+  await f.app.start();
+  await f.app.message('Before the source switch','before-switch');
+  const seq=Number(f.app.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n);
+  await f.app.message('After the source switch','after-switch');
+  const instanceId=f.app.store.meta('mainAgentId')!,threadId=f.app.store.meta('mainThread')!;
+  const create=(text:string,requestId?:string)=>f.app.schedules.create({text,trigger:{cron:'0 9 * * *',timeZone:'Asia/Shanghai'},sourceRef:JSON.stringify({instanceId,threadId,creatorAgentId:instanceId,
+   ...(requestId?{authority:{sourceRequestId:requestId,description:text}}:{})})});
+  const before=create('Before switch','before-switch'),after=create('After switch','after-switch');
+  f.app.store.setMeta('desktopUserQueueBoundary',JSON.stringify({source:'website',adopted:false,seq}));
+  f.app.store.setMeta('recursiveSchemaVersion','9');
+  const config=f.app.config;
+  await f.app.close();
+  await migrateDesktopBaseline(config.runtime,config.codexHome!);
+  Object.assign(config,{pauseOldDesktopWork:true,desktopModelSource:'website',desktopResources:{bundleRoot:config.runtime,manifestSha256:'a'.repeat(64)}});
+  await f.restart();
+  const fresh=create('New v10 schedule');
+  await f.restart();
+  for(const schedule of [before,after,fresh])f.app.store.transaction(()=>f.app.inputs.enqueueScheduled({deliveryId:schedule.id,scheduleId:schedule.id,scheduledAt:Date.now(),text:schedule.text,sourceRef:schedule.sourceRef}));
+  f.app.recheckScheduledMessages();await f.app.idle();
+  assert.deepEqual(consumed,['After switch','New v10 schedule']);
+  await f.app.message('Resume from the current source','schedule-confirmation');await f.app.idle();
+  assert.deepEqual(consumed,['After switch','New v10 schedule','Before switch']);
+ }finally{await f.close();}
+});
+
 test('lost complete create response is recovered after restart without knowing schedule or native IDs',async()=>{
   const f=fixture();let oldMeta:unknown;
   try{
@@ -223,12 +257,12 @@ test('lost complete create response is recovered after restart without knowing s
   }finally{await f.close();}
 });
 
-test('revoked source is rejected at consumption instead of becoming fresh user authority',async t=>{
+test('an existing schedule is consumed after its original message is withdrawn',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const f=fixture();
   try{
     f.setScript(async(main,text)=>{
-      if(text==='Reminder with revocable source')await call(main,'schedule_create',{text:'Must not execute after revocation',trigger:{at:new Date(Date.now()+60000).toISOString()}},'revoke-create');
+      if(text==='Reminder with revocable source')await call(main,'schedule_create',{text:'Existing reminder',trigger:{at:new Date(Date.now()+60000).toISOString()}},'revoke-create');
       return {status:'completed',text:'Set'};
     });
     await f.app.start();await f.app.message('Reminder with revocable source','revocable-source');
@@ -236,8 +270,8 @@ test('revoked source is rejected at consumption instead of becoming fresh user a
     f.app.history.revokeMessage(f.app.store.meta('mainThread')!,String(message.id));
     await f.app.message('New source does not restore old permissions','unrelated-confirmation');
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
-    assert.ok(f.app.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message' AND r.state='rejected'").get());
-    assert.equal(f.inputs.length,2);
+    assert.ok(f.app.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message' AND r.state='received'").get());
+    assert.equal(f.inputs.length,3);
   }finally{await f.close();}
 });
 
@@ -260,7 +294,7 @@ test('scheduled inputs remain pending until the restored Main engine finishes in
   }finally{release();await restarting?.catch(()=>{});await f.close();}
 });
 
-for(const state of ['preparing','offline','revoked','storage','before-turn','wake'] as const)test('a scheduled Telegram group message waits without blocking chat: '+state,async t=>{
+for(const state of ['preparing','offline','revoked','storage','before-turn','wake'] as const)test('a reminder created in a Telegram group consumes once in Homer: '+state,async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const f=fixture([{id:'telegram',send:async()=>({state:'sent'}),...(state==='wake'?{
     offlineReplayMs:86_400_000,
@@ -277,7 +311,7 @@ for(const state of ['preparing','offline','revoked','storage','before-turn','wak
       }
       else if(state==='offline'&&text==='Unrelated local chat')await openTaskWorker(main,'Unrelated background work');
       else if(state==='storage'&&text==='Unrelated local chat')
-        assert.equal((await call(main,'schedule_list',{receipts:true},'temporary-read')).error,'channel_input_preparing');
+        assert.equal((await call(main,'schedule_list',{receipts:true},'temporary-read')).error,undefined);
       return {status:'completed',text:'Set'};
     });
     await f.app.start();
@@ -296,12 +330,13 @@ for(const state of ['preparing','offline','revoked','storage','before-turn','wak
         if(drop){drop=false;groups.disconnected(binding);}
       });
     }else if(state!=='wake')groups.polled(binding,true);
+    if(state==='revoked')plugin.revokeBinding(binding);
     now+=60000;f.app.recheckScheduledMessages(state==='wake');await f.app.idle();
-    const pending=receipt();
-    assert.equal(pending.state,'pending');assert.equal(consumed,0);
-    if(state==='before-turn')assert.equal(pending.revision,2,'claim was released before any native call');
-    assert.throws(()=>f.app.readSchedules({view:'list',readEpoch:f.app.webReadEpoch}),/channel_input_preparing/);
-    assert.equal(f.app.store.db.prepare('SELECT enabled FROM schedules').get()!.enabled,0,'delivery still ends at the original inbox');
+    const completed=receipt();
+    assert.equal(completed.state,'received');assert.equal(consumed,1);
+    const schedules=f.app.readSchedules({view:'list',readEpoch:f.app.webReadEpoch});
+    assert.ok('items' in schedules);assert.equal(schedules.items.length,1);
+    assert.equal(f.app.store.db.prepare('SELECT enabled FROM schedules').get()!.enabled,0);
     f.app.submitMessage({requestId:'unrelated-chat',text:'Unrelated local chat'});
     await until(()=>f.inputs.includes('Unrelated local chat'));
     if(state==='offline'){
@@ -311,21 +346,11 @@ for(const state of ['preparing','offline','revoked','storage','before-turn','wak
       await until(()=>f.inputs.some(text=>text.includes('Unrelated Worker finished')));
     }
     await f.app.idle();
-    assert.deepEqual(receipt(),pending,'waiting does not write another receipt');
-    const revoked=state==='revoked';
-    if(state==='storage'){
-      renameSync(unavailablePath,channelPath);storeMoved=false;
-      await until(()=>consumed===1);
-    }else if(state==='offline'){
-      await f.restart();
-      assert.deepEqual(receipt(),pending);
-      f.app.channels!.telegramGroups().caughtUp(binding);
-    }else if(revoked)plugin.revokeBinding(binding);else groups.caughtUp(binding);
-    await f.app.idle();
-    assert.equal(receipt().state,revoked?'rejected':'received');assert.equal(consumed,revoked?0:1);
-    assert.equal(receipt().id,pending.id);
+    if(storeMoved){renameSync(unavailablePath,channelPath);storeMoved=false;}
+    if(state==='offline')await f.restart();
     f.app.channels!.telegramGroups().caughtUp(binding);f.app.recheckScheduledMessages();await f.app.idle();
-    assert.equal(consumed,revoked?0:1);
+    assert.deepEqual(receipt(),completed);
+    assert.equal(consumed,1);
     assert.equal(f.app.store.db.prepare("SELECT count(*) n FROM agent_messages WHERE kind='scheduled_message'").get()!.n,1);
   }finally{if(storeMoved)renameSync(unavailablePath,channelPath);await f.close();}
 });
@@ -353,28 +378,33 @@ test('a scheduled native start with unknown outcome is not offered again after r
   }finally{await f.close();}
 });
 
-test('a revoked original channel binding cannot authorize a delayed message',async t=>{
+test('a revoked channel binding does not receive a scheduled result',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
-  const f=fixture(),plugin=new ChannelPlugin(f.app,[{id:'simulation',send:async()=>({state:'sent'})}]);
+  const sent:unknown[]=[];
+  const f=fixture(),plugin=new ChannelPlugin(f.app,[{id:'simulation',send:async packet=>{sent.push(packet);return {state:'sent'};}}]);
   const address={adapterId:'simulation',accountKey:'account',senderKey:'sender',conversationKey:'chat'};
   try{
     const binding=plugin.bind(address);
-    f.setScript(async main=>{
+    f.setScript(async (main,text)=>{
+      if(text.includes('[定时消息正文]'))return {status:'completed',text:'Private scheduled result'};
       const result=await call(main,'schedule_create',{text:'Delayed channel task',trigger:{at:new Date(Date.now()+60000).toISOString()}},'channel-schedule');
       assert.equal(result.error,undefined);return {status:'completed',text:'Set'};
     });
     await f.app.start();plugin.receiveText({...address,eventId:'original-channel-event',text:'Schedule in this chat'});await f.app.idle();
     assert.equal(f.app.store.db.prepare('SELECT count(*) n FROM schedules').get()!.n,1);
+    await plugin.synchronize();const previous=sent.length;
     plugin.revokeBinding(binding);
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
-    assert.equal(f.inputs.length,1);
-    assert.ok(f.app.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message' AND r.state='rejected'").get());
+    assert.equal(f.inputs.length,2);
+    await plugin.synchronize();assert.equal(sent.length,previous);
+    assert.ok(f.app.store.db.prepare("SELECT 1 FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id WHERE m.kind='scheduled_message' AND r.state='received'").get());
   }finally{await plugin.close();await f.close();}
 });
 
-test('revoking a channel during delayed consumption blocks later delegation and final delivery',async t=>{
+test('revoking a channel during delayed consumption preserves local delegation and final delivery',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
-  const f=fixture(),plugin=new ChannelPlugin(f.app,[{id:'simulation',send:async()=>({state:'sent'})}]);
+  const sent:unknown[]=[];
+  const f=fixture(),plugin=new ChannelPlugin(f.app,[{id:'simulation',send:async packet=>{sent.push(packet);return {state:'sent'};}}]);
   const address={adapterId:'simulation',accountKey:'account',senderKey:'sender',conversationKey:'chat'};
   let checked=false,failure:unknown;
   const final='Final text for the now revoked reminder';
@@ -384,20 +414,23 @@ test('revoking a channel during delayed consumption blocks later delegation and 
       if(text.includes('[定时消息正文]')){
         try{
           plugin.revokeBinding(binding);
-          await assert.rejects(openTaskWorker(main,'Must remain unauthorized'),/channel_binding_denied/);
+          const work=await openTaskWorker(main,'Continue local work');
+          await until(()=>f.engines.some(worker=>worker.options.role==='worker'&&worker.finish));
+          f.engines.find(worker=>worker.options.role==='worker'&&worker.finish)!.finish!({status:'completed',text:''});
+          assert.equal(f.app.tasks.run(work.runId).sourceRequestId,null);
           checked=true;
           return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
         }catch(error){failure=error;throw error;}
-      }else await call(main,'schedule_create',{text:'Recheck delayed source',trigger:{at:new Date(now+60000).toISOString()}},'recheck-live-channel');
+      }else if(text.includes('Schedule in this chat'))await call(main,'schedule_create',{text:'Recheck delayed source',trigger:{at:new Date(now+60000).toISOString()}},'recheck-live-channel');
       return {status:'completed',text:'Set'};
     });
     await f.app.start();plugin.receiveText({...address,eventId:'original-channel-event',text:'Schedule in this chat'});await f.app.idle();
     now+=60000;f.app.recheckScheduledMessages();await f.app.idle();
-    assert.ifError(failure);assert.equal(checked,true);assert.equal(f.app.store.runs().length,0);
-    assert.equal(f.app.history.list(f.app.store.meta('mainThread')!).some(message=>message.text===final),false);
+    assert.ifError(failure);assert.equal(checked,true);assert.equal(f.app.store.runs().length,1);
+    assert.equal(f.app.history.list(f.app.store.meta('mainThread')!).some(message=>message.text===final),true);
     const reply=f.app.webHistoryPages().read(f.app.store.meta('mainThread')!).messages.find(message=>message.process?.sourceKind==='scheduled');
-    assert.equal(reply?.status,'failed');
-    assert.match(reply?.text??'',/授权已变化/);
+    assert.equal(reply?.status,'completed');
+    assert.equal(reply?.text,final);
   }finally{await plugin.close();await f.close();}
 });
 
@@ -438,7 +471,7 @@ test('a scheduled final is saved in the main chat once without a send call',asyn
   }finally{await f.close();}
 });
 
-test('due delivery is a scheduled source, preserves durable user authority, and stops at inbox',async t=>{
+test('due delivery is a scheduled source, dispatches with a nullable source, and stops at inbox',async t=>{
   let now=Date.now();t.mock.method(Date,'now',()=>now);
   const f=fixture();let consumptionError:unknown;
   try{
@@ -451,7 +484,7 @@ test('due delivery is a scheduled source, preserves durable user authority, and 
           assert.match(text,/定时/);
           const task=await openTaskWorker(main,'Handle the reminder');
           assert.ok(task.taskId);
-          assert.equal(f.app.tasks.version(task.taskId,1).sourceRequestId,'reminder-source');
+          assert.equal(f.app.tasks.version(task.taskId,1).sourceRequestId,null);
           await until(()=>f.engines.some(peer=>peer.options.role==='worker'&&peer.finish));
           f.engines.find(peer=>peer.options.role==='worker'&&peer.finish)!.finish!({status:'completed',text:'Delegated reminder handled',messages:[]});
           return {status:'completed',text:'Delayed result',messages:[{itemId:'final',phase:'final_answer',text:'Delayed result'}]};
@@ -495,4 +528,48 @@ test('due messages enter the inbox while Homer is busy without waiting for busin
     release();await request;await f.app.idle();
     assert.equal(f.inputs.length,3);
   }finally{release();await f.close();}
+});
+
+test('text edits keep schedule ownership and a queued hit keeps its delivery task across rebinding',async()=>{
+ const f=fixture();
+ let oldTaskId='',newTaskId='',schedule:any,hitId='';
+ const errors:unknown[]=[];
+ f.setScript(async(main,body)=>{
+  try{
+   if(body==='Set up delivery'){
+    oldTaskId=(await main.call('task_create',{title:'Old target',goal:'Original version'})).taskId;
+    newTaskId=(await main.call('task_create',{title:'New target',goal:'Next destination'})).taskId;
+    const created=await call(main,'schedule_create',{text:'Original body',trigger:{cron:'0 9 * * *',timeZone:'Asia/Shanghai'},taskId:oldTaskId},'configure');
+    assert.equal(created.error,undefined);schedule=created.result;
+    const owner=f.app.schedules.get(schedule.scheduleId).sourceRef;
+    const edited=await call(main,'schedule_update',{scheduleId:schedule.scheduleId,expectedRevision:schedule.revision,text:'Updated body'},'edit-body');
+    assert.equal(edited.error,undefined);schedule=edited.result;
+    assert.equal(f.app.schedules.get(schedule.scheduleId).sourceRef,owner);
+    f.app.store.transaction(()=>{hitId=f.app.inputs.enqueueScheduled({deliveryId:'snapshot-before-rebind',scheduleId:schedule.scheduleId,scheduledAt:Date.now(),text:schedule.text,sourceRef:owner});});
+    const rebound=await call(main,'schedule_update',{scheduleId:schedule.scheduleId,expectedRevision:schedule.revision,taskId:newTaskId},'rebind');
+    assert.equal(rebound.error,undefined);
+    assert.equal(rebound.result.taskId,newTaskId);
+    await main.call('task_update',{taskId:oldTaskId,goal:'New version after the hit'});
+    return {status:'completed',text:'Ready'};
+   }
+   assert.match(body,/\[定时消息正文\]\nUpdated body/);
+   return {status:'completed',text:'Result from the original hit',messages:[{itemId:'scheduled-final',phase:'final_answer',text:'Result from the original hit'}]};
+  }catch(error){errors.push(error);throw error;}
+ });
+ try{
+  await f.app.start();
+  assert.equal(await f.app.message('Set up delivery','schedule-snapshot-origin'),'Ready');
+  await f.app.idle();
+  assert.deepEqual(errors,[]);
+  const results=f.app.listCommittedMessages({taskId:oldTaskId}).items;
+  assert.equal(results.length,1);
+  assert.equal(results[0]?.text,'Result from the original hit');
+  assert.equal(f.app.listCommittedMessages({taskId:newTaskId}).items.length,0);
+  const outcome=f.app.store.db.prepare("SELECT scopeId,detailsJson FROM operations WHERE id=?").get('scheduled-final:'+hitId)!;
+  assert.equal(outcome.scopeId,oldTaskId);
+  assert.equal(JSON.parse(String(outcome.detailsJson)).taskVersion,1);
+  await f.restart();
+  await f.app.idle();
+  assert.equal(f.app.listCommittedMessages({taskId:oldTaskId}).items.length,1);
+ }finally{await f.close();}
 });

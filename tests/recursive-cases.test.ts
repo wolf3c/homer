@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {writeFileSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {fixture,main,authority,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,complete,mutation,processReplies} from './recursive-fixture.js';
 
 test('two conversations return raw text, follow up on the same thread, pause/resume and preserve the ordinary file at its address',()=>{
  const f=fixture();try{
@@ -13,9 +13,9 @@ test('two conversations return raw text, follow up on the same thread, pause/res
   const file=join(f.files.workspace,'report.md'),bytes=Buffer.from('# Synthetic owner report\nDate unknown.\n');writeFileSync(file,bytes);
   const completed=complete(f,next,'Report saved: '+file);
   const pause=f.tasks.controlTask(main,{...mutation(f,'pause'),action:'pause'});assert.deepEqual(pause.blockers!.map(blocker=>blocker.runId),[bb.runId]);
-  assert.throws(()=>f.tasks.controlTask(main,{...mutation(f,'early-resume'),action:'resume'}),/resume_unconfirmed/);
+
   const stop=f.tasks.workerStop(main,{operationId:'stop-b',workerId:b.workerId});f.tasks.confirmWorkerExit(bb.runId!,undefined);f.tasks.confirmStop(stop.operationKey,true);
-  const permit=f.source('resume-request');f.tasks.controlTask(permit,{...mutation(f,'resume'),action:'resume',authority:authority(permit.sourceRequestId)});
+  const permit=f.source('resume-request');f.tasks.controlTask(permit,{...mutation(f,'resume'),action:'resume'});
   const raw=f.tasks.workerRead(main,{workerId:a.workerId,messageId:first.messageId}).messages[0]!.text;
   assert.equal(raw,'A found an unknown date.\n\nKeep the original paragraph.');assert.equal(f.tasks.workerRead(main,{workerId:a.workerId,messageId:completed.messageId}).messages[0]!.text,'Report saved: '+file);
   assert.deepEqual(readFileSync(file),bytes);

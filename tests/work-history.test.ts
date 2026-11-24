@@ -9,14 +9,15 @@ import {join} from 'node:path';
 import {Homer} from '../src/service.js';
 import {seedFirstLaunchSkills} from '../src/first-launch.js';
 import type {EngineOptions,TurnResult} from '../src/engine.js';
-import {authority,fixture,main,openWorker,running,complete,mutation,processReplies,type Fixture} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,complete,mutation,processReplies,type Fixture} from './recursive-fixture.js';
 function closedWorker(f:Fixture){const worker=openWorker(f),actor=running(f,worker.runId),reply=complete(f,actor,'Synthetic investigation complete.');processReplies(f);return {worker,actor,reply};}
 
-test('archive requires Main, an actual same-thread user source and current CAS',()=>{
+test('archive requires Main in its own thread and the current revision',()=>{
  const f=fixture();try{
   const w=closedWorker(f),input=mutation(f,'archive'),before=f.tasks.task(f.task.taskId);
-  for(const actor of [{...main,sourceRequestId:undefined},{...main,sourceRequestId:'forged'},{...main,threadId:'foreign'},w.actor])assert.throws(()=>f.tasks.archiveHistory(actor,input,true),/history_source|source_denied|identity|main_required/);
+  for(const actor of [{...main,threadId:'foreign'},w.actor])assert.throws(()=>f.tasks.archiveHistory(actor,input,true),/history_source|source_denied|identity|main_required/);
   assert.throws(()=>f.tasks.archiveHistory(main,{...input,expectedRevision:input.expectedRevision-1},true),/revision_conflict/);assert.deepEqual(f.tasks.task(before.id),before);
+  assert.equal(f.tasks.archiveHistory({...main,sourceRequestId:undefined},input,true).state,'archived');
  }finally{f.close();}
 });
 
@@ -69,56 +70,56 @@ for(const blocker of ['live','unknown-exit','lease','operation','pending-reply',
   if(blocker==='operation')f.store.db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(worker.operationKey);
   if(blocker==='upload')new MediaStore(f.store.db,join(f.dir,'media')).intent(main.sourceRequestId!,'synthetic-binding','file');
   if(blocker==='interaction')f.store.db.prepare("INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt) VALUES('pending','pending','synthetic',?,?,?,'pending','native','question','{}','{}','pending_user',0,0)").run(worker.runId,actor.threadId!,actor.turnId!);
-  const before=f.tasks.task(f.task.taskId),response=f.tasks.archiveHistory(main,mutation(f,'archive'),true);
-  assert.equal(response.state,'skipped');assert.ok('blockers' in response&&response.blockers!.length>0);assert.deepEqual(f.tasks.task(before.id),before);
+  const runs=f.tasks.runs(),operations=f.store.db.prepare("SELECT * FROM operations WHERE state='uncertain'").all();
+  const response=f.tasks.archiveHistory({...main,sourceRequestId:undefined},mutation(f,'archive'),true);
+  assert.equal(response.state,'archived');assert.equal(f.tasks.task(f.task.taskId).state,'paused');
+  assert.deepEqual(f.tasks.runs(),runs);
+  assert.deepEqual(f.store.db.prepare("SELECT * FROM operations WHERE state='uncertain'").all(),operations);
   assert.equal(f.tasks.workerRead(main,{workerId:worker.workerId,messageId:reply.messageId}).messages[0]!.text,'Useful readable answer');
-  assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='task_archived').length,0);
+  assert.equal(f.tasks.inbox(main).filter(message=>message.kind==='task_archived').length,1);
  }finally{f.close();}
 });
 
-for(const terminal of ['completed','failed','interrupted','unknown','restart','revised','revoked','older-version','new-blocker','new-effect'] as const)test('current Worker input archive resolves once at '+terminal,()=>{
+for(const terminal of ['completed','failed','interrupted','unknown'] as const)test('a committed background archive survives its input ending '+terminal,()=>{
  const f=fixture();try{
   const worker=openWorker(f),workerActor=running(f,worker.runId);
-  if(terminal==='older-version'){
-   const editor=f.source('editor');f.tasks.updateTask(editor,{...mutation(f,'revise'),patch:{goal:'Include notes'},authority:authority('editor')});
-  }
   const reply=complete(f,workerActor);
   const q=f.inputs.claim([],'all')!;assert.equal(q.messageId,reply.messageId);
   const turn='turn:archive',process='process:archive',actor={agentId:main.agentId,threadId:main.threadId,turnId:turn,inputMessageId:q.messageId};
   f.store.transaction(()=>{f.processes.start({id:process,threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[q.messageId],messageId:process},turn);f.tasks.receiveMainMessagesInTransaction([q.messageId],turn);});
   const input=mutation(f,'archive'),receipt=f.tasks.archiveHistory(actor,input,true);
-  assert.equal(receipt.state,'requested');assert.equal(f.tasks.task(input.taskId).historyState,'visible');assert.deepEqual(f.tasks.archiveHistory(actor,input,true),receipt);
-  if(terminal==='revised')f.store.db.prepare("UPDATE tasks SET revision=revision+1 WHERE id=?").run(input.taskId);
-  if(terminal==='revoked')f.history.revokeMessage(main.threadId!,f.history.inputs(main.threadId!,[main.sourceRequestId!]).get(main.sourceRequestId!)!.id);
-  if(terminal==='new-blocker')openWorker(f,'new-worker');
-  if(terminal==='new-effect')f.processes.native(process,{threadId:main.threadId!,turnId:turn,itemId:'late-file-change',category:'fileChange',status:'running',completed:false});
-  if(terminal==='restart'){
-   f.store.db.exec("CREATE TEMP TRIGGER lose_terminal BEFORE INSERT ON agent_messages WHEN NEW.kind='task_archived' BEGIN SELECT RAISE(ABORT,'synthetic_terminal_failure'); END");
-   assert.throws(()=>f.store.transaction(()=>{
-    f.processes.finish(process,'completed','turn:'+turn+':terminal:completed');
-    f.tasks.finishArchives(q.messageId,turn,'completed');
-   }),/synthetic_terminal_failure/);
-   assert.equal(f.processes.exact(process)?.state,'working');
-   assert.equal(f.tasks.operation(receipt.operationKey).state,'accepted');assert.equal(f.tasks.task(input.taskId).historyState,'visible');
-   f.tasks.recoverArchives();
-  }
-  else f.store.transaction(()=>{
-   const status=terminal==='failed'||terminal==='interrupted'||terminal==='unknown'?terminal:'completed';
-   f.processes.finish(process,status,'turn:'+turn+':terminal:'+status);
-   f.tasks.finishArchives(q.messageId,turn,status);
-   f.tasks.finishArchives(q.messageId,turn,status);
-  });
-  const result=JSON.parse(f.tasks.operation(receipt.operationKey).responseJson!);
-  if(terminal==='new-effect')assert.deepEqual(result.blockers,[{reason:'main_effect_unconfirmed',id:process}]);
-  const archived=terminal==='completed'||terminal==='older-version';
-  assert.equal(result.state,archived?'archived':'skipped');
-  assert.equal(f.tasks.task(input.taskId).historyState,archived?'archived':'visible');
-  assert.equal(f.tasks.inbox(main).filter(row=>row.kind==='task_archived').length,archived?1:0);
-  if(terminal==='older-version'){
-   const notice=f.inputs.claim([],'all');assert.ok(notice?.origin==='worker');assert.equal(notice.taskVersion,2);
-   const review=f.tasks.archiveReview({...actor,inputMessageId:notice.messageId});
-   assert.equal(review?.authority?.sourceRequestId,'editor');
-  }
+  assert.equal(receipt.state,'archived');
+  f.processes.finish(process,terminal,'turn:'+turn+':terminal:'+terminal);
+  f.tasks.recoverArchives();
+  assert.deepEqual(f.tasks.archiveHistory(actor,input,true),receipt);
+  assert.equal(f.tasks.inbox(main).filter(row=>row.kind==='task_archived').length,1);
+ }finally{f.close();}
+});
+
+test('after restore and a second archive only the latest committed notice can start review',()=>{
+ const f=fixture();try{
+  const actor={...main,sourceRequestId:undefined},op=(id:string,archive:boolean)=>f.tasks.archiveHistory(actor,mutation(f,id),archive);
+  const first=op('first',true);
+  const oldNotice=f.inputs.claim([],'all')!;
+  assert.equal(f.tasks.archiveReview({...actor,inputMessageId:oldNotice.messageId})?.operationKey,first.operationKey);
+  op('restore',false);
+  assert.equal(f.tasks.archiveReview({...actor,inputMessageId:oldNotice.messageId}),undefined);
+  const next=op('second',true);
+  assert.equal(f.tasks.archiveReview({...actor,inputMessageId:oldNotice.messageId}),undefined);
+  f.store.db.prepare("UPDATE agent_receipts SET state='rejected' WHERE messageId=?").run(oldNotice.messageId);
+  const current=f.inputs.claim([],'all')!;
+  assert.equal(f.tasks.archiveReview({...actor,inputMessageId:current.messageId})?.operationKey,next.operationKey);
+ }finally{f.close();}
+});
+
+test('restart closes a legacy deferred archive whose commit was unknown',()=>{
+ const f=fixture();try{
+  f.store.db.prepare("INSERT INTO operations VALUES('legacy','main:test',?,'legacy-archive','archive_work','synthetic','accepted','{}',NULL,0)").run(f.task.taskId);
+  f.tasks.recoverArchives();
+  assert.equal(f.tasks.operation('legacy').state,'confirmed');
+  assert.equal(JSON.parse(f.tasks.operation('legacy').responseJson!).state,'skipped');
+  assert.equal(f.tasks.task(f.task.taskId).historyState,'visible');
+  assert.equal(f.tasks.inbox(main).filter(row=>row.kind==='task_archived').length,0);
  }finally{f.close();}
 });
 
@@ -148,7 +149,7 @@ for(const [kind,skillState] of [['task_archived','enabled'],['task_archived','mi
  }finally{await app?.close();if(!closed)f.store.close();rmSync(f.dir,{recursive:true,force:true});rmSync(workspace,{recursive:true,force:true});}
 });
 
-for(const sourceKind of ['user','worker'] as const)test('archive waits for the related Main native effect from a '+sourceKind+' input',()=>{
+for(const sourceKind of ['user','worker'] as const)test('archive preserves the related Main native effect from a '+sourceKind+' input',()=>{
  const f=fixture();try{
   const threadId=main.threadId!,turnId='turn:pending-effect',process='main:pending-effect';
   const sibling=f.tasks.createTask(main,{operationId:'sibling',goal:'Separate item from the same user request'});
@@ -160,8 +161,8 @@ for(const sourceKind of ['user','worker'] as const)test('archive waits for the r
   f.processes.native(process,{...effect,status:'running',completed:false});
   f.processes.finish(process,'completed','turn:'+turnId+':terminal:completed');
   const attempt=f.tasks.archiveHistory(main,mutation(f,'archive-pending'),true);
-  assert.equal(attempt.state,'skipped');
-  assert.ok('blockers' in attempt&&attempt.blockers?.some(row=>row.reason==='main_effect_unconfirmed'&&row.id===process));
+  assert.equal(attempt.state,'archived');
+  assert.equal(f.processes.exact(process)?.items.some(item=>item.kind==='tool'&&item.itemId==='write'&&item.status==='unknown'),true);
   assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-unrelated',foreign.taskId),true).state,'archived');
   if(sourceKind==='worker')assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-sibling',sibling.taskId),true).state,'archived');
   f.processes.native(process,{...effect,status:'completed',completed:true});
@@ -169,15 +170,15 @@ for(const sourceKind of ['user','worker'] as const)test('archive waits for the r
  }finally{f.close();}
 });
 
-test('only a completed archive cancels an outstanding business question',()=>{
+test('archive preserves an outstanding business question before and after exit',()=>{
  const f=fixture();
  try{
   const w=openWorker(f),actor=running(f,w.runId);
   f.store.db.prepare(`INSERT INTO worker_interactions(id,identity,fingerprint,runId,threadId,turnId,requestId,source,kind,details,authority,state,createdAt,updatedAt)
    VALUES('q','q','q',?,?,?,'ask','ask_main','question','{}','{}','pending_user',0,0)`).run(w.runId,actor.threadId!,actor.turnId!);
   const state=()=>f.store.db.prepare("SELECT state FROM worker_interactions WHERE id='q'").get()!.state;
-  assert.equal(f.tasks.archiveHistory(main,mutation(f,'too-early'),true).state,'skipped');assert.equal(state(),'pending_user');
+  assert.equal(f.tasks.archiveHistory(main,mutation(f,'while-running'),true).state,'archived');assert.equal(state(),'pending_user');
   complete(f,actor,'Waiting for an answer');processReplies(f);assert.equal(state(),'pending_user');
-  assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-now'),true).state,'archived');assert.equal(state(),'cancelled');
+  assert.equal(f.tasks.archiveHistory(main,mutation(f,'archive-now'),true).state,'archived');assert.equal(state(),'pending_user');
  }finally{f.close();}
 });

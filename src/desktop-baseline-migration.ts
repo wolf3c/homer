@@ -4,7 +4,7 @@ import {createInterface} from 'node:readline';
 import {backup,DatabaseSync} from 'node:sqlite';
 import {MAIN_TOOLS_HASH} from './recursive-tools.js';
 import {storedWorkSafeToUpgrade} from './recursive-tasks.js';
-import {STORE_SCHEMA_VERSION,TASK_COLUMNS,TASK_INDEXES} from './store.js';
+import {STORE_SCHEMA_VERSION,RUN_COLUMNS,TASK_COLUMNS,TASK_INDEXES} from './store.js';
 
 const legacyHashes=new Set([
  '615506d5ebbfc9ade218daa6793de1b0318d10a3016463b99da0395d498aaccf',
@@ -89,8 +89,27 @@ export async function migrateDesktopBaseline(runtime:string,codexHome:string){
  try{
   const meta=(key:string)=>db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value as string|undefined;
   if(meta('recursiveSchemaVersion')===STORE_SCHEMA_VERSION)return;
-  if(meta('recursiveSchemaVersion')!=='8')throw Error('desktop_schema_incompatible');
-  if(existsSync(join(runtime,'cli.lock'))||existsSync(join(runtime,'gateway','cli.lock'))||db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get()||
+  if(existsSync(join(runtime,'cli.lock'))||existsSync(join(runtime,'gateway','cli.lock')))throw Error('desktop_run_review_required');
+  if(meta('recursiveSchemaVersion')==='8')await migrateV8(db,codexHome);
+  if(meta('recursiveSchemaVersion')!=='9')throw Error('desktop_schema_incompatible');
+  db.exec('PRAGMA synchronous=FULL; BEGIN IMMEDIATE;');
+  try{
+   const indexes=db.prepare("SELECT sql FROM sqlite_schema WHERE type='index' AND tbl_name='runs' AND sql IS NOT NULL ORDER BY name").all();
+   const columns=['rowid',...db.prepare('PRAGMA table_info(runs)').all().map(row=>'"'+String(row.name).replaceAll('"','""')+'"')].join(',');
+   db.exec(`CREATE TABLE runs_v10${RUN_COLUMNS};
+    INSERT INTO runs_v10(${columns}) SELECT ${columns} FROM runs;
+    DROP TABLE runs; ALTER TABLE runs_v10 RENAME TO runs;`);
+   for(const index of indexes)db.exec(String(index.sql));
+   if(db.prepare('PRAGMA foreign_key_check').get())throw Error('desktop_schema_incompatible');
+   db.prepare("UPDATE meta SET value=? WHERE key='recursiveSchemaVersion'").run(STORE_SCHEMA_VERSION);
+   db.exec('COMMIT');
+  }catch(error){db.exec('ROLLBACK');throw error;}
+ }finally{db.close();}
+}
+
+async function migrateV8(db:DatabaseSync,codexHome:string){
+  const meta=(key:string)=>db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value as string|undefined;
+  if(db.prepare("SELECT 1 FROM meta WHERE key LIKE 'lease:%' LIMIT 1").get()||
    db.prepare("SELECT 1 FROM tasks WHERE controlState<>'normal' LIMIT 1").get()||!storedWorkSafeToUpgrade(db,true))throw Error('desktop_run_review_required');
   if(db.prepare('PRAGMA foreign_key_check').get())throw Error('desktop_schema_incompatible');
   const main=meta('mainThread'),hash=meta('mainToolsHash');
@@ -148,8 +167,7 @@ export async function migrateDesktopBaseline(runtime:string,codexHome:string){
     DROP TABLE tasks; ALTER TABLE tasks_v9 RENAME TO tasks; ${TASK_INDEXES}`);
    if(db.prepare('PRAGMA foreign_key_check').get())throw Error('desktop_schema_incompatible');
    if(main)db.prepare("UPDATE meta SET value=? WHERE key='mainToolsHash'").run(MAIN_TOOLS_HASH);
-   db.prepare("UPDATE meta SET value=? WHERE key='recursiveSchemaVersion'").run(STORE_SCHEMA_VERSION);
+   db.prepare("UPDATE meta SET value=? WHERE key='recursiveSchemaVersion'").run('9');
    db.exec('COMMIT');
   }catch(error){db.exec('ROLLBACK');throw error;}
- }finally{db.close();}
 }

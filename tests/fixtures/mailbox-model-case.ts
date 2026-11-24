@@ -82,7 +82,7 @@ export function mailboxModelCase(host:Host,scenario:MailboxModelScenario,workspa
  inputs.accept({requestId:sourceRequestId,text:description});const source=inputs.claim()!;
  inputs.started(source.messageId,source.revision,'synthetic-generation','synthetic-source-turn');inputs.finish(source.messageId,source.revision,'completed');store.finishRequest(sourceRequestId,'Synthetic setup');
  const actor={agentId,threadId,sourceRequestId,inputMessageId:source.messageId};
- const task=tasks.createTask(actor,{operationId:'synthetic-task',goal:description,authority:{sourceRequestId,description}});
+ const task=tasks.createTask(actor,{operationId:'synthetic-task',goal:description});
  const worker=tasks.workerOpen(actor,{operationId:'synthetic-open',taskId:task.taskId,text:description}),claimed=tasks.claim(worker.runId)!;
  tasks.bind(claimed.id,claimed.epoch,'synthetic-worker-thread','synthetic-worker-turn');const run=tasks.run(claimed.id);
  let delivered=0,live=true,interactionId:string|undefined,grant:unknown,recovery:undefined|{text:string;requestId:string};

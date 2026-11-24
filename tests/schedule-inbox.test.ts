@@ -72,19 +72,17 @@ test('scheduled and user messages preserve one durable queue order',()=>{
   }finally{f.close();}
 });
 
-test('a future delivery from old authority cannot bypass the desktop adoption pause by obtaining a new queue sequence',()=>{
+test('an old periodic schedule remains paused when it gets a new inbox sequence',()=>{
   const f=fixture();
   try{
-    f.inputs.accept({requestId:'old-owner-source',text:'Old ongoing work'});
-    const cutoff=Number(f.store.db.prepare('SELECT max(seq) n FROM agent_messages').get()!.n);
-    const adopted=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:cutoff,resumeScheduled:false});
-    const sourceRef=JSON.stringify({authority:{sourceRequestId:'old-owner-source'}});
-    f.store.transaction(()=>adopted.enqueueScheduled({...delivery('new-sequence-old-authority'),sourceRef}));
+    const sourceRef=JSON.stringify({instanceId:'main:synthetic',threadId:'original-main',creatorAgentId:'main:synthetic'});
+    const create=(id:string)=>f.store.db.prepare("INSERT INTO schedules(id,text,trigger,timeZone,sourceRef,enabled,nextFireAt,revision,createdAt,updatedAt) VALUES(?,?,'{}',NULL,?,1,NULL,1,1,1)").run(id,id,sourceRef);
+    create('schedule-a');
+    const adopted=new MainInputs(f.tasks,f.history,undefined,undefined,{pausedThroughSeq:0,resumeScheduled:false});
+    f.store.transaction(()=>adopted.enqueueScheduled({...delivery('hit-from-old-schedule'),sourceRef}));
     assert.equal(adopted.claim([],'all'),undefined);
-    adopted.accept({requestId:'new-owner-source',text:'New authorized work'});
-    const current=adopted.claim([],'all')!;assert.equal(current.origin,'user');
-    adopted.finish(current.messageId,current.revision,'completed');
-    f.store.transaction(()=>adopted.enqueueScheduled({...delivery('new-authority'),sourceRef:JSON.stringify({authority:{sourceRequestId:'new-owner-source'}})}));
-    assert.equal(adopted.claim([],'all')!.origin,'scheduled');
+    create('schedule-new');
+    f.store.transaction(()=>adopted.enqueueScheduled({...delivery('hit-from-new-schedule'),scheduleId:'schedule-new',sourceRef}));
+    assert.equal(adopted.claim([],'all')!.messageId,'scheduled-message:hit-from-new-schedule');
   }finally{f.close();}
 });

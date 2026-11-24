@@ -120,6 +120,7 @@ export type EngineLike = {
     text: string,
     options?: {
       cwd?:string;
+      beforeStart?: () => void;
       onStarted?: (id: string, timing?: TurnTimingEvidence) => void;
       images?:EngineImage[];
       skills?:{name:string;path:string}[];
@@ -1097,6 +1098,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     text: string,
     options?: {
       cwd?:string;
+      beforeStart?: () => void;
       onStarted?: (id: string, timing?: TurnTimingEvidence) => void;
       images?:EngineImage[];
       skills?:{name:string;path:string}[];
@@ -1142,6 +1144,7 @@ export class CodexEngine extends EventEmitter implements EngineLike {
     try {
       this.assertInteractionMcpBoundary(await this.prepared(operation,this.request('config/read',{includeLayers:true,cwd:this.options.cwd})));
       if(this.active!==active)throw Error('engine_turn_no_longer_active');
+      options?.beforeStart?.();
       const response = await this.request("turn/start", {
         cwd:this.options.cwd, runtimeWorkspaceRoots:[this.options.cwd],
         ...(this.options.nativeTools?{environments:[{environmentId:"local",cwd:this.options.cwd,runtimeWorkspaceRoots:[this.options.cwd]}]}:{}),

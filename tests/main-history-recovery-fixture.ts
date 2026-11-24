@@ -17,7 +17,7 @@ export async function recoveryFixture(count=1){
  const originals:{id:string;seq:number;taskId:string;workerId:string;runId:string}[]=[];
  for(let n=0;n<count;n++){
   const requestId='source-'+n;f.inputs.accept({requestId,text:'Synthetic original authority'});const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'source-generation-'+n,'source-native-'+n);f.inputs.finish(source.messageId,source.revision,'completed');
-  const actor={agentId,threadId,sourceRequestId:requestId},task=f.tasks.createTask(actor,{operationId:'task-'+n,goal:'Synthetic old work',authority:{sourceRequestId:requestId,description:'Synthetic only'}});
+  const actor={agentId,threadId,sourceRequestId:requestId},task=f.tasks.createTask(actor,{operationId:'task-'+n,goal:'Synthetic old work'});
   const worker=f.tasks.workerOpen(actor,{operationId:'open-'+n,taskId:task.taskId,text:'Synthetic original input'}),run=f.tasks.claim(worker.runId)!;f.tasks.bind(run.id,run.epoch,'worker-thread-'+n,'worker-turn-'+n);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Synthetic original result '+n},true);
   const claimed=f.inputs.claim([],'all')!;assert.equal(claimed.origin,'worker');

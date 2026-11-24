@@ -36,7 +36,7 @@ test('conversation baseline reads legacy persisted replies and a separate queue 
 test('conversation baseline summary/detail readers work with the committed task schema',()=>{
  const f=fixture();try{
   f.inputs.accept({requestId:'synthetic-source',text:'合成验证'});const source=f.inputs.claim()!;f.inputs.started(source.messageId,source.revision,'synthetic-generation','synthetic-native');f.inputs.finish(source.messageId,source.revision,'completed');
-  const root=f.tasks.createTask({agentId:f.store.meta('mainAgentId')!,threadId:'synthetic',sourceRequestId:'synthetic-source'},{operationId:'root',title:'合成事项',goal:'只读验证',authority:{sourceRequestId:'synthetic-source',description:'合成验证'}});
+  const root=f.tasks.createTask({agentId:f.store.meta('mainAgentId')!,threadId:'synthetic',sourceRequestId:'synthetic-source'},{operationId:'root',title:'合成事项',goal:'只读验证'});
   assert.equal(readTaskOverview(f.store.db).tasks[0]!.id,root.taskId);
   assert.equal(readTaskSummary(f.store.db,root.taskId).taskId,root.taskId);assert.equal(readTaskDetail(f.store.db,root.taskId).taskId,root.taskId);
  }finally{f.close();}

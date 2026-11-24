@@ -145,11 +145,11 @@ test('an audit cannot hide a missing schema commit on idempotent migration retry
  }finally{f.close();}
 });
 
-for(const version of ['6','7','8'])test('older schema '+version+' is refused before writes and cannot read the current store',()=>{
+for(const version of ['6','7','8','9'])test('older schema '+version+' is refused before writes and cannot read the current store',()=>{
  const f=chatFixture();try{
   assert.throws(()=>new LegacyStore(f.path),/recursive_schema_unsupported/);
   f.store.setMeta('recursiveSchemaVersion',version);f.store.close();
-  const before=readFileSync(f.path);assert.throws(()=>new Store(f.path),/recursive_schema_unsupported/);assert.deepEqual(readFileSync(f.path),before);
+  const before=readFileSync(f.path);assert.throws(()=>new Store(f.path),version==='8'||version==='9'?/desktop_store_migration_required/:/recursive_schema_unsupported/);assert.deepEqual(readFileSync(f.path),before);
  }finally{rmSync(f.dir,{recursive:true,force:true});}
 });
 

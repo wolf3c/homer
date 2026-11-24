@@ -60,3 +60,7 @@
 .homer-task-status .status-list .status-archive-toggle{justify-content:flex-start}
 /* Host accessibility boundary; pinned TaskCard markup and utilities stay intact. */
 :is(.homer-task-status[data-slot="task-card"],.homer-task-status [data-slot="task-card"])>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
+
+.homer-task-status .status-worker-assignments {padding-inline-start:1rem;margin:.2rem 0 .35rem;font-size:.8rem;overflow-wrap:anywhere}
+
+.homer-task-status [data-archive] .status-task-row:has(.status-task-running) {grid-template-columns:minmax(0,1fr) 20px var(--task-action-size)}

@@ -10,6 +10,7 @@ import {homerWebBridge} from '../src/web-homer.js';
 import type {Homer} from '../src/service.js';
 import {createWebServer} from '../src/web-server.js';
 import type {WebBridge} from '../src/web-contract.js';
+import {fixture as workerFixture,openWorker,running} from './recursive-fixture.js';
 
 const cases:{name:string;questions:{id:string;question:string;options?:{label:string}[];isOther?:boolean}[];answers:Record<string,string[]>}[]=[
  {name:'single strict option',questions:[{id:'format',question:'使用什么格式？',options:[{label:'表格'},{label:'文字'}]}],answers:{format:['表格']}},
@@ -62,35 +63,41 @@ test('question fields never authorize an operation or release an invalid native 
   approvals.end('generation');
  }finally{db.close();}
 });
-test('ordinary main turns discover bounded source-scoped Worker questions without deciding them',()=>{
- const db=new DatabaseSync(':memory:'),interactions=new WorkerInteractions(db),history=new ConversationHistory(db);
+test('ordinary main turns discover bounded same-conversation Worker questions without deciding them',()=>{
+ const f=workerFixture(),db=f.store.db,interactions=new WorkerInteractions(db),thread=f.store.meta('mainThread')!;
  try{
-  history.accept('main',{requestId:'source',text:'原任务'});history.accept('other-main',{requestId:'foreign-source',text:'其他来源'});
-  const open=(n:number,sourceRequestId='source')=>interactions.open({runId:'run-'+n,threadId:'worker-'+n,turnId:'turn',requestId:n,source:'ask_main',kind:'question',details:{question:'合成问题'},authority:{sourceRequestId,description:'合成授权',nativeApprovals:false}},()=>true);
-  const ids=Array.from({length:18},(_,n)=>{const item=open(n);interactions.escalate(item.id,'用户需要补充的信息','信息缺失');return item.id;});
-  const foreign=open(99,'foreign-source');interactions.escalate(foreign.id,'其他对话的问题','缺信息');
-  const summary=interactions.pendingForMain('main');assert.equal(summary.total,18);assert.equal(summary.items.length,16);
+  const ids=Array.from({length:18},(_,n)=>{
+   const actor=running(f,openWorker(f,'question-'+n).runId);
+   const item=interactions.open({runId:actor.runId!,threadId:actor.threadId!,turnId:actor.turnId!,requestId:n,source:'ask_main',kind:'question',details:{question:'合成问题'},authority:{description:'合成上下文',nativeApprovals:false}},()=>true);
+   interactions.escalate(item.id,'用户需要补充的信息','信息缺失');return item.id;
+  });
+  const summary=interactions.pendingForMain(thread);assert.equal(summary.total,18);assert.equal(summary.items.length,16);
   assert.ok(summary.items.every(item=>ids.includes(String(item.interactionId))));assert.equal(interactions.inspect(ids[0]!).state,'pending_user');
- }finally{db.close();}
+  assert.equal(interactions.pendingForMain('other-main').total,0);
+ }finally{f.close();}
 });
 test('pending Worker discovery excludes main-only, authorization, foreign and resolved facts and bounds question text',()=>{
- const db=new DatabaseSync(':memory:'),interactions=new WorkerInteractions(db),history=new ConversationHistory(db);
+ const f=workerFixture(),db=f.store.db,interactions=new WorkerInteractions(db),thread=f.store.meta('mainThread')!;
  try{
-  history.accept('main',{requestId:'source',text:'Task'});history.accept('foreign',{requestId:'elsewhere',text:'Other task'});
-  const open=(runId:string,sourceRequestId='source',kind:'question'|'authorization'='question')=>interactions.open({runId,threadId:'worker-'+runId,turnId:'turn',requestId:runId,source:kind==='question'?'ask_main':'native',kind,details:{question:'original'},authority:{sourceRequestId,description:'Task authority',nativeApprovals:false}},()=>true);
+  const open=(key:string,kind:'question'|'authorization'='question')=>{
+   const actor=key==='main-native:turn'||key==='missing'?undefined:running(f,openWorker(f,key).runId);
+   const runId=actor?.runId??key;
+   const item=interactions.open({runId,threadId:actor?.threadId??'unknown-thread',turnId:key==='foreign'?'foreign-turn':actor?.turnId??'unknown-turn',requestId:key,source:kind==='question'?'ask_main':'native',kind,details:{question:'original'},authority:{description:'Synthetic context',nativeApprovals:false}},()=>true);
+   return {...item,runId};
+  };
   const pending=open('worker-live');interactions.escalate(pending.id,'Q'.repeat(4000),'Need user input');
   open('only-main');
-  for(const [run,source,kind] of [['main-native:turn','source','question'],['foreign','elsewhere','question'],['missing','unknown-source','question'],['approval','source','authorization'],['expired','source','question'],['cancelled','source','question'],['answered','source','question']] as const){
-   const item=open(run,source,kind);interactions.escalate(item.id,'Scoped question','Need input');
-   if(run==='expired')interactions.expire(item.id);if(run==='cancelled')interactions.cancelRun(run);
+  for(const run of ['main-native:turn','foreign','missing','approval','expired','cancelled','answered']){
+   const item=open(run,run==='approval'?'authorization':'question');interactions.escalate(item.id,'Scoped question','Need input');
+   if(run==='expired')interactions.expire(item.id);if(run==='cancelled')interactions.cancelRun(item.runId);
    if(run==='answered')interactions.respond(item.id,{action:'answer',answer:'Exact user answer',reason:'User replied'},{userMessageId:'reply',userText:'Exact user answer'});
   }
   const before=db.prepare('SELECT * FROM worker_interactions ORDER BY rowid').all();
-  const summary=interactions.pendingForMain('main');assert.equal(summary.total,1);assert.equal(summary.items.length,1);
-  assert.equal(summary.items[0]!.interactionId,pending.id);assert.equal(String(summary.items[0]!.question).length,300);assert.equal(summary.items[0]!.runId,'worker-live');
+  const summary=interactions.pendingForMain(thread);assert.equal(summary.total,1);assert.equal(summary.items.length,1);
+  assert.equal(summary.items[0]!.interactionId,pending.id);assert.equal(String(summary.items[0]!.question).length,300);assert.equal(summary.items[0]!.runId,pending.runId);
   assert.equal(interactions.pendingForMain('unknown-main').total,0);
   assert.deepEqual(db.prepare('SELECT * FROM worker_interactions ORDER BY rowid').all(),before,'discovery cannot resolve, bind answers or expand authority');
- }finally{db.close();}
+ }finally{f.close();}
 });
 test('actual HTTP response route preserves typed answers and binds the path identity',async()=>{
  let submitted:unknown;

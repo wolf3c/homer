@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {join} from 'node:path';
 import {Store} from '../src/store.js';
 import {RecursiveTasks} from '../src/recursive-tasks.js';
-import {fixture,main,authority,mutation,openWorker,running,complete} from './recursive-fixture.js';
+import {fixture,main,mutation,openWorker,running,complete} from './recursive-fixture.js';
 
 test('record-only work preserves original source, CAS, and durable replay without scheduling',()=>{
  const f=fixture();try{
@@ -44,19 +44,18 @@ test('uncommissioned task pagination is bounded, durable, and Main-only',()=>{
 test('a live Worker reply cannot use another task’s source or manufacture one by editing notes',()=>{
  const f=fixture();try{
   const other=f.source('other-source','Another independent request');
-  const foreign=f.tasks.createTask(other,{operationId:'other',goal:'Separate work',authority:authority('other-source')});
+  const foreign=f.tasks.createTask(other,{operationId:'other',goal:'Separate work'});
   const worker=openWorker(f);complete(f,running(f,worker.runId),'Original checked');
   const input=f.inputs.claim([],'all')!;assert.equal(input.origin,'worker');
   f.store.transaction(()=>{f.processes.start({id:'generation:event',threadId:main.threadId!,sourceKind:'worker',sourceMessageIds:[input.messageId],messageId:'generation:event'},'turn:event');f.tasks.receiveMainMessagesInTransaction([input.messageId],'turn:event');});
   const event={...main,sourceRequestId:undefined,inputMessageId:input.messageId,turnId:'turn:event'};
   assert.equal(f.tasks.workerRead(event,{workerId:worker.workerId,messageId:input.messageId}).messages[0]!.text,'Original checked');
   f.tasks.updateTask(event,{...mutation(f,'note'),patch:{notes:'Another task’s source cannot grant execution'}});
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'foreign',taskId:foreign.taskId,text:'Borrow an unrelated source'}),/source_denied/);
+  assert.equal(f.tasks.workerOpen(event,{operationId:'foreign',taskId:foreign.taskId,text:'Inspect the separate task'}).taskId,foreign.taskId);
   const {taskId}=f.tasks.createTask(event,{operationId:'record-followup',goal:'Inspect remaining original facts'});
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'forged',taskId,text:'Borrow an unrelated source',authority:authority('other-source')}),/source_denied/);
   assert.equal(f.tasks.tasks().length,3);
-  assert.equal(f.tasks.runs().length,1);
-  const opened=f.tasks.workerOpen(event,{operationId:'valid',taskId,authority:authority()});
-  assert.equal(f.tasks.authority(opened.taskId,1).sourceRequestId,main.sourceRequestId);
+  assert.equal(f.tasks.runs().length,2);
+  const opened=f.tasks.workerOpen(event,{operationId:'valid',taskId});
+  assert.equal(f.tasks.run(opened.runId).sourceRequestId,null);
  }finally{f.close();}
 });

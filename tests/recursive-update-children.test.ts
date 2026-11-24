@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture,main,authority,openWorker,running,mutation} from './recursive-fixture.js';
+import {fixture,main,openWorker,running,mutation} from './recursive-fixture.js';
 
 test('a goal edit preserves the exact version and original authority of both running Workers',()=>{
  const f=fixture();try{
   const a=openWorker(f,'a'),b=openWorker(f,'b'),aa=running(f,a.runId),bb=running(f,b.runId);
   const before=f.tasks.runs();
   const actor=f.source('revised','Use the revised goal for future work');
-  f.tasks.updateTask(actor,{...mutation(f,'requirements'),patch:{goal:'Read only'},authority:authority(actor.sourceRequestId)});
+  f.tasks.updateTask(actor,{...mutation(f,'requirements'),patch:{goal:'Read only'}});
   assert.equal(f.tasks.task(f.task.taskId).headVersion,2);
   assert.deepEqual(f.tasks.runs(),before);
   for(const prior of [aa,bb])assert.equal(f.tasks.guard(prior).id,f.task.taskId);
@@ -29,7 +29,7 @@ test('a failed goal edit rolls back its new version and leaves Worker receipts a
   const worker=openWorker(f),actor=running(f,worker.runId),source=f.source('edit','Revised goal');
   const before=f.tasks.task(f.task.taskId),runs=f.tasks.runs(),receipts=f.store.db.prepare('SELECT * FROM agent_receipts ORDER BY rowid').all();
   f.store.db.exec("CREATE TEMP TRIGGER reject_goal BEFORE UPDATE OF headVersion ON tasks BEGIN SELECT RAISE(ABORT,'synthetic_goal_write_failure'); END");
-  assert.throws(()=>f.tasks.updateTask(source,{...mutation(f,'failed-edit'),patch:{goal:'Revised goal'},authority:authority('edit')}),/synthetic_goal_write_failure/);
+  assert.throws(()=>f.tasks.updateTask(source,{...mutation(f,'failed-edit'),patch:{goal:'Revised goal'}}),/synthetic_goal_write_failure/);
   assert.deepEqual(f.tasks.task(f.task.taskId),before);assert.throws(()=>f.tasks.version(f.task.taskId,2),/version_not_found/);
   assert.equal(f.store.db.prepare("SELECT 1 FROM operations WHERE operationId='failed-edit'").get(),undefined);
   assert.deepEqual(f.tasks.runs(),runs);assert.deepEqual(f.store.db.prepare('SELECT * FROM agent_receipts ORDER BY rowid').all(),receipts);
@@ -41,19 +41,20 @@ test('editing a recorded goal preserves its uncommissioned state until a user di
  const f=fixture();try{
   const record=f.tasks.createTask(main,{operationId:'record-only',goal:'Consider an investigation'});
   const editor=f.source('edit-only','Revise the note, do not start');
-  f.tasks.updateTask(editor,{...mutation(f,'edit',record.taskId),patch:{goal:'Inspect a specific report'},authority:authority('edit-only')});
+  f.tasks.updateTask(editor,{...mutation(f,'edit',record.taskId),patch:{goal:'Inspect a specific report'}});
   assert.equal(f.tasks.version(record.taskId,2).authorityJson,null);assert.equal(f.tasks.runs(record.taskId).length,0);
-  assert.throws(()=>f.tasks.workerOpen(main,{operationId:'old-grant',taskId:record.taskId,authority:authority()}),/task_authority_source_denied/);
+
   const user=f.source('dispatch','Now inspect the report');
-  const worker=f.tasks.workerOpen(user,{operationId:'dispatch',taskId:record.taskId,authority:authority('dispatch')});
+  const worker=f.tasks.workerOpen(user,{operationId:'dispatch',taskId:record.taskId});
   const run=f.tasks.claim(worker.runId)!;assert.equal(run.version,2);assert.equal(run.sourceRequestId,'dispatch');assert.equal(run.prompt,'Inspect a specific report');
  }finally{f.close();}
 });
 
-test('a Worker needs the matching user acceptance receipt for its assigned grant',()=>{
+test('a Worker checks live execution identity independently of a historical user receipt',()=>{
  const f=fixture();try{
   const actor=running(f,openWorker(f).runId);
   f.store.db.prepare("UPDATE operations SET responseJson=json_set(responseJson,'$.messageId','unrelated-input') WHERE kind='user_accept' AND scopeId=?").run(main.sourceRequestId!);
-  assert.throws(()=>f.tasks.guard(actor),/task_authority_source_denied/);
+  assert.equal(f.tasks.guard(actor).id,f.task.taskId);
+  assert.throws(()=>f.tasks.guard({...actor,turnId:'other-turn'}),/run_not_live/);
  }finally{f.close();}
 });

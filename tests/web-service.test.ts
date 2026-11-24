@@ -403,7 +403,7 @@ test('file annotations validate every excerpt and retain the original snapshot o
  }finally{await f.app.close();}
 });
 
-test('all text remarks authorize delegated work while excerpts never become authority',async()=>{
+test('delegated work can read original user remarks without treating excerpts as instructions',async()=>{
  const f=fixture();
  try{
   await f.app.start();
@@ -412,15 +412,16 @@ test('all text remarks authorize delegated work while excerpts never become auth
   engine.turn=async(_text,options)=>{engine.turnId='synthetic-text-comment-turn';options?.onStarted?.(engine.turnId);await openTaskWorker(engine,'Review remarks');return {status:'completed',text:'Synthetic dispatched'};};
   const annotations=['untrusted $hidden source','second excerpt','third excerpt'].map((text,i)=>({id:String(i),text,comment:'用户备注'+i}));
   f.app.submitMessage({requestId:'text-authority',text:'整体要求',resourceReference:{kind:'text',source:source!,annotations}});
-  await until(()=>!!f.app.store.db.prepare('SELECT 1 FROM task_versions WHERE sourceRequestId=?').get('text-authority'));
-  const row=f.app.store.db.prepare("SELECT json_extract(authorityJson,'$.description') description FROM task_versions WHERE sourceRequestId=?").get('text-authority');
-  assert.ok(row,JSON.stringify(f.app.history.list('synthetic-main').filter(m=>m.requestId==='text-authority')));
-  for(const note of annotations)assert.ok(String(row?.description).includes(note.comment));
-  assert.match(String(row?.description),/整体要求/);assert.doesNotMatch(String(row?.description),/hidden|excerpt|authority.md/);
+  await until(()=>f.app.store.runs().some(run=>run.sourceRequestId==='text-authority'));
+  const run=f.app.store.runs().find(run=>run.sourceRequestId==='text-authority')!;
+  const {description}=f.app['workerContext'](run);
+  assert.equal(f.app.tasks.version(run.taskId,run.version).authorityJson,null);
+  for(const note of annotations)assert.ok(description.includes(note.comment));
+  assert.match(description,/整体要求/);assert.doesNotMatch(description,/hidden|excerpt|authority.md/);
  }finally{await f.app.close();}
 });
 
-test('preview comments become user intent for delegated authority without promoting source data',async()=>{
+test('Preview comments remain user intent for delegated work while page text remains source data',async()=>{
  const f=fixture();
  try{
   await f.app.start();await f.app.message('Synthetic source','preview-intent-source');await f.app.idle();
@@ -433,10 +434,12 @@ test('preview comments become user intent for delegated authority without promot
    return {status:'completed',text:'Synthetic dispatched'};
   };
   f.app.submitMessage({requestId:'preview-comment-intent',text:'',resourceReference:{kind:'web',source:{kind:'web',messageId,sourceId:'link-1',url:'https://example.com/',title:'Source $hidden'},annotations:[{id:'n1',element:'button $hidden',elementPath:'#hidden',comment:'Use $impeccable to enlarge this button',x:1,y:1}]}});
-  await until(()=>!!f.app.store.db.prepare('SELECT 1 FROM task_versions WHERE sourceRequestId=?').get('preview-comment-intent'));
-  const authority=f.app.store.db.prepare("SELECT json_extract(authorityJson,'$.description') description FROM task_versions WHERE sourceRequestId=?").get('preview-comment-intent');
-  assert.match(String(authority?.description),/Use \$impeccable to enlarge this button/);
-  assert.doesNotMatch(String(authority?.description),/\$hidden|example\.com|#hidden/);
+  await until(()=>f.app.store.runs().some(run=>run.sourceRequestId==='preview-comment-intent'));
+  const run=f.app.store.runs().find(run=>run.sourceRequestId==='preview-comment-intent')!;
+  const {description}=f.app['workerContext'](run);
+  assert.equal(f.app.tasks.version(run.taskId,run.version).authorityJson,null);
+  assert.match(description,/Use \$impeccable to enlarge this button/);
+  assert.doesNotMatch(description,/\$hidden|example\.com|#hidden/);
  }finally{await f.app.close();}
 });
 
@@ -471,7 +474,12 @@ test("Web pending card reply returns through main decision to the original inter
     assert.equal(before.interactions[0]?.workTitle,'合成后台任务');
     await bridge.respond(original.id, { requestId: "user-answer", text: "请用表格" });
     assert.equal((answer as {status:string}).status,"pending");
-    await until(()=>!!f.app.interactions.inspect(original.id).deliveredAt);assert.deepEqual(worker.steered.map(s=>s.slice(s.indexOf('\n')+1)),["用户指定表格"]);
+    await until(()=>!!f.app.interactions.inspect(original.id).deliveredAt);
+    assert.equal(worker.steered.length,1);
+    const [,facts,supplement]=worker.steered[0]!.split(/\n(?:\[主 Agent 补充\]\n)?/);
+    const answerFacts=JSON.parse(facts!.slice(facts!.indexOf('{')));
+    assert.equal(answerFacts.questionId,original.id);assert.equal(answerFacts.userAnswer,'请用表格');
+    assert.equal(supplement,'用户指定表格');
     assert.equal(f.app.interactions.inspect(original.id).responseUserMessageId, "user-answer");
     assert.equal(f.app.interactions.inspect(original.id).responseUserText, "请用表格");
     assert.equal((await bridge.history!.state()).interactions.length, 0);

@@ -22,9 +22,11 @@ test('summary reads current requirements without Run history or payloads',()=>{
 });
 test('technical history is bounded and explicitly incomplete without per-session queries',()=>{
  const f=overviewFixture();try{
-  for(let n=0;n<85;n++)f.open('history-'+n);
+  for(let n=0;n<85;n++)f.tasks.workerOpen(f.actor,{taskId:f.taskId,operationId:'history-'+n,text:'Synthetic work',workTitle:'Stage '+n});
   const statements:string[]=[],db={prepare(sql:string){statements.push(sql);return f.store.db.prepare(sql);}} as typeof f.store.db;
   f.store.db.exec('PRAGMA query_only=ON');const detail=readTaskDetail(db,f.taskId);
-  assert.equal(detail.runs.length,80);assert.equal(detail.moreHistory,true);assert.equal(statements.length,6);assert.ok(statements.slice(1).every(sql=>sql.includes('LIMIT 81')));assert.doesNotMatch(JSON.stringify(detail),/prompt|checkpointJson|payloadJson/);
+  assert.equal(detail.runs.length,80);assert.equal(detail.assignments?.length,80);assert.equal(detail.moreHistory,true);assert.equal(statements.length,7);
+  assert.ok(statements.slice(1).every(sql=>sql.includes('LIMIT 81')||sql.includes('$.workTitle')&&sql.includes('LIMIT ?')));
+  assert.doesNotMatch(JSON.stringify(detail),/prompt|checkpointJson|payloadJson/);
  }finally{f.close();}
 });

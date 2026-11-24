@@ -42,7 +42,7 @@ test('only a matching, currently executing Worker sets the matter badge',async()
   first.slot.activeSince=1;
   const second=start(b.runId);second.bind();
   assert.deepEqual(app.runningTaskIds(),[f.taskId],'two active Workers count one matter');
-  for(let i=0;i<20;i++)f.tasks.createTask(f.actor,{operationId:'newer-'+i,goal:'Synthetic newer matter',authority:f.authority});
+  for(let i=0;i<20;i++)f.tasks.createTask(f.actor,{operationId:'newer-'+i,goal:'Synthetic newer matter'});
   assert.ok(!(await list()).tasks.some(task=>task.id===f.taskId));
   assert.deepEqual(app.runningTaskIds(),[f.taskId],'global badge includes an executing matter outside the first page');
   f.tasks.workerStop(f.actor,{operationId:'stop-research',workerId:a.workerId});

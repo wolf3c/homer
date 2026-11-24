@@ -19,5 +19,5 @@ export type BrowserPreviewBridge={
  onShow(listener:(page:BrowserPage,origin?:{pageId:string;document:number})=>void):()=>void;
  onLink?(listener:(link:{page:BrowserPage;href:string})=>void):()=>void;
 };
-export type BrowserOwner={threadId:string;owner:string;requestId?:string};
+export type BrowserOwner={threadId:string;owner:string;requestId?:string;runId?:string;turnId?:string};
 export type BrowserTransport=(owner:BrowserOwner,action:string,input:Record<string,unknown>)=>Promise<unknown>;

@@ -380,3 +380,7 @@ Preview 标签栏、网页工具栏与阅读区占位框属于宿主 React 文�
 | 批注 | [早期实现记录](../2026-10-23-preview-annotation-implementation.md) · [截图、图片批注及草稿](../desktop-screenshot-annotation.md) |
 | 补丁与交付 | [DiffViewer 接入和改动归属实验](../2026-11-03-patch-preview-integration.md) · [最终答复与跨端快照交付](final-answer-delivery-design.md) |
 | 定时任务与专项验证 | [定时任务只读中心](scheduled-tasks-architecture.md#9-preview-只读中心2026-11-17) · [Preview 验收命令及边界](../testing.md#preview-系列优化最终复审2026-11-18) |
+
+## 后台 Preview
+
+有效后台轮可以打开并操作网页。有可核验消息或请求时沿用历史引用，缺少引用时返回历史引用不可用。HTML 按确切的可见消息、资产和版本查验。定位确认使用实际页面 owner、文档和活动原生轮次。移动端现有预览能力与本地桌面载体仍各自核验。

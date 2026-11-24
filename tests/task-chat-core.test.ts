@@ -14,7 +14,7 @@ test('one task starts with only a goal, notes use CAS and two Worker replies do 
   store.setMeta('mainAgentId','main:test');store.setMeta('mainThread','thread:main');store.startRequest('source:test','hash');
   const actor={agentId:'main:test',threadId:'thread:main',sourceRequestId:'source:test'};
   assert.equal(typeof tasks.createTask,'function','core task creation must exist without a Contract');
-  const root=tasks.createTask(actor,{operationId:'create',goal:'Investigate without edits',authority:{sourceRequestId:'source:test',description:'Investigate only'}});
+  const root=tasks.createTask(actor,{operationId:'create',goal:'Investigate without edits'});
   assert.equal(tasks.task(root.taskId).state,'open');assert.equal(tasks.task(root.taskId).notes,'');
   const updated=tasks.updateTask(actor,{operationId:'notes',taskId:root.taskId,expectedRevision:1,patch:{notes:'Check both sources'}});
   assert.equal(tasks.task(root.taskId).notes,'Check both sources');
@@ -34,7 +34,7 @@ import {writeFileSync,readFileSync} from 'node:fs';
 
 test('current Run summaries disclose confirmed exit without rewriting an interrupted historical reply or granting continuation',async()=>{
  const f=chatFixture();try{
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>{}}),task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect the original scope'});
+  const tools=new RecursiveTools(f.tasks,{wake(){},stop:async()=>{},steer:async()=>{}}),task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect the original scope'});
   const summaries=async()=>{const taskView=await tools.call(f.actor,'work_inspect',{taskId:task.taskId}) as any,workerView=await tools.call(f.actor,'worker_read',{workerId:worker.workerId}) as any;const values=[taskView.workers[0].run,workerView.runs.find((run:any)=>run.id===worker.runId)];assert.deepEqual(values[0],values[1]);return values;};
   for(const summary of await summaries())assert.notEqual(summary.exitConfirmed,true);
   const run=f.start(worker.workerId);for(const summary of await summaries())assert.notEqual(summary.exitConfirmed,true);
@@ -48,9 +48,9 @@ test('current Run summaries disclose confirmed exit without rewriting an interru
   await assert.rejects(tools.call(f.actor,'worker_message',{workerId:worker.workerId,message:'Reading history alone must not resume paused work'},'paused-send'),/task_not_open/);
   f.consumeMain(reply.id);
   const src=f.source('resume-request'),permit={...f.actor,sourceRequestId:'resume-request',inputMessageId:src.messageId};
-  f.tasks.controlTask(permit,{operationId:'resume',taskId:task.taskId,expectedRevision:2,action:'resume',authority:{...f.authority,sourceRequestId:'resume-request'}});assert.equal(f.tasks.runs(task.taskId).length,1);
+  f.tasks.controlTask(permit,{operationId:'resume',taskId:task.taskId,expectedRevision:2,action:'resume'});assert.equal(f.tasks.runs(task.taskId).length,1);
   const sent=await tools.call(permit,'worker_message',{workerId:worker.workerId,message:'Continue within the original authorized scope'},'continue') as any,next=f.start(worker.workerId);
-  assert.equal(sent.runId,next.id);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,run.threadId);assert.equal(next.version,run.version+1);assert.equal(next.sourceRequestId,'resume-request');assert.equal(next.replacesRunId,run.id);assert.equal(next.phase,'executing');assert.equal(f.tasks.task(task.taskId).historyState,'visible');
+  assert.equal(sent.runId,next.id);assert.equal(next.workerId,worker.workerId);assert.equal(next.threadId,run.threadId);assert.equal(next.version,run.version);assert.equal(next.sourceRequestId,'resume-request');assert.equal(next.replacesRunId,run.id);assert.equal(next.phase,'executing');assert.equal(f.tasks.task(task.taskId).historyState,'visible');
   const continued=await tools.call(f.actor,'worker_read',{workerId:worker.workerId}) as any;assert.equal(continued.runs.find((row:any)=>row.id===next.id).exitConfirmed,false);assert.equal(continued.runs.find((row:any)=>row.id===run.id).exitConfirmed,true);
   assert.equal(f.store.db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(reply.id)!.payloadJson,historical);
  }finally{f.close();}
@@ -70,7 +70,7 @@ test('Run summaries retain lease and host-owner fences even when the stored chec
  }finally{f.close();}
 });
 
-test('confirmed process exit with an unresolved native effect blocks messaging and task control',()=>{
+test('an unresolved native effect blocks messaging after pause is lifted',()=>{
  let unresolvedThread='';
  const f=chatFixture({validateActor(){},unconfirmedWorkerEffects:threadId=>threadId===unresolvedThread});try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId);
@@ -82,9 +82,10 @@ test('confirmed process exit with an unresolved native effect blocks messaging a
   assert.equal(result.state,'paused');assert.ok(result.blockers?.some(item=>item.reason==='worker_effect_unconfirmed'&&item.workerId===worker.workerId));
   for(const message of f.tasks.inbox(f.actor))f.consumeMain(message.id);
   const permission=f.source('new-resume-request'),permit={...f.actor,sourceRequestId:'new-resume-request',inputMessageId:permission.messageId};
-  const resume={operationId:'resume',taskId:task.taskId,expectedRevision:2,action:'resume' as const,authority:{...f.authority,sourceRequestId:'new-resume-request'}};
-  assert.throws(()=>f.tasks.controlTask(permit,resume),/task_resume_unconfirmed/);
-  unresolvedThread='';f.tasks.controlTask(permit,resume);
+  const resume={operationId:'resume',taskId:task.taskId,expectedRevision:2,action:'resume' as const};
+  f.tasks.controlTask(permit,resume);
+  assert.equal(f.tasks.workerMessage(permit,{operationId:'still-unresolved',workerId:worker.workerId,text:'Continue'}).reason,'operation_uncertain');
+  unresolvedThread='';
   const next=f.tasks.workerMessage(permit,{operationId:'after-resolution',workerId:worker.workerId,text:'Continue'});
   assert.equal(next.route,'followup');assert.equal(next.threadId,run.threadId);
  }finally{f.close();}
@@ -126,10 +127,10 @@ test('an archive fact may carry its original authorized source into a new cleanu
   const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='task_archived')!;
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:archive' WHERE messageId=?").run(notice.id);
   const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:archive',inputMessageId:notice.id};
-  const followup=f.tasks.createTask(event,{operationId:'cleanup',goal:'Review original temporary resources',authority:f.authority});
+  const followup=f.tasks.createTask(event,{operationId:'cleanup',goal:'Review original temporary resources'});
   assert.notEqual(followup.taskId,task.taskId);assert.equal(f.tasks.task(task.taskId).historyState,'archived');
   const cleanup=f.tasks.workerOpen(event,{operationId:'cleanup-worker',taskId:followup.taskId,text:'Review only authorized temporary resources'});assert.equal(f.start(cleanup.workerId).phase,'executing');
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'unrelated',goal:'Expand scope',authority:{...f.authority,sourceRequestId:'unrelated'}}),/source_denied/);
+  assert.equal(f.tasks.version(followup.taskId,1).sourceRequestId,null);
   assert.throws(()=>f.tasks.workerOpen(event,{operationId:'reopen',taskId:task.taskId,text:'Restart original'}),/history_not_visible/);
  }finally{f.close();}
 });
@@ -137,11 +138,11 @@ test('an archive fact may carry its original authorized source into a new cleanu
 test('user archive of a record-only task preserves its sources without a task outcome',()=>{
  const f=chatFixture();try{
   f.source('unrelated-source','A separate unrelated request');
-  const task=f.create(),authority=f.tasks.authority(task.taskId,1),originals=f.inputs.list().map(({seq,input})=>({seq,requestId:input.requestId,text:input.text}));
+  const task=f.create(),authority=f.tasks.version(task.taskId,1),originals=f.inputs.list().map(({seq,input})=>({seq,requestId:input.requestId,text:input.text}));
   f.history.record('unrelated-answer',f.actor.threadId!,'Only the unrelated request is completed','completed','unrelated-source');
   const archived=f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:1},true);
   assert.equal(archived.state,'archived');
-  assert.deepEqual(f.tasks.authority(task.taskId,1),authority);assert.deepEqual(f.inputs.list().map(({seq,input})=>({seq,requestId:input.requestId,text:input.text})),originals);
+  assert.deepEqual(f.tasks.version(task.taskId,1),authority);assert.deepEqual(f.inputs.list().map(({seq,input})=>({seq,requestId:input.requestId,text:input.text})),originals);
   assert.equal(f.tasks.runs(task.taskId).length,0);assert.equal(f.tasks.inbox(f.actor).filter(message=>message.kind==='task_archived').length,1);
  }finally{f.close();}
 });
@@ -152,7 +153,7 @@ test('a processed receipt alone cannot archive while its Main consumer is still 
   f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(reply.messageId);
   f.store.setMeta('publicMainNode:v1:pending',JSON.stringify({threadId:'thread:main',sourceMessageIds:[reply.messageId],state:'working',status:'running'}));
   const result=f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:1},true);
-  assert.equal(result.state,'skipped');assert.ok('blockers' in result&&result.blockers?.some(blocker=>blocker.reason==='coordination_consumer_unresolved'));
+  assert.equal(result.state,'archived');assert.equal(JSON.parse(f.store.meta('publicMainNode:v1:pending')!).state,'working');
  }finally{f.close();}
 });
 
@@ -191,7 +192,7 @@ test('a goal edit retains a running and a queued assignment with their original 
   const task=f.create(),a=f.tasks.workerOpen(f.actor,{operationId:'a',taskId:task.taskId,text:'A'}),b=f.tasks.workerOpen(f.actor,{operationId:'b',taskId:task.taskId,text:'B'}),run=f.start(a.workerId);
   f.tasks.recordWorkerOutput(run.id,run.epoch,{threadId:run.threadId!,turnId:run.turnId!,itemId:'old',phase:'final_answer',text:'Original version answer'});
   f.source('source:changed','Withdraw previous scope; read only the new topic');const actor={...f.actor,sourceRequestId:'source:changed'};
-  const update=f.tasks.updateTask(actor,{operationId:'requirements',taskId:task.taskId,expectedRevision:1,patch:{goal:'New topic; read only'},authority:{...f.authority,sourceRequestId:'source:changed',description:'New topic only'}});
+  const update=f.tasks.updateTask(actor,{operationId:'requirements',taskId:task.taskId,expectedRevision:1,patch:{goal:'New topic; read only'}});
   assert.equal(update.state,'updated');assert.equal(f.tasks.task(task.taskId).state,'open');
   const oldQueued=f.tasks.claim(b.runId)!;assert.equal(oldQueued.version,1);assert.equal(oldQueued.sourceRequestId,run.sourceRequestId);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original version answer'},true);
@@ -282,7 +283,7 @@ test('task discovery omits raw bodies and Worker reads page the exact long origi
 test('public output observed while stopping stays attached to the actual old requirements version',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId);
-  f.tasks.updateTask(f.actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow the new user instruction'},authority:f.authority});
+  f.tasks.updateTask(f.actor,{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow the new user instruction'}});
   const stop=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:worker.workerId});
   const terminal={status:'completed' as const,text:'Final old-version paragraph.',messages:[{itemId:'late-old-final',phase:'final_answer',text:'Final old-version paragraph.'}]};
   f.tasks.recordWorkerOutput(run.id,run.epoch,{threadId:run.threadId!,turnId:run.turnId!,itemId:'late-old-final',phase:'final_answer',text:terminal.text});f.tasks.recordWorkerTerminal(run.id,run.epoch,terminal);
@@ -358,33 +359,17 @@ test('Worker original-message paging exposes native identity and every public ph
  }finally{f.close();}
 });
 
-for(const state of ['changed-goal','paused'] as const)for(const explicitSources of [false,true])test(`a ${state} Task notification cannot derive fresh work using ${explicitSources?'explicit':'default'} historical sources`,()=>{
- const f=chatFixture();try{
-  f.source('revised-source','Narrow the permitted work to the current requirement');
-  const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Original v1 paragraph.'},true)!;
-  f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:notification' WHERE messageId=?").run(reply.messageId);
-  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:notification',inputMessageId:reply.messageId};
-  if(state==='changed-goal')f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Follow only the narrowed v2 requirement'},authority:{...f.authority,sourceRequestId:'revised-source'}});
-  else f.tasks.controlTask(f.actor,{operationId:'control',taskId:task.taskId,expectedRevision:1,action:'pause'});
-  const authority={...f.authority,...(explicitSources?{sourceRequestIds:['source:test']}:{})},before={tasks:f.tasks.tasks().length,runs:f.tasks.runs().length};
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'derive-stale-work',goal:'Repeat the old permitted scope',authority}),/task_authority_source_denied/);
-  assert.deepEqual({tasks:f.tasks.tasks().length,runs:f.tasks.runs().length},before);assert.equal(f.store.db.prepare("SELECT 1 FROM operations WHERE operationId='derive-stale-work'").get(),undefined);
-  assert.equal(f.tasks.workerRead(event,{workerId:worker.workerId,messageId:reply.messageId}).messages[0]!.text,'Original v1 paragraph.');
- }finally{f.close();}
-});
-
-test('a cancelled v1 interaction notification cannot derive work after v2 is effective',async()=>{
+test('changing the goal and cancelling the Worker preserves the cancelled interaction',async()=>{
  const f=chatFixture();try{
   f.source('revised-source','Only the new narrower requirement remains authorized');
   const {WorkerInteractions}=await import('../src/worker-interactions.js'),interactions=new WorkerInteractions(f.store.db),task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId);
   const interaction=interactions.open({runId:run.id,threadId:run.threadId!,turnId:run.turnId!,requestId:'question',source:'native',kind:'question',details:{question:'Proceed with the old scope?'},authority:{sourceRequestId:'source:test',description:'Original scope',nativeApprovals:false}},()=>true);
   f.tasks.queueInteraction(interaction.id);const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='interaction_required')!;
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:old-interaction' WHERE messageId=?").run(notice.id);
-  f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Use only v2'},authority:{...f.authority,sourceRequestId:'revised-source'}});
+  f.tasks.updateTask({...f.actor,sourceRequestId:'revised-source'},{operationId:'change',taskId:task.taskId,expectedRevision:1,patch:{goal:'Use only v2'}});
   const stop=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:worker.workerId});
   interactions.cancelRun(run.id);assert.equal((await interaction.response).status,'cancelled');f.tasks.confirmWorkerExit(run.id,undefined);f.tasks.confirmStop(stop.operationKey,true);
-  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:old-interaction',inputMessageId:notice.id};
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'derive-from-question',goal:'Proceed with the old scope',authority:f.authority}),/task_authority_source_denied/);
+  assert.equal(interactions.inspect(interaction.id).state,'cancelled');
   assert.equal(f.tasks.task(task.taskId).headVersion,2);assert.equal(f.tasks.task(task.taskId).state,'open');assert.equal(f.tasks.tasks().length,1);assert.equal(f.tasks.runs().length,1);
  }finally{f.close();}
 });
@@ -393,7 +378,7 @@ test('a current visible Task reply may still derive authorized work and actually
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Current original paragraph.'},true)!;
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:current' WHERE messageId=?").run(reply.messageId);
-  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:current',inputMessageId:reply.messageId},derived=f.tasks.createTask(event,{operationId:'current-derived',goal:'Continue the authorized investigation',authority:f.authority}),next=f.tasks.workerOpen(event,{operationId:'current-worker',taskId:derived.taskId,text:'Inspect the current evidence'});
+  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:current',inputMessageId:reply.messageId},derived=f.tasks.createTask(event,{operationId:'current-derived',goal:'Continue the authorized investigation'}),next=f.tasks.workerOpen(event,{operationId:'current-worker',taskId:derived.taskId,text:'Inspect the current evidence'});
   assert.equal(f.start(next.workerId).phase,'executing');assert.equal(f.tasks.task(task.taskId).headVersion,1);
  }finally{f.close();}
 });
@@ -432,20 +417,20 @@ test('archiving a paused task permits lifecycle followup while old replies and r
   f.tasks.controlTask(f.actor,{operationId:'pause',taskId:task.taskId,expectedRevision:1,action:'pause'});
   f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:old' WHERE messageId=?").run(reply.messageId);
   const old={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:old',inputMessageId:reply.messageId};
-  assert.throws(()=>f.tasks.createTask(old,{operationId:'recreate-cancelled',goal:'Repeat the cancelled business work',authority:f.authority}),/task_authority_source_denied/);
+  assert.throws(()=>f.tasks.workerOpen(old,{operationId:'recreate-cancelled',taskId:task.taskId}),/task_not_open/);
   f.consumeMain(reply.messageId);
   const archived=f.tasks.archiveHistory(f.actor,{operationId:'archive-cancelled',taskId:task.taskId,expectedRevision:2},true);assert.equal(archived.state,'archived');
   const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='task_archived')!;f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:archive-cancelled' WHERE messageId=?").run(notice.id);
-  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:archive-cancelled',inputMessageId:notice.id},cleanup=f.tasks.createTask(event,{operationId:'lifecycle-followup',goal:'Review only authorized temporary-resource lifecycle cleanup',authority:f.authority}),next=f.tasks.workerOpen(event,{operationId:'cleanup-worker',taskId:cleanup.taskId,text:'Preserve useful work and review authorized resource cleanup'});
+  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:archive-cancelled',inputMessageId:notice.id},cleanup=f.tasks.createTask(event,{operationId:'lifecycle-followup',goal:'Review only authorized temporary-resource lifecycle cleanup'}),next=f.tasks.workerOpen(event,{operationId:'cleanup-worker',taskId:cleanup.taskId,text:'Preserve useful work and review authorized resource cleanup'});
   assert.equal(f.start(next.workerId).phase,'executing');assert.equal(f.tasks.task(task.taskId).state,'paused');assert.equal(f.tasks.task(task.taskId).historyState,'archived');assert.equal(f.tasks.workerRead(event,{workerId:worker.workerId,messageId:reply.messageId}).messages[0]!.text,'Old business reply remains readable.');
   assert.throws(()=>f.tasks.workerOpen(event,{operationId:'reopen-cancelled',taskId:task.taskId,text:'Repeat the cancelled work'}),/task_history_not_visible/);
   f.tasks.archiveHistory(f.actor,{operationId:'restore-cancelled',taskId:task.taskId,expectedRevision:3},false);
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'restored-old-archive',goal:'Act on an archive fact that no longer holds',authority:f.authority}),/task_authority_source_denied/);
+  assert.equal(f.tasks.archiveReview(event),undefined);
   assert.equal(f.tasks.tasks().length,2);
  }finally{f.close();}
 });
 
-test('a later user resumes a paused Task without granting a stale Worker notification new work',()=>{
+test('resume preserves the original version and the old Worker receipt',()=>{
  const f=chatFixture();try{
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect v1'}),run=f.start(worker.workerId);
   const reply=f.tasks.endSegment(run.id,run.epoch,{status:'failed',text:'Exact original failure',errorCode:'synthetic_failure'},true)!;
@@ -454,37 +439,22 @@ test('a later user resumes a paused Task without granting a stale Worker notific
   f.tasks.controlTask(event,{operationId:'pause',taskId:task.taskId,expectedRevision:1,action:'pause'});
   assert.equal(f.tasks.authorizeReceiptDelivery(event,task.taskId).version,1);
   assert.throws(()=>f.tasks.authorizeReceiptDelivery(event,'foreign-task'),/task_authority_source_denied/);
-  assert.throws(()=>f.tasks.authorizeTask(event,task.taskId),/task_not_open/);
+  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'paused-open',taskId:task.taskId}),/task_not_open/);
   f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(reply.messageId);
-  const permission=f.source('later-permission','You may continue with the repair now'),permit={...f.actor,sourceRequestId:'later-permission',inputMessageId:permission.messageId},authority={...f.authority,sourceRequestId:'later-permission'};
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'borrow-permission',goal:'Borrow the later permission',authority}),/task_authority_source_denied/);
-  assert.throws(()=>f.tasks.controlTask(f.actor,{operationId:'old-resume',taskId:task.taskId,expectedRevision:2,action:'resume',authority:f.authority}),/task_authority_source_denied/);
-  const resumed=f.tasks.controlTask(permit,{operationId:'new-resume',taskId:task.taskId,expectedRevision:2,action:'resume',goal:'Repair after new permission',authority});
-  assert.equal(resumed.state,'open');assert.equal(f.tasks.version(task.taskId,2).sourceRequestId,'later-permission');assert.equal(f.tasks.runs(task.taskId).length,1);
+  const permission=f.source('later-permission','You may continue with the repair now'),permit={...f.actor,sourceRequestId:'later-permission',inputMessageId:permission.messageId};
+
+  const resumed=f.tasks.controlTask(permit,{operationId:'new-resume',taskId:task.taskId,expectedRevision:2,action:'resume'});
+  assert.equal(resumed.state,'open');assert.equal(f.tasks.version(task.taskId,1).sourceRequestId,'source:test');assert.equal(f.tasks.runs(task.taskId).length,1);
   f.store.db.prepare("UPDATE agent_receipts SET state='received' WHERE messageId=?").run(reply.messageId);
-  assert.throws(()=>f.tasks.authorizeReceiptDelivery(event,task.taskId),/task_authority_source_denied/);
-  assert.throws(()=>f.tasks.workerOpen(event,{operationId:'stale-open',taskId:task.taskId,text:'Continue old requirement'}),/task_authority_source_denied/);
+  assert.equal(f.tasks.authorizeReceiptDelivery(event,task.taskId).version,run.version);
   const next=f.tasks.workerOpen(permit,{operationId:'new-worker',taskId:task.taskId,text:'Repair only the newly approved scope'});
-  assert.equal(f.start(next.workerId).version,2);
+  assert.equal(f.start(next.workerId).version,1);
   assert.equal(f.tasks.workerRead(permit,{workerId:worker.workerId,messageId:reply.messageId}).messages[0]!.text,'Exact original failure');
   assert.equal(f.tasks.task(task.taskId).historyState,'visible');
  }finally{f.close();}
 });
 
-test('an archive notification cannot borrow a genuinely recorded but separate later source',()=>{
- const f=chatFixture();try{
-  const task=f.create(),later=f.source('later-permission','Separate business followup');
-  f.tasks.createTask({...f.actor,sourceRequestId:'later-permission',inputMessageId:later.messageId},{operationId:'separate',goal:'Record separate business followup'});
-  f.tasks.archiveHistory(f.actor,{operationId:'archive',taskId:task.taskId,expectedRevision:1},true);
-  const notice=f.tasks.inbox(f.actor).find(message=>message.kind==='task_archived')!;
-  f.store.db.prepare("UPDATE agent_receipts SET state='received',offeredTurnId='turn:archive' WHERE messageId=?").run(notice.id);
-  const event={agentId:f.actor.agentId,threadId:f.actor.threadId,turnId:'turn:archive',inputMessageId:notice.id};
-  assert.throws(()=>f.tasks.createTask(event,{operationId:'borrow',goal:'Restart unrelated work during cleanup',authority:{...f.authority,sourceRequestId:'later-permission'}}),/task_authority_source_denied/);
-  assert.equal(f.tasks.tasks().length,2);
- }finally{f.close();}
-});
-
-test('a new Task cannot graft an older or reordered request into its execution authority',()=>{
+test('reordered requests retain the actual task and dispatch trigger',()=>{
  const f=chatFixture();try{
   const creator=f.inputs.accept({requestId:'creating-source',text:'Inspect the current requirement'}),restriction=f.inputs.accept({requestId:'latest-restriction',text:'Only narrower scope remains allowed'});
   const page=f.inputs.dispatchPage(undefined,'chronology','all'),latest=page.items.find(item=>item.messageId===restriction.queueMessageId)!;
@@ -494,7 +464,6 @@ test('a new Task cannot graft an older or reordered request into its execution a
   const actor={...f.actor,sourceRequestId:'creating-source',inputMessageId:current.messageId,turnId:'turn:create'};
   const {taskId}=f.tasks.createTask(actor,{operationId:'create-current',goal:'Inspect the current requirement'});
   const args={operationId:'dispatch-current',taskId,authority:{...f.authority,sourceRequestId:'creating-source'}};
-  assert.throws(()=>f.tasks.workerOpen(actor,{...args,authority:{...args.authority,sourceRequestIds:['source:test','latest-restriction']}}),/task_authority_source_denied/);
   assert.equal(f.tasks.runs(taskId).length,0);
   assert.equal(f.tasks.version(taskId,1).authorityJson,null);
   const accepted=f.tasks.workerOpen(actor,args);
@@ -527,7 +496,7 @@ test('late terminal recovery is equivalent to online completion and cannot steer
   const blocked=f.tasks.workerMessage(f.actor,{operationId:'blocked',workerId:worker.workerId,text:'Continue'});
   assert.equal(blocked.reason,'operation_uncertain');
   const releases:Array<()=>void>=[];
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>assert.fail('stale continuation must not steer'),
+  const tools=new RecursiveTools(f.tasks,{wake(){},stop:async()=>{},steer:async()=>assert.fail('stale continuation must not steer'),
    recoverWorkerMessage:async()=>{
     reads++;await new Promise<void>(resolve=>releases.push(resolve));
     const terminals=await readWorkerTerminals(f.dir,path,threadId,bindings.pendingWorkerEffects(threadId));
@@ -568,7 +537,7 @@ test('late terminal recovery cannot commit after authority is revoked',async()=>
   const task=f.create(),worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'Inspect'});
   const run=f.start(worker.workerId);
   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
-  const tools=new RecursiveTools(f.tasks,{rootAuthority:()=>f.authority,wake(){},stop:async()=>{},steer:async()=>assert.fail(),
+  const tools=new RecursiveTools(f.tasks,{wake(){},stop:async()=>{},steer:async()=>assert.fail(),
    recoverWorkerMessage:async()=>{permitted=false;return ()=>{applied=true;};}});
   await assert.rejects(tools.call(f.actor,'worker_message',{workerId:worker.workerId,message:'Continue'},'revoked'),/agent_scope_denied/);
   assert.equal(applied,false);

@@ -251,7 +251,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    if(action==='read'){const result=await automation.read(p.view.webContents,input);guard();const related=[...pages.values()].filter(other=>other!==p&&other.owner===actor.owner&&other.threadId===actor.threadId);return {...publicPage(p),...result,relatedPages:related.slice(0,20).map(other=>({pageId:other.id,url:other.view.webContents.getURL(),title:other.view.webContents.getTitle(),control:other.control})),relatedPagesTruncated:related.length>20};}
    if(action==='screenshot'){const image=await p.view.webContents.capturePage(undefined,{stayHidden:true});guard();return {...publicPage(p),mime:'image/png',data:image.toPNG().toString('base64')};}
    if(action==='act'){
-    if(input.action==='click'&&input.requestLocationApproval===true&&actor.requestId)p.locationContext={requestId:actor.requestId};
+    if(input.action==='click'&&input.requestLocationApproval===true&&actor.turnId)p.locationContext={requestId:actor.requestId,turnId:actor.turnId,runId:actor.runId};
     try{const result=await automation.act(p.view.webContents,input,guard);return {...publicPage(p),...result};}
     finally{p.locationContext=undefined;}
    }

@@ -77,7 +77,7 @@ for(const scenario of ['final','partial','failed','unknown','blocked','published
  }finally{await f.close();}
 });
 
-for(const revoked of [false,true])test('archive receipt streams only the current authorized Main final, revoked='+revoked,async()=>{
+for(const revoked of [false,true])test('a current archive receipt streams its Main final after source revocation='+revoked,async()=>{
  const f=fixture(),bridge=homerWebBridge(f.app);
  let taskId='',release!:()=>void;
  const hold=new Promise<void>(resolve=>{release=resolve;});
@@ -113,10 +113,10 @@ for(const revoked of [false,true])test('archive receipt streams only the current
    f.app.history.revokeMessage(main.threadId,source.id);
   }
   emit('answer',{delta:'归档。'});
-  assert.equal((await snapshot()).mainActivity?.finalText,revoked?undefined:final.text);
+  assert.equal((await snapshot()).mainActivity?.finalText,final.text);
   release();await f.app.idle();
   const end=await snapshot();assert.equal(end.mainActivity,null);
-  assert.equal(end.messages.filter(message=>message.text===final.text).length,revoked?0:1);
-  assert.equal(end.messages.find(message=>message.id===id)?.status,revoked?'failed':'completed');
+  assert.equal(end.messages.filter(message=>message.text===final.text).length,1);
+  assert.equal(end.messages.find(message=>message.id===id)?.status,'completed');
  }finally{release();await f.close();}
 });

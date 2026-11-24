@@ -15,6 +15,6 @@ export function overviewFixture(){
  const history=new ConversationHistory(store.db),inputs=new MainInputs(tasks,history);
  inputs.accept({requestId:actor.sourceRequestId,text:'Inspect synthetic inputs'});const source=inputs.claim()!;inputs.started(source.messageId,source.revision,'generation:projection','turn:projection');inputs.finish(source.messageId,source.revision,'completed');
  const authority={sourceRequestId:actor.sourceRequestId,description:'Inspect synthetic inputs'};
- const created=tasks.createTask(actor,{operationId:'projection:create',goal:'Inspect synthetic inputs',authority});
+ const created=tasks.createTask(actor,{operationId:'projection:create',goal:'Inspect synthetic inputs'});
  return {store,files,tasks,actor,authority,taskId:created.taskId,open:(name:string)=>tasks.workerOpen(actor,{operationId:'open:'+name,taskId:created.taskId,text:name}),close(){store.close();rmSync(dir,{recursive:true,force:true});}};
 }

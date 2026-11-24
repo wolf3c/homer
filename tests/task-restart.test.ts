@@ -55,7 +55,8 @@ for(const crash of [false,true])for(const desktop of [false,true])test(`changed 
  const {app,workerStarts}=await restart(t,'goal-change',crash,desktop),original=app.store.runs()[0]!,task=app.tasks.tasks()[0]!;assert.equal(task.headVersion,2);assert.equal(task.historyState,'visible');
  const before=app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(original.id)!;assert.equal(JSON.parse(String(before.payloadJson)).version,1);
  await app.message('followup','followup-new-requirement');await app.idle();const latest=app.tasks.runs(task.id).at(-1)!;
- assert.equal(latest.version,2);assert.equal(latest.sourceRequestId,'changed-source');assert.equal(latest.workerId,original.workerId);assert.equal(latest.threadId,original.threadId);assert.equal(workerStarts().length,2);
+ assert.equal(latest.version,2);assert.equal(latest.sourceRequestId,'followup-new-requirement');assert.equal(app.tasks.version(task.id,2).sourceRequestId,'changed-source');
+ assert.equal(latest.workerId,original.workerId);assert.equal(latest.threadId,original.threadId);assert.equal(workerStarts().length,2);
  assert.equal(app.store.db.prepare("SELECT payloadJson FROM agent_messages WHERE senderRunId=? AND kind='worker_reply'").get(original.id)!.payloadJson,before.payloadJson);
 });
 

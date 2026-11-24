@@ -36,23 +36,21 @@ type Row = {
   detailsJson: string | null;
   hasRequest: number;
 };
-const workerSource = `LEFT JOIN operations o ON o.id=m.operationKey
-  LEFT JOIN task_versions v ON v.taskId=m.taskId AND v.version=m.taskVersion
-  LEFT JOIN conversation_inputs s ON s.requestId=CASE WHEN m.kind='task_archived' AND o.kind='archive_work'
-    THEN coalesce(json_extract(o.detailsJson,'$.sourceRequestId'),v.sourceRequestId) ELSE v.sourceRequestId END`;
+const workerSource = `LEFT JOIN operations o ON o.id=m.operationKey`;
+const mainThread = "(SELECT value FROM meta WHERE key='mainThread')";
 const inputRows = `SELECT m.id,m.seq,m.kind,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,
   CASE WHEN m.kind='user_input' THEN m.payloadJson ELSE '{}' END payloadJson,
-  r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END threadId,o.detailsJson,
+  r.state AS receiptState,r.revision,r.offeredTurnId,i.replyId,CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE ${mainThread} END threadId,o.detailsJson,
   (m.kind='user_input' AND EXISTS(SELECT 1 FROM requests q WHERE q.id=json_extract(m.payloadJson,'$.requestId'))) AS hasRequest
   FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   LEFT JOIN conversation_inputs i ON i.requestId=CASE WHEN m.kind='user_input' THEN json_extract(m.payloadJson,'$.requestId') END
   ${workerSource}`;
 const recoveryRows = `FROM agent_messages m JOIN agent_receipts r ON r.messageId=m.id
   ${workerSource}
-  WHERE m.recipientAgentId=? AND s.threadId=? AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
+  WHERE m.recipientAgentId=? AND ${mainThread}=? AND m.senderAgentId='host' AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
     AND r.state IN ('received','uncertain')
     AND EXISTS(SELECT 1 FROM meta p,json_each(p.value,'$.sourceMessageIds') source
-      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=s.threadId
+      WHERE p.key GLOB 'publicMainNode:v1:*' AND json_extract(p.value,'$.threadId')=${mainThread}
         AND json_extract(p.value,'$.sourceKind')='worker' AND json_extract(p.value,'$.state')='worked'
         AND json_extract(p.value,'$.status') IN ('failed','interrupted','unknown') AND source.value=m.id)`;
 export type QueuedInput = {
@@ -105,8 +103,10 @@ export class MainInputClaimError extends Error{
 // Message body and quotes remain in conversation_messages. No second queue table.
 export class MainInputs {
   private readonly pausedActiveMessages:Set<string>;
-  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;userPausedThroughSeq?:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean;resumeScheduled?:boolean}) {
-    if(dispatchPolicy&&[dispatchPolicy.pausedThroughSeq,dispatchPolicy.userPausedThroughSeq??0,dispatchPolicy.pausedThroughProcessSeq??0].some(seq=>!Number.isSafeInteger(seq)||seq<0))throw Error('queue_pause_boundary_invalid');
+  private readonly schedulePausedThroughRow:number;
+  constructor(readonly tasks: RecursiveTasks, readonly history: ConversationHistory, private validateQuotes?: (input: ConversationInput) => void, private lifecycle?: MainInputLifecycle, private dispatchPolicy?:{pausedThroughSeq:number;userPausedThroughSeq?:number;pausedThroughProcessSeq?:number;resumeWorkers?:boolean;resumeScheduled?:boolean;schedulePausedThroughRow?:number;legacyScheduleBoundary?:boolean}) {
+    if(dispatchPolicy&&[dispatchPolicy.pausedThroughSeq,dispatchPolicy.userPausedThroughSeq??0,dispatchPolicy.pausedThroughProcessSeq??0,dispatchPolicy.schedulePausedThroughRow??0].some(seq=>!Number.isSafeInteger(seq)||seq<0))throw Error('queue_pause_boundary_invalid');
+    this.schedulePausedThroughRow=dispatchPolicy?.schedulePausedThroughRow??(dispatchPolicy?.resumeScheduled===false?Number(this.db.prepare('SELECT coalesce(max(rowid),0) n FROM schedules').get()!.n):0);
     this.pausedActiveMessages=new Set(dispatchPolicy?this.db.prepare("SELECT r.messageId FROM agent_receipts r JOIN agent_messages m ON m.id=r.messageId WHERE r.recipientAgentId=? AND m.seq<=? AND r.state IN ('offered','received')").all(this.agent,dispatchPolicy.pausedThroughSeq).map(row=>String(row.messageId)):[]);
   }
   private get store() { return this.tasks.store; }
@@ -190,13 +190,19 @@ export class MainInputs {
       AND json_extract(o.detailsJson,'$.interactionId') IS NULL AND json_extract(o.detailsJson,'$.turnId') IS NULL)`;
     const resumeScheduled=this.dispatchPolicy?.resumeScheduled!==false?" OR (m.kind='scheduled_message' AND m.senderAgentId='host' AND r.offeredTurnId IS NULL AND json_extract(m.payloadJson,'$.instanceId')=m.recipientAgentId)":'';
     const eligible=paused?" AND (m.seq>?"+resumeUser+resumeScheduled+(this.dispatchPolicy?.resumeWorkers?" OR m.kind<>'user_input'":'')+")":'';
-    const sourceRequest="CASE WHEN json_valid(json_extract(m.payloadJson,'$.sourceRef')) THEN json_extract(json_extract(m.payloadJson,'$.sourceRef'),'$.authority.sourceRequestId') END";
-    // A newly enqueued reminder still belongs to its original owner and source.
+    const userCutoff=this.dispatchPolicy?.userPausedThroughSeq??cutoff;
+    // Preserve the pre-v10 pause ordering for hits from schedules present at the upgrade.
+    const legacySchedule=this.dispatchPolicy?.legacyScheduleBoundary?` OR EXISTS(SELECT 1 FROM operations accepted
+      JOIN agent_messages original ON original.operationKey=accepted.id
+      WHERE accepted.actorAgentId='user:'||m.recipientAgentId AND accepted.operationId='accept' AND accepted.kind='user_accept'
+        AND accepted.scopeId=CASE WHEN json_valid(json_extract(m.payloadJson,'$.sourceRef'))
+          THEN json_extract(json_extract(m.payloadJson,'$.sourceRef'),'$.authority.sourceRequestId') END
+        AND original.kind='user_input' AND original.recipientAgentId=m.recipientAgentId AND original.seq>?)`:'';
     const scheduledOwner=paused&&this.dispatchPolicy?.resumeScheduled===false&&!this.dispatchPolicy.resumeWorkers
-      ?` AND (m.kind<>'scheduled_message' OR EXISTS(SELECT 1 FROM agent_messages original WHERE original.kind='user_input' AND original.recipientAgentId=m.recipientAgentId AND original.seq>${this.dispatchPolicy.userPausedThroughSeq??cutoff} AND json_extract(original.payloadJson,'$.requestId')=${sourceRequest}))`:'';
+      ?` AND (m.kind<>'scheduled_message' OR EXISTS(SELECT 1 FROM schedules s WHERE s.id=json_extract(m.payloadJson,'$.scheduleId') AND (s.rowid>?${legacySchedule})))`:'';
     const activeSource=view==='head'?` AND (m.kind<>'user_input' OR ${activeUserSource})`:'';
-    const query=sql+" WHERE r.recipientAgentId=? AND "+state+" AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE s.threadId END)=?"+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder;
-    const args=[this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,this.dispatchPolicy?.userPausedThroughSeq??cutoff]:[])];
+    const query=sql+" WHERE r.recipientAgentId=? AND "+state+` AND m.recipientAgentId=r.recipientAgentId AND m.targetRunId IS NULL AND (m.kind='user_input' OR m.senderAgentId='host') AND (CASE WHEN m.kind='user_input' THEN i.threadId WHEN m.kind='scheduled_message' THEN json_extract(m.payloadJson,'$.threadId') ELSE ${mainThread} END)=?`+eligible+scheduledOwner+activeSource+' ORDER BY '+dispatchOrder;
+    const args=[this.agent,this.store.meta('mainThread')!,...(paused?[cutoff,userCutoff]:[]),...(scheduledOwner?[this.schedulePausedThroughRow,...(legacySchedule?[userCutoff]:[])]:[])];
     if(view==='head'){
       const head=this.db.prepare(query+' LIMIT 1').get(...args) as Row|undefined;
       if(!head)return [];
@@ -223,7 +229,7 @@ export class MainInputs {
     const unscoped=Number(this.db.prepare(`SELECT count(*) total FROM agent_receipts r CROSS JOIN agent_messages m ON m.id=r.messageId
       ${workerSource}
       WHERE r.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId') AND m.recipientAgentId=r.recipientAgentId AND m.kind NOT IN ('user_input','scheduled_message') AND m.targetRunId IS NULL
-        AND r.state IN ('pending','offered','received','uncertain','blocked') AND s.threadId IS NULL`).get()!.total);
+        AND r.state IN ('pending','offered','received','uncertain','blocked') AND ${mainThread} IS NULL`).get()!.total);
     return {orderVersion,totalWaiting,...(awaitingUser?{awaitingUser:true as const}:{}),...(unscoped?{unscoped}:{})};
   }
   dispatchPage(cursor?:string,readEpoch?:string):{items:DispatchInput[];orderVersion:string;totalWaiting:number;nextCursor:string|null};

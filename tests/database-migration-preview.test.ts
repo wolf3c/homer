@@ -71,12 +71,12 @@ test('offline preview refuses unsupported historical schemas without activating 
  }finally{rmSync(f.directory,{recursive:true,force:true});}
 });
 
-for(const version of ['6','7','8'])test('offline preview rejects existing schema '+version,async()=>{
+for(const version of ['6','7','8','9'])test('offline preview rejects existing schema '+version,async()=>{
  const f=chatFixture();try{
   f.store.setMeta('recursiveSchemaVersion',version);f.store.db.prepare("UPDATE agent_receipts SET state='processed' WHERE messageId=?").run(f.actor.inputMessageId!);
   if(version==='6')f.store.db.exec('DROP TABLE schedules');
   const source=hash(f.path),result=await previewMigration(f.path,join(f.dir,'migration-preview'));
-  assert.equal(result.passed,false);assert.equal(result.error,'recursive_schema_unsupported');assert.equal(result.schemaVersions.recursiveSchemaVersion,version);assert.equal(hash(f.path),source);
+  assert.equal(result.passed,false);assert.equal(result.error,version==='8'||version==='9'?'desktop_store_migration_required':'recursive_schema_unsupported');assert.equal(result.schemaVersions.recursiveSchemaVersion,version);assert.equal(hash(f.path),source);
   assert.equal(result.tables.agent_receipts!.unchanged,true);assert.equal(result.tables.operations!.unchanged,true);
   assert.deepEqual(result.rollback,{fileBytesMatch:true,schemaUnchanged:true,factsUnchanged:true});
  }finally{f.close();}

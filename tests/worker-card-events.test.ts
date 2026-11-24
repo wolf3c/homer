@@ -44,7 +44,7 @@ test('business opening, public snapshot and reference roll back together and rep
  }finally{f.close();}});
 test('updated goal preserves prior version and original Worker message',()=>{const f=overviewFixture();try{
  const w=f.open('Original instructions'),before=f.tasks.version(f.taskId,1);
- f.tasks.updateTask(f.actor,{operationId:'update',taskId:f.taskId,expectedRevision:1,patch:{goal:'Updated goal'},authority:f.authority});
+ f.tasks.updateTask(f.actor,{operationId:'update',taskId:f.taskId,expectedRevision:1,patch:{goal:'Updated goal'}});
  assert.deepEqual(f.tasks.version(f.taskId,1),before);assert.equal(f.tasks.run(w.runId).version,1);assert.equal(f.tasks.workerRead(f.actor,{workerId:w.workerId}).messages[0]!.text,'Original instructions');
  }finally{f.close();}});
 test('closed process nodes accept identical replay but never a new Worker event',()=>{const f=setup();try{f.start('closed');f.history.workerEvent('closed',event);f.history.finish('closed','completed','terminal');const before=f.history.exact('closed');assert.doesNotThrow(()=>f.history.workerEvent('closed',{...event,observedAtMs:2}));assert.throws(()=>f.history.workerEvent('closed',{...event,eventKey:'new-on-closed-node'}),/worker_event_anchor_closed/);assert.deepEqual(f.history.exact('closed'),before);assert.equal(f.db.prepare('SELECT count(*) n FROM worker_card_events').get()!.n,1);}finally{f.db.close();}});

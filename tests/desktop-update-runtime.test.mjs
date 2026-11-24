@@ -27,7 +27,7 @@ async function runtimeFixture(result,{arch='arm64',releaseError=false,manifestAr
  const modules={
   'node:fs':{realpathSync:path=>path,existsSync:path=>path===profile+'/fixture-codex.mjs'||!!profileRoot&&require('node:fs').existsSync(path),readFileSync:path=>Buffer.from(path.endsWith('desktop-manifest.json')?JSON.stringify(manifest):path.endsWith('.homer-desktop-test-profile')?'{"format":1}':''),readdirSync:()=>[],lstatSync(){throw Error('unexpected_lstat');},mkdirSync(){},writeFileSync(){throw Error('unexpected_write');},closeSync(){}},
   'node:sqlite':{DatabaseSync:profileRoot?DatabaseSync:class{constructor(){throw Error('unexpected_database');}}},
-  './desktop-profile.mjs':{prepareDesktopProfile:profileRoot?prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),assertDesktopAdoptionLeasesRecoverable,acquireDesktopOwner:(home,identity,runtime)=>{assert.equal(home,profile+'/codex');assert.equal(runtime,profile+'/runtime');assert.equal(identity(),'fixture-owner');owned=true;return ()=>{owned=false;events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');};},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex',readDesktopChatGPTConfig:()=>undefined},
+  './desktop-profile.mjs':{prepareDesktopProfile:profileRoot?prepareDesktopProfile:()=>({codexHome:profile+'/codex',workspace:profile+'/workspace',runtime:profile+'/runtime'}),assertDesktopAdoptionLeasesRecoverable,acquireDesktopOwner:(home,identity,runtime)=>{assert.equal(home,profile+'/codex');assert.equal(runtime,profile+'/runtime');assert.equal(identity(),'fixture-owner');owned=true;return ()=>{owned=false;events.push({kind:'owner-release'});if(releaseError)throw Error('desktop_owner_release_failed');};},desktopBoundary:()=> 'fixture',readDesktopModelSource:()=> 'codex',readDesktopChatGPTConfig:()=>undefined,readDesktopMemberConfig:()=>undefined},
   [new URL('dist/store.js','file://'+homer+'/').href]:await import('../src/store.ts'),
   [new URL('dist/desktop-baseline-migration.js','file://'+homer+'/').href]:{migrateDesktopBaseline:async(runtime,codexHome)=>{assert.ok(owned&&verified);await migrate(runtime,codexHome);events.push({kind:'baseline-migrated'});}},
   [new URL('dist/processes.js','file://'+homer+'/').href]:{processIdentity:()=> 'fixture-owner',leaseOwnerGone:()=>{throw Error('unexpected_lease_probe');}},
@@ -80,7 +80,7 @@ if(!vm.SourceTextModule){
   assert.match(output,/# tests [1-9]\d*/);
  });
 }else{
- for(const schema of ['9','8','5','legacy'])test('packaged runtime reads an old engine profile and checks its actual database schema '+schema,async t=>{
+ for(const schema of ['10','9','8','5','legacy'])test('packaged runtime reads an old engine profile and checks its actual database schema '+schema,async t=>{
   const parent=resolve('.codex/scratch/desktop-profile-upgrade');mkdirSync(parent,{recursive:true});
   const root=mkdtempSync(join(parent,'synthetic-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
   writeFileSync(join(root,'.homer-desktop-test-profile'),'{"format":1}');
@@ -91,9 +91,9 @@ if(!vm.SourceTextModule){
   db.prepare('INSERT INTO meta VALUES(?,?)').run('mainThread','synthetic-retained-thread');db.prepare('INSERT INTO meta VALUES(?,?)').run('recursiveSchemaVersion',schema==='legacy'?'8':schema);
   if(schema==='legacy')db.prepare('INSERT INTO meta VALUES(?,?)').run('mainToolsHash','synthetic-legacy-hash');
   db.prepare('INSERT INTO retained VALUES(?)').run('synthetic-retained-history');db.close();const before=readFileSync(database);
-  const f=await runtimeFixture({stoppedConfirmed:true},{profileRoot:root,migrate:(runtime,codexHome)=>{assert.equal(schema,'legacy');assert.equal(runtime,paths.runtime);assert.equal(codexHome,paths.codexHome);}});await f.complete();
-  if(schema==='9')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);
-  else if(schema==='legacy')assert.deepEqual(f.events.map(v=>v.kind),['baseline-migrated','owner-release','stopped']);
+  const f=await runtimeFixture({stoppedConfirmed:true},{profileRoot:root,migrate:(runtime,codexHome)=>{assert.ok(schema==='legacy'||schema==='9');assert.equal(runtime,paths.runtime);assert.equal(codexHome,paths.codexHome);}});await f.complete();
+  if(schema==='10')assert.deepEqual(f.events.map(v=>v.kind),['owner-release','stopped']);
+  else if(schema==='legacy'||schema==='9')assert.deepEqual(f.events.map(v=>v.kind),['baseline-migrated','owner-release','stopped']);
   else{assert.ok(f.events.some(v=>v.kind==='error'&&v.code==='desktop_schema_incompatible'));assert.equal(f.events.some(v=>v.kind==='owner-release'),false);}
   assert.deepEqual(readFileSync(join(root,'desktop-profile.json')),marker);assert.equal(readFileSync(auth,'utf8'),'synthetic-retained-account');assert.deepEqual(readFileSync(database),before);
  });

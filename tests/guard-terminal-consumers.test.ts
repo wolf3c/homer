@@ -45,7 +45,7 @@ for(const code of [...codes,undefined])for(const consumer of ['task','service'] 
   if(consumer==='task'){f.tasks.recordWorkerTerminal(run.id,run.epoch,terminal);f.tasks.endSegment(run.id,run.epoch,terminal,true);}
   else{
    const app:any=Object.create(Homer.prototype),slot={id:run.id,epoch:run.epoch,requests:new Map(),engine:{threadId:'thread:worker',turnId:'turn:worker',turn:async(_text:string,options:{onStarted:(turnId:string)=>void})=>{options.onStarted('turn:worker');return terminal;},close:async()=>{closed++;return true;}}};
-   Object.assign(app,{config:{runtime:join(f.dir,'runtime'),codexHome:join(f.dir,'codex'),nativeCodexHome:join(f.dir,'codex')},files:f.files,tasks:f.tasks,store:f.store,workers:new Map([[run.id,slot]]),interactions:{cancelRun(){}},mainApprovals:{end(){}},invalidateState(){},scheduleInternal(){}});
+   Object.assign(app,{config:{runtime:join(f.dir,'runtime'),codexHome:join(f.dir,'codex'),nativeCodexHome:join(f.dir,'codex')},files:f.files,inputs:f.inputs,tasks:f.tasks,store:f.store,workers:new Map([[run.id,slot]]),interactions:{cancelRun(){}},mainApprovals:{end(){}},invalidateState(){},scheduleInternal(){}});
    await app.execute(run);assert.equal(closed,1);
   }
   const ended=f.tasks.run(run.id);assert.equal(ended.phase,'ended');assert.equal(ended.errorCode,code??null);assert.equal(f.tasks.claim(run.id),undefined);
