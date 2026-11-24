@@ -294,8 +294,20 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated,a
   </div></>}
  </div>;
 }
-export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onBeforeLayoutChange,onReference,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
+export function TaskStatusPopover({state,connected,refreshKey,asideContainer,splitPreview,onBeforeLayoutChange,onReference,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;splitPreview?:boolean;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
  const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
+ const [availableWidth,setAvailableWidth]=useState(0);
+ const collisionPadding=12;
+ const conversationPanel=splitPreview?asideContainer?.closest<HTMLElement>('.conversation-panel'):undefined;
+ // This is the smallest card width checked for readable rows and operable controls.
+ const localBoundary=availableWidth>=215?conversationPanel:undefined;
+ useLayoutEffect(()=>{
+  if(!conversationPanel){setAvailableWidth(0);return;}
+  const measure=()=>setAvailableWidth(Math.floor(conversationPanel.getBoundingClientRect().width-2*collisionPadding));
+  measure();
+  const observer=new ResizeObserver(measure);observer.observe(conversationPanel);
+  return()=>observer.disconnect();
+ },[conversationPanel]);
  const open=wide?pinned:popupOpen;
  const focusComposer=useRef(false);
  const beforeLayout=useRef(onBeforeLayoutChange);beforeLayout.current=onBeforeLayoutChange;
@@ -333,7 +345,9 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,onB
    </span>
   </button>
   </PopoverTrigger>
-  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={12} aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(focusComposer.current){focusComposer.current=false;event.preventDefault();}}}>{content}</PopoverContent>}
+  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={collisionPadding}
+   collisionBoundary={localBoundary} sticky={localBoundary?'always':undefined} style={localBoundary?{maxWidth:availableWidth}:undefined} data-preview-local-quote={localBoundary?'':undefined}
+   aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(focusComposer.current){focusComposer.current=false;event.preventDefault();}}}>{content}</PopoverContent>}
  </Popover></div>
  {wide&&pinned&&asideContainer&&createPortal(<aside id="task-status-panel" className="homer-task-status status-aside" aria-label="工作状态卡片">{content}</aside>,asideContainer)}</>;
 }

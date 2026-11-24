@@ -403,6 +403,49 @@ async function runPreview(linksOnly){
    const left=document.querySelector('.conversation-panel').getBoundingClientRect();
    return popup&&popup.left>=left.left&&popup.right<=left.right;
   });
+  const selectionTool=host.locator('[data-slot=selection-toolbar-quote]');
+  const statusTrigger=host.locator('#task-status-trigger');
+  const statusPopup=host.getByRole('dialog',{name:'工作状态卡片'});
+  async function verifyStatus(target,touch=false,screenshot){
+   const before=await nativeState(target.url());
+   assert.equal(before.visible,true);
+   await statusTrigger.focus();
+   await host.keyboard.press('Enter');
+   await statusPopup.waitFor();
+   const archive=statusPopup.getByRole('button',{name:'已归档',exact:true});
+   await archive.focus();
+   await host.keyboard.press('Enter');
+   assert.equal(await archive.getAttribute('aria-expanded'),'true');
+   await host.waitForFunction(()=>{
+    const popup=document.querySelector('#task-status-panel')?.getBoundingClientRect();
+    const left=document.querySelector('.conversation-panel').getBoundingClientRect();
+    return popup&&popup.left>=left.left&&popup.right<=left.right;
+   });
+   assert.deepEqual(await nativeState(target.url()),before);
+   if(screenshot&&process.platform==='darwin'){
+    const id=await electron.evaluate(()=>testWindow.getMediaSourceId().split(':')[1]);
+    execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,screenshot)],{timeout:10000});
+   }
+   if(touch){
+    const cdp=await host.context().newCDPSession(host);
+    await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+    try{
+     await host.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+     const box=await archive.boundingBox();
+     assert.ok(box);
+     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+box.width/2,y:box.y+box.height/2}]});
+     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+     await host.waitForFunction(()=>document.querySelector('#task-status-panel .status-archive-toggle')?.getAttribute('aria-expanded')==='false');
+    }finally{
+     await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:false});
+     await cdp.detach();
+    }
+   }
+   await host.keyboard.press('Escape');
+   await statusPopup.waitFor({state:'hidden'});
+   await host.waitForFunction(()=>document.activeElement?.id==='task-status-trigger');
+   assert.deepEqual(await nativeState(target.url()),before);
+  }
   async function verifyQuote(target,save){
    const before=await nativeState(target.url());
    assert.equal(before.visible,true);
@@ -421,7 +464,10 @@ async function runPreview(linksOnly){
     const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
     document.dispatchEvent(new Event('selectionchange'));
    });
-   await host.locator('[data-slot=selection-toolbar-quote]').click();
+   await selectionTool.waitFor();
+   await host.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   assert.deepEqual(await nativeState(target.url()),before);
+   await selectionTool.click();
    await quote.locator('textarea').fill('跨栏编辑期间保留原生页面');
    await host.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    assert.deepEqual(await nativeState(target.url()),before);
@@ -448,6 +494,7 @@ async function runPreview(linksOnly){
   const quotePage=await waitPage(url+'/quote');
   await until(async()=>!!(await nativeState(quotePage.url()))?.visible);
   await quotePage.getByLabel('任务输入').fill('保留网页输入');
+  await verifyStatus(quotePage);
   await verifyQuote(quotePage,false);
   assert.equal(await quotePage.getByLabel('任务输入').inputValue(),'保留网页输入');
   await host.locator(`[data-conversation-message="${htmlReplyId}"]`).getByRole('link',{name:'preview.html',exact:true}).click();
@@ -460,6 +507,7 @@ async function runPreview(linksOnly){
   await host.mouse.move(separatorX-400,separatorY,{steps:8});
   await host.mouse.up();
   await host.waitForFunction(()=>document.querySelector('.conversation-panel').getBoundingClientRect().width<400);
+  await verifyStatus(html,process.platform==='darwin');
   await html.evaluate(()=>{window.quoteProbe=42;});
   await verifyQuote(html,true);
   assert.equal(await html.evaluate(()=>window.quoteProbe),42);
@@ -470,6 +518,24 @@ async function runPreview(linksOnly){
   await until(async()=>!(await nativeState(html.url())).visible);
   await host.getByRole('button',{name:'关闭设置',exact:true}).click();
   await until(async()=>(await nativeState(html.url())).visible);
+  await electron.evaluate(()=>{
+   testWindow.webContents.setZoomFactor(1);
+   testWindow.setContentSize(960,900);
+  });
+  await host.waitForFunction(()=>innerWidth===960&&document.querySelector('.conversation-panel').getBoundingClientRect().width<243);
+  await verifyStatus(html,false,'product-task-status-narrow.png');
+  await statusTrigger.click();
+  await statusPopup.waitFor();
+  await electron.evaluate(()=>testWindow.setContentSize(840,900));
+  await host.waitForFunction(()=>innerWidth===840&&!document.getElementById('task-status-panel')?.hasAttribute('data-preview-local-quote'));
+  await until(async()=>!(await nativeState(html.url())).visible);
+  await statusPopup.getByRole('button',{name:'已归档',exact:true}).click();
+  await electron.evaluate(()=>testWindow.setContentSize(960,900));
+  await host.waitForFunction(()=>document.getElementById('task-status-panel')?.hasAttribute('data-preview-local-quote'));
+  await until(async()=>(await nativeState(html.url())).visible);
+  await host.keyboard.press('Escape');
+  await statusPopup.waitFor({state:'hidden'});
+  record('work status stays left of the native view, with keyboard focus, touch, and narrow fallback');
   await electron.evaluate(()=>testWindow.setContentSize(760,900));
   await host.locator('#canvas-panel[aria-modal="true"]').waitFor();
   assert.equal((await nativeState(html.url())).visible,true);

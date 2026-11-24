@@ -143,9 +143,61 @@ macOS 和 Windows 用户可以主动点击定位当前原件。宿主在点击�
 
 ## 分栏引用批注与原生预览（2026-11-23）
 
-桌面分栏使用现有的浮层定位，将消息引用编辑器限制在对话栏，仅此编辑器可以与右栏原生预览同时显示。全屏预览、设置和其他弹窗沿用原有显隐规则。原生页面的归属、文档代次和用户接手语义沿用同一套规则。
+桌面分栏使用现有的浮层定位，将消息引用编辑器限制在对话栏，并为该编辑器添加原生预览显隐规则的例外。全屏预览、设置和其他弹窗沿用原有显隐规则。原生页面的归属、文档代次和用户接手语义沿用同一套规则。
 
-隔离 macOS Electron 回归覆盖网页与 HTML 附件、保存与取消、拖窄分栏、缩放与滚动、重开批注、切换页面、设置和窄窗。原生窗口取证与用户接手回归通过。安装版本和其他桌面平台待验。
+2026-11-23 的隔离 macOS Electron 回归覆盖网页与 HTML 附件、保存与取消、拖窄分栏、缩放与滚动、重开批注、切换页面、设置和窄窗。原生窗口取证与用户接手回归通过。后续完整专项复现了选区工具条导致的短暂隐藏，见下一节。
+
+## 原生网页与宿主浮层（2026-11-24）
+
+**桌面分栏已接入左栏局部浮层处理。** 消息选区工具条复用分栏引用编辑器的标记，沿对话视口定位。工作状态浮层以对话栏为定位边界，按栏宽扣除两侧各 12 CSS px 后限制最大宽度。可用宽度至少为 215 CSS px 时使用局部浮层标记，空间不足时沿用原有浮层及网页让位。设置等模态沿用现行显隐规则。以下复现数据记录修复前行为，其他方案留作调研参考。
+
+隔离 macOS Electron 45 定向对照验证了 HTTP 网页与原生 HTML 的选区、保存和取消、键盘与模拟触屏、设置模态及窄栏回退。约 240 CSS px 的左栏可显示 215 CSS px 卡片，缩至约 210 CSS px 时回退，放宽后恢复同一个原生视图。早期完整专项两次在本地 PNG 草稿附件清理等待超时。基于本地 main `ed94aaac` 的精确提交候选重跑完整专项，两项均通过，本地 PNG 清理断言也通过。安装包、真实触屏与其他平台待验。
+
+### 当前规则
+
+Preview 标签栏、网页工具栏与阅读区占位框属于宿主 React 文档。桌面在线网页和走原生路径的 HTML 内容由 Electron 主进程管理，作为独立的 `WebContentsView` 加入 `window.contentView`。宿主传入占位框矩形，主进程按缩放换算并限制在窗口内容区，只显示选中的视图。宿主 Portal、CSS `z-index` 与裁剪作用于宿主 DOM。原生视图有自己的排序、矩形边界和输入命中。
+
+宿主查找带有布局矩形的 `[role="dialog"]:not(#canvas-panel,[data-preview-local-quote])`、`[role="alertdialog"]` 和 `[role="menu"]`。它未比较交叠、实际绘制顺序或模态范围。任一匹配会触发 `bounds:null`，主进程隐藏整个当前网页视图。预览卸载和空尺寸也会发送空边界。隐藏期间页面实例仍在，显式关闭才移除视图并关闭其 WebContents。恢复计算由页面切换、占位尺寸、窗口 resize、滚动、`body` 直接子节点增删及局部浮层标记变化触发。现有观察器没有逐帧跟踪浮层动画中的位置。
+
+[宿主显隐条件](../../ui/browser-preview.tsx) · [原生视图边界及生命周期](../../packaging/electron/preview-pages.mjs) · [Electron 45 嵌入方式](https://github.com/electron/electron/blob/v45.0.0/docs/tutorial/web-embeds.md) · [Electron 45 原生 View API](https://github.com/electron/electron/blob/v45.0.0/docs/api/view.md)
+
+### 复现与范围
+
+使用安装版 0.1.23 build 311 的打包 UI、原生预览模块，以及远端 main `47f82e8f` 的独立构建，分别接入 macOS Electron 45 隔离合成服务。两组定向运行均正常退出。以下数字取自 1280 CSS px 窗口。
+
+| 场景 | 观测 |
+| --- | --- |
+| 工作状态浮层 | 卡片右缘与网页左缘相距 56 CSS px，交叠为零，网页内容仍整块空白。标签栏和工具栏留在界面。在线网页与原生本地 HTML 都复现。关闭后同一视图恢复且保留输入，点击标签会收起浮层并显示新选中页。1010px 缩窗后仍可复现及恢复，2620px 常驻侧栏能和网页同时显示。 |
+| 设置 | 居中面板为 920 × 690 CSS px，覆盖约 62% 的网页内容区。半透明遮罩铺满窗口，设置维持模态交互。当前规则会隐藏全部网页内容，关闭后恢复。600px 及以下的设置全屏样式来自源码。 |
+| 消息引用 | 远端 main 的完整 Electron 专项在 `verifyQuote` 断言处失败。IPC 追踪确认，选区工具条出现时以 `dialog` 身份发送了 `bounds:null`。分栏引用编辑器已有豁免，原断言采样时同一视图仍隐藏，450ms 后复采时已恢复。两类问题共用隐藏规则，引用的触发者是选区工具条，工作状态则在打开期间持续命中。证据确认网页内容短暂消失，无法确认历史反馈中的整个 Preview 卡片也曾消失。 |
+
+设置内菜单、设备删除确认、功能导览、主窗口附件或截图批注弹窗等在源码上可能匹配选择器，尚未逐项复测。常驻侧栏和普通 `tooltip` 无相应角色。窄屏 Preview 自身由 `#canvas-panel` 豁免。原生页内元素批注、沙箱 HTML 内部界面及独立截图窗口各自拥有文档，宿主选择器不跨文档读取。日常用户窗口、其他桌面平台和候选方案均未实测。
+
+[工作状态布局](../../ui/task-status.tsx) · [设置模态与样式](../../ui/desktop-permissions.tsx) · [设置尺寸](../../ui/homer-styles.css) · [引用工具条和编辑器](../../ui/homer-app.tsx) · [专项及构建方法](../testing.md#内置浏览器正式源码2026-11-17) · [引用回归断言](../../tests/browser-preview.electron.test.mjs)
+
+### 候选方案
+
+| 方案 | 网页画面与交互 | 成本与边界 |
+| --- | --- | --- |
+| 保持现状 | 命中时网页空白并暂停交互，关闭恢复原视图。 | 无额外渲染面及截图采集。保留已复现的全局误隐藏和短暂闪白。 |
+| 按实际交叠判断 | 无交叠时保持实时及交互。真交叠且仍采用整块隐藏时，网页仍会空白。 | 改动较小。应以明确的浮层范围和模态语义决定让位，兼顾尺寸、移动、过渡、嵌套和关闭时序。全窗口模态遮罩也属于实际覆盖。 |
+| 浮层约束在左栏 | 能保证无交叠的工作状态或选区工具条保留实时网页。 | 需处理拖窄、缩放和窄窗。把现有宽设置放进左栏会改变设置布局及模态范围。 |
+| 按需截图占位 | 原生网页让位时显示最后一帧，截图区不可交互。关闭后恢复原页面。 | 复用宿主 DOM 的叠层与模态。只取当前页可见区域、以内存持有，避免周期采集。需要处理取帧延迟或失败、跨标签过期帧及嵌套浮层共用占位。 |
+| 同窗口单个原生覆盖视图 | 背景网页可保持实时绘制。全窗口设置层负责阻断背景输入，内部菜单和确认框共用该层。 | 可复用 React 组件和样式，需要独立可信 renderer、窄 IPC 和状态同步。须保持在新建网页视图之上，管理焦点、缩放和销毁。非模态用途需要贴合实际内容的命中矩形。 |
+| 同窗口多个原生覆盖视图 | 可承载独立定位或同时显示的弹层，网页其余区域可保持实时。 | 多套 WebContents 增加渲染和生命周期成本。需要管理遮挡次序、透明区命中、嵌套焦点和恢复。Electron 支持 View 排序，无法直接把既有 DOM 元素抬入原生层。 |
+| 独立原生窗口 | 可承载跨屏浮窗或独立设置，背景能继续实时绘制。 | 需要同步父窗、移动、焦点和全屏。透明像素不会自动穿透，忽略鼠标是窗口级控制。macOS、Windows 和 Linux 的跟随及窗口管理有差异。 |
+| 原生矩形裁切或让位 | 沿边留出空间时，剩余区域可保持实时。 | `setBounds` 改变矩形尺寸可能引起网页重排，不能直接表达任意镂空区域。透明和圆角也不等同于输入裁切。 |
+| 同一 DOM 内嵌入 | `iframe` 可与宿主正常合成及叠层。 | 受站点嵌入策略限制，原生页面会话、会话隔离及操作契约需要重新评估。Electron 官方建议避免以 `<webview>` 为默认方案。自行离屏合成还需帧传输和输入转发。 |
+
+[Electron 45 视图层级、透明及命中](https://github.com/electron/electron/blob/v45.0.0/docs/api/view.md) · [页面截图](https://github.com/electron/electron/blob/v45.0.0/docs/api/web-contents.md#contentscapturepagerect-opts) · [原生窗口平台差异](https://github.com/electron/electron/blob/v45.0.0/docs/api/browser-window.md#platform-notices) · [离屏合成](https://github.com/electron/electron/blob/v45.0.0/docs/tutorial/offscreen-rendering.md)
+
+### 上游先例与复验
+
+- **VS Code 集成浏览器**，Code OSS 开发版本 1.149.0，源码 `cffbd89f`。跟踪已识别的浮层，先算矩形交叠，再对交叠点做 DOM 命中判断。实际让位时用截图保留画面，另外管理焦点和截图时序。[交叠判断](https://github.com/microsoft/vscode/blob/cffbd89fcdfe9ef17dd2dcc1bcddd97246ffcea1/src/vs/workbench/contrib/browserView/electron-browser/overlayManager.ts#L271-L301) · [截图与焦点](https://github.com/microsoft/vscode/blob/cffbd89fcdfe9ef17dd2dcc1bcddd97246ffcea1/src/vs/workbench/contrib/browserView/electron-browser/webContentsViewHost.ts#L195-L280)
+- **Min** 1.35.8，Electron 45.3.2，源码 `ef39979f`。按原因记录占位请求，使用可用预览图，待最后一个原因结束才挂回原生视图和恢复焦点。私密标签跳过占位图采集。[占位与恢复](https://github.com/minbrowser/min/blob/ef39979f39a6cc6b578736d951eac7f5aa31db93/js/webviews.js#L262-L305) · [采集限制](https://github.com/minbrowser/min/blob/ef39979f39a6cc6b578736d951eac7f5aa31db93/js/webviews.js#L12-L27)
+- **Wexond** 6.0.0-nightly.2，Electron 13.1.4，历史源码 `d0c46a74`。将菜单等独立 `BrowserView` 加到主窗口，管理复用、位置、标签关联及焦点。它证明了同窗口原生浮层有应用先例，未验证 Electron 45 下的同等行为。Homer 自有截图面板和 Jitsi 历史会议小窗属于独立窗口的先例。[Wexond 菜单](https://github.com/wexond/browser-base/blob/d0c46a74d747ea45b6c701d188db1da0c3e18f40/src/main/dialogs/menu.ts#L5-L24) · [Wexond 弹层管理](https://github.com/wexond/browser-base/blob/d0c46a74d747ea45b6c701d188db1da0c3e18f40/src/main/services/dialogs-service.ts#L209-L275) · [Homer 截图面板](../../packaging/electron/main.mjs) · [Jitsi 历史浮窗](https://github.com/jitsi/jitsi-meet-electron-sdk/blob/ba851e726b62e93bdcd7ec69414a9c90e3412d58/alwaysontop/main.js#L43-L77)
+
+后续若评估改动，先确认设置背后的网页是否需要持续实时绘制、非模态浮层覆盖时是否需要保持其余区域可交互。验收从选区工具条出现开始检查整段时序，覆盖设置和嵌套模态、键盘和输入法、辅助技术、点击命中、焦点返回、切页、拖动分隔条、缩放、跨屏及窄窗。核对实时绘制或静态占位是否符合预期、原页身份和输入保留、截图失败和视图销毁；分别记录实际验证的平台。
 
 ## 批注定位与重开方案（2026-11-23）
 

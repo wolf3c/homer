@@ -88,7 +88,11 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
    });
   };
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(draw);};draw();
-  const observer=new ResizeObserver(schedule);observer.observe(node);const portals=new MutationObserver(schedule);portals.observe(document.body,{childList:true});window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
+  const observer=new ResizeObserver(schedule);observer.observe(node);
+  const portals=new MutationObserver(schedule);
+  portals.observe(document.body,{childList:true});
+  portals.observe(document.documentElement,{subtree:true,attributes:true,attributeFilter:['data-preview-local-quote']});
+  window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
   return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);void bridge.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});};
  },[page.id,page.threadId,suspended]);
  async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
