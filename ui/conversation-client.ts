@@ -19,7 +19,7 @@ export function protocolQuote({messageId,text,itemIds,position}:MessageQuote):Me
 }
 export function protocolQuotes(quotes:readonly AnnotatedQuote[]):AnnotatedQuote[]{return quotes.map(q=>({...protocolQuote(q),annotation:q.annotation}));}
 export function singleComposerDraft(draft:ComposerDraft):ComposerDraft&{notice?:string}{return draft;}
-export type UnconfirmedInput={input:ConversationInput;target?:{messageId:string;generationId:string};draft?:{
+export type UnconfirmedInput={input:ConversationInput;taskScope?:string;target?:{messageId:string;generationId:string};draft?:{
   clearedRequestId:string;attachments:NonNullable<ComposerDraft['attachments']>;quotes:QuoteDraft[];contextOrder:string[];
   resources:Pick<import('./annotation-draft.js').AnnotationDraftState,'htmlMetadata'|'imageAssets'>;
 }};

@@ -26,14 +26,15 @@ function archiveReason(reason:string){
   default:return '仍有事项记录待处理。';
  }
 }
-function TaskStatusRow({label,workerCount,running,archived,onReference,archive}:{
- label:string;workerCount:number;running:boolean;archived:boolean;onReference?:()=>void;
+function TaskStatusRow({label,workerCount,running,archived,onReference,onOpen,archive}:{
+ label:string;workerCount:number;running:boolean;archived:boolean;onReference?:()=>void;onOpen?:(trigger:HTMLElement)=>void;
  archive?:{reason:string|null;pending:boolean;activate:()=>void};
 }){
  const archiveReasonId=useId();
  return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-archive={archive?'available':undefined}>
  <div data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}>
-  <span className={archived?'status-task-title':'status-task-title status-task-title-truncated'}>{label}</span>
+  {onOpen?<button type="button" className="status-task-title status-task-open" onClick={event=>onOpen(event.currentTarget)}>{label}</button>
+    :<span className={archived?'status-task-title':'status-task-title status-task-title-truncated'}>{label}</span>}
   {running&&<span className="status-task-running" role="img" aria-label="运行中" title="运行中">
    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin motion-reduce:animate-none">
     <circle cx="7" cy="7" r="6" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5"/>
@@ -50,11 +51,11 @@ function TaskStatusRow({label,workerCount,running,archived,onReference,archive}:
  </div>;
 }
 type TaskLocation={taskId:string;threadId:string;readEpoch?:string};
-type ListProps={connected:boolean;refreshKey:unknown;running?:ReadonlySet<string>;onReference?:(value:TaskReference)=>void;location?:TaskLocation;onLocated?:()=>void};
+type ListProps={connected:boolean;refreshKey:unknown;running?:ReadonlySet<string>;onReference?:(value:TaskReference)=>void;location?:TaskLocation;onLocated?:()=>void;onOpen?:(task:OverviewTask,trigger:HTMLElement)=>void};
 type TaskRead=ReturnType<typeof useTaskStatusData>;
-function TaskSection({archived,connected,read,tasks,tail,running,onReference,onArchive,archiving}:{
+function TaskSection({archived,connected,read,tasks,tail,running,onReference,onOpen,onArchive,archiving}:{
  archived:boolean;connected:boolean;read:TaskRead;tasks:OverviewTask[];tail:React.RefObject<HTMLDivElement|null>;
- running?:ReadonlySet<string>;onReference?:ListProps['onReference'];
+ running?:ReadonlySet<string>;onReference?:ListProps['onReference'];onOpen?:ListProps['onOpen'];
  onArchive?:(task:OverviewTask)=>void;archiving?:ReadonlySet<string>;
 }){
  const {data,reading,failure,stale,retry}=read;
@@ -73,7 +74,7 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onA
     reason:task.archiveBlocker?archiveReason(task.archiveBlocker):null,pending:archiving?.has(task.id)===true,activate:()=>onArchive(task),
    }:undefined;
    return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title} tabIndex={-1}>
-    <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archived={archived} archive={archive}
+    <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archived={archived} archive={archive} onOpen={onOpen?trigger=>onOpen(task,trigger):undefined}
      onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}/>
     {task.workers.some(worker=>worker.workTitle)&&<ul className="status-worker-assignments" aria-label="Worker 分工">
      {task.workers.filter(worker=>worker.workTitle).map(worker=>{
@@ -92,7 +93,7 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onA
  </section>;
 }
 
-function TaskList({connected,refreshKey,running,onReference,location,onLocated,archiveScope}:ListProps&{archiveScope?:{threadId:string;readEpoch:string}}){
+function TaskList({connected,refreshKey,running,onReference,onOpen,location,onLocated,archiveScope}:ListProps&{archiveScope?:{threadId:string;readEpoch:string}}){
  const [archived,setArchived]=useState(false);
  const list=useRef<HTMLDivElement>(null);
  const beforeArchive=useRef<ReturnType<typeof readAnchor>>(null);
@@ -279,22 +280,22 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated,a
   {target?<><button type="button" className={ghostButton+' min-h-11 px-2 text-xs'} onClick={()=>{setTarget(null);list.current?.focus({preventScroll:true});}}>返回事项列表</button>
    <TaskSection archived={target.view==='archived'} connected={connected} read={{...current,data:target.data,reading:null,failure:null,stale:!connected}}
     tasks={target.view==='visible'?target.data.tasks.filter(stillCurrent):target.data.tasks} tail={currentTail}
-    running={running} onReference={onReference} onArchive={onArchive} archiving={archiving}/>
+    running={running} onReference={onReference} onOpen={onOpen} onArchive={onArchive} archiving={archiving}/>
   </>:<>
-  <TaskSection archived={false} connected={connected} read={current} tail={currentTail} running={running} onReference={onReference}
+  <TaskSection archived={false} connected={connected} read={current} tail={currentTail} running={running} onReference={onReference} onOpen={onOpen}
    onArchive={onArchive} archiving={archiving} tasks={currentTasks.filter(task=>stillCurrent(task)&&task.revision>=(archivedRevisions.get(task.id)??-1))}/>
   <div ref={archiveGroup}>
    <Collapsible.Root open={archived} onOpenChange={value=>{if(value)beforeArchive.current=readAnchor();setArchived(value);}}>
     <Collapsible.Trigger ref={archiveToggle} className={ghostButton+' status-archive-toggle min-h-11 w-full gap-1 px-1.5 text-xs'}>
      已归档<ChevronRightIcon aria-hidden="true" className={cn('size-3',archived&&'rotate-90')}/>
     </Collapsible.Trigger>
-    <Collapsible.Panel>{archived&&<TaskSection archived connected={connected} read={history} tail={archiveTail} onReference={onReference}
+    <Collapsible.Panel>{archived&&<TaskSection archived connected={connected} read={history} tail={archiveTail} onReference={onReference} onOpen={onOpen}
      tasks={archivedTasks.filter(task=>task.revision>(currentRevisions.get(task.id)??-1))}/>}</Collapsible.Panel>
    </Collapsible.Root>
   </div></>}
  </div>;
 }
-export function TaskStatusPopover({state,connected,refreshKey,asideContainer,splitPreview,onBeforeLayoutChange,onReference,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;splitPreview?:boolean;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
+export function TaskStatusPopover({state,connected,refreshKey,asideContainer,splitPreview,onBeforeLayoutChange,onReference,onOpen,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;splitPreview?:boolean;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
  const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
  const [availableWidth,setAvailableWidth]=useState(0);
  const collisionPadding=12;
@@ -334,7 +335,7 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,spl
  const title=count===undefined?(running?'工作状态，运行数量待核实':'工作状态'):count?'工作状态，'+count+' 项事项运行中':'工作状态，无运行中事项';
  const content=<TaskList key={state.threadId+':'+(state.history?.readEpoch??'legacy')} connected={connected} refreshKey={refreshKey}
   archiveScope={state.features?.taskArchive&&state.history&&state.threadId?{threadId:state.threadId,readEpoch:state.history.readEpoch}:undefined}
-  running={running} location={scopedLocation} onLocated={onLocated} onReference={onReference&&((ref)=>{
+  running={running} onOpen={onOpen&&((task,trigger)=>{if(!wide)setPopupOpen(false);onOpen(task,wide?trigger:document.getElementById('task-status-trigger')??trigger);})} location={scopedLocation} onLocated={onLocated} onReference={onReference&&((ref)=>{
    if(onReference(ref)&&!wide){focusComposer.current=true;setPopupOpen(false);}
   })}/>;
  return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide){if(!value)clearLocation();setPopupOpen(value);}}}><PopoverTrigger asChild>

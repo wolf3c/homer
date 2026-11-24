@@ -7,6 +7,16 @@ import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
 // Native selections, unsaved text and geometry never enter this owner.
 type HtmlMetadata=Pick<Annotation,'isFixed'|'selectedText'|'isMultiSelect'|'elementBoundingBoxes'>;
 export type AnnotationDraftState=ResourceReferences&{revision:number;epoch:number;frozen?:boolean;htmlMetadata:Record<string,Record<string,HtmlMetadata>>;preparingImages?:Record<string,Extract<PreviewRequest,{kind:'image'}>>;imageAssets?:Record<string,AttachmentRef>};
+// A confirmed removal applies to the same attachment generation in either
+// the mounted editor or its saved draft while a different tab is visible.
+export function withoutDraftImage(draft:ResourceReferences&Pick<AnnotationDraftState,'imageAssets'|'preparingImages'>,asset?:AttachmentRef,keys:string[]=[]){
+ const matches=(ref:AttachmentRef)=>!!asset&&ref.assetId===asset.assetId&&ref.revision===asset.revision;
+ const imageAssets={...draft.imageAssets},removedKeys=new Set(keys);
+ for(const [key,ref] of Object.entries(imageAssets))if(removedKeys.has(key)||matches(ref)){delete imageAssets[key];removedKeys.add(key);}
+ const preparingImages={...draft.preparingImages};
+ for(const key of removedKeys)delete preparingImages[key];
+ return {resourceReference:undefined,resourceReferences:referencesOf(draft).filter(ref=>!removedKeys.has(referenceKey(ref))&&(ref.kind!=='image'||!matches(ref.image))),imageAssets,preparingImages};
+}
 export function createAnnotationDraft(){
  let state:AnnotationDraftState={revision:0,epoch:0,htmlMetadata:{}};
  const listeners=new Set<()=>void>();
@@ -27,11 +37,7 @@ export function createAnnotationDraft(){
    publish({...state,resourceReference:undefined,resourceReferences:at<0?[...refs,next]:refs.map((r,i)=>i===at?next:r),preparingImages,imageAssets:{...state.imageAssets,[key]:asset}});
   },
   imageKeys:(file:File)=>[...imageFiles].filter(([,value])=>value===file).map(([key])=>key),
-  forgetImage:(asset:AttachmentRef|undefined,keys:string[]=[])=>{
-   const imageAssets={...state.imageAssets};for(const [key,value] of Object.entries(imageAssets))if(keys.includes(key)||asset&&value.assetId===asset.assetId&&value.revision===asset.revision)delete imageAssets[key];
-   const preparingImages={...state.preparingImages};for(const key of keys)delete preparingImages[key];
-   publish({...state,resourceReference:undefined,resourceReferences:referencesOf(state).filter(r=>!keys.includes(referenceKey(r))&&(!asset||r.kind!=='image'||r.image.assetId!==asset.assetId||r.image.revision!==asset.revision)),imageAssets,preparingImages});
-  },
+  forgetImage:(asset:AttachmentRef|undefined,keys:string[]=[])=>publish({...state,...withoutDraftImage(state,asset,keys)}),
   clear:()=>{imageFiles.clear();publish({htmlMetadata:{},epoch:state.epoch+1});},
   remove:(key:string,id:string)=>{
    if(state.frozen)return false;

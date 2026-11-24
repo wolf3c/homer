@@ -13,7 +13,9 @@ export function projectProcessMessage(message:WebState['messages'][number]):{con
  if(message.role==='assistant')for(const item of projectProcessItems(message.process?.items??[]).items){
   if(item.kind==='commentary'&&item.phase==='final_answer')text(item.id,item.text,item.turnId&&item.itemId?'model':'host');
  }
- if(!message.process)text('answer:'+message.id,message.text,'host');
+ if(!message.process&&message.finalAnswers?.length){
+  for(const part of message.finalAnswers)text(part.id,part.text,'model');
+ }else if(!message.process)text('answer:'+message.id,message.text,'host');
  else if(message.process.sourceKind==='worker'||messageSourceParts(message)===undefined)text('host:'+message.id,message.text,'host');
  return {content,presentation:{entries}};
 }

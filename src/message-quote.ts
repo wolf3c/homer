@@ -34,7 +34,8 @@ export function activitySummaryText(markdown:string):string{
 export type MessageSourcePart={id:string;text:string;revision:number};
 // The existing answer slot is a view of these items, never the node.final
 // summary. Standalone host/history messages continue to own their row text.
-export function messageSourceParts(message:{id:string;text:string;process?:{sourceKind:string;final?:{id:string};items:readonly import('./main-process.js').ProcessItem[]}}):MessageSourcePart[]|undefined{
+export function messageSourceParts(message:{id:string;text:string;finalAnswers?:readonly {id:string;text:string}[];process?:{sourceKind:string;final?:{id:string};items:readonly import('./main-process.js').ProcessItem[]}}):MessageSourcePart[]|undefined{
+ if(!message.process&&message.finalAnswers?.length)return message.finalAnswers.map(part=>({...part,revision:0}));
  if(message.process?.sourceKind!=='user')return;
  const parts=message.process.items.filter((item):item is Extract<import('./main-process.js').ProcessItem,{kind:'commentary'}>=>item.kind==='commentary'&&item.phase==='final_answer').map(item=>({id:item.id,text:item.text,revision:item.revision}));
  // The existing self-ID pointer positively identifies a host row. Absence of

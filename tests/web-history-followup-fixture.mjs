@@ -47,5 +47,5 @@ export async function fixture(total, mode, media = false, stableRecent = false) 
     assert.notEqual(new URL(server.url).port, '4780');
     const remove = f.store.db.onChange(() => { for (const listener of listeners)
         listener(); });
-    return { ...f, files,  fakeEngine, reader, bridge, server, attach, addUserMedia, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
+    return { ...f, files,  fakeEngine, reader, bridge, server, mediaOwner, attach, addUserMedia, submitted, stopped, mediaRequests, close: async () => { assert.equal(fakeEngine.invocations,0);remove(); try{await server.close();}finally{f.close();rmSync(connectionDirectory,{recursive:true,force:true});} } };
 }

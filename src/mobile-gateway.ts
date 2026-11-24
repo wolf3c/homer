@@ -14,11 +14,11 @@ export async function createMobileGateway(options:Parameters<typeof createWebSer
  if(origin.origin!==signalOrigin||origin.username||origin.password||!(origin.protocol==='https:'||origin.protocol==='http:'&&origin.hostname==='127.0.0.1'))throw Error('mobile_signal_origin_invalid');
  const turn=turnAccount?createMobileTurn(turnAccount):undefined;
  const route=mobileRoute(routeKeyPath),devices=new MobileDevices(databasePath,Date.now,onPairing);
- const chat=createWebChat({...webOptions.bridge,openPreview:undefined,submit:async input=>{
+ const chat=createWebChat({...webOptions.bridge,openPreview:undefined,submit:async (input,scope)=>{
   if(!webOptions.bridge.history)throw Error('history_protocol_required');
   const state=await webOptions.bridge.history.state();
   if(state.upgrade.phase!=='running'||state.upgrade.accepting===false)throw Error('service_upgrading');
-  return webOptions.bridge.submit(input);
+  return webOptions.bridge.submit(input,scope);
  }});
  const rtc=startMobileRtc({signalOrigin,route,devices,call:chat,turn});
  void turn?.get();

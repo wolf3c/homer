@@ -1,3 +1,7 @@
+import type {WebSendScope} from '../src/web-contract';
+import {TaskConversation,type TaskConversationWindow} from './task-conversation';
+import type {OverviewTask} from '../src/task-overview';
+import {taskName} from '../src/task-presentation';
 import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
 import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file-download';
 import {isViewportAtBottom,observeContentResize} from '@assistant-ui/store/client';
@@ -6,7 +10,7 @@ import {remarkPreviewMath} from './preview-selection';
 import {captureSourceQuoteSelection,completeSourceQuote,locateSourceQuote,resolveSourceQuote,visibleQuoteLine,type SourceQuoteSelection} from './message-source-selection';
 import {Popover} from '@base-ui/react/popover';
 import {AnnotationCommentForm} from './annotation-comment-form';
-import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,type AnnotationDraft} from './annotation-draft';
+import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,withoutDraftImage,type AnnotationDraft,type AnnotationDraftState} from './annotation-draft';
 import {useMediaQuery} from '@mantine/hooks';
 import {previewIntentTooLong} from '../src/user-intent';
 import {Group,Panel,Separator} from 'react-resizable-panels';
@@ -93,6 +97,12 @@ declare global{interface Window{homerDesktopUpdate?:{
 };homerDesktopCapture?:{setReady(scope:CaptureScope|null,panel?:true):Promise<boolean>;acceptDraft?(id:string):Promise<boolean>;onResult(callback:(scope:CaptureScope,result:CaptureResult)=>void):()=>void}&Partial<CaptureShortcutBridge>;}}
 
 const empty: WebState = { threadId: "", messages: [], isRunning: false, activeMessageId: null, work: [], interactions: [], upgrade: { phase: "starting" } };
+const taskDraftKey=(threadId:string,taskId:string)=>'homer-draft:task:'+JSON.stringify([threadId,taskId]);
+type ScopedReceipt={state:'pending'|'accepted'|'rejected';input:ConversationInput;code?:string};
+type SubmitScoped=(input:ConversationInput,taskScope:string)=>void;
+type ScopedSendOwner={send:SubmitScoped;check:()=>void};
+type TaskUpload={requestId:string;pending:boolean;attachments?:HomerAttachment[];removed?:MediaView};
+type TaskUploads={active:Map<string,TaskUpload>;revision:number;notify:()=>void};
 const storage = {
   read<T,>(key: string): T | undefined { try { return JSON.parse(sessionStorage.getItem(key) ?? "null") ?? undefined; } catch { return; } },
   write(key: string, value: unknown) { try { if (value === undefined) sessionStorage.removeItem(key); else sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch {return false;} },
@@ -192,6 +202,7 @@ function ArtifactFiles({files}:{files:WebArtifact[]}){
   return <FileList files={files} label="本条答复的成果文件" selectedId={selectedId} controlsId="canvas-panel" onOpen={(file,trigger)=>open(file,trigger)}/>;
 }
 type PositionClaim=()=>((write:()=>void)=>boolean);
+const MessageIdPrefixContext=createContext('message-');
 const QuoteNavigationContext=createContext<(quote:MessageQuote)=>void>(()=>{});
 function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
  const locate=useContext(QuoteNavigationContext);
@@ -226,6 +237,7 @@ function TaskReferenceSource({reference}:{reference:TaskReference}){
  </QuoteBlock.Root></a>;
 }
 function UserMessage() {
+  const prefix=useContext(MessageIdPrefixContext);
   const metadata = useAuiState(s => s.message.metadata.custom);
   const original=metadata.original as WebState['messages'][number]|undefined;
   const channelSource=original?.channelSource;
@@ -245,7 +257,7 @@ function UserMessage() {
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
     {!original?.interaction&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
     </div>;
-  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
+  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={prefix+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
     {original?.interaction
       ? <>{bubble}<MessageDetails runtime message={original}/>{!original.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}</>
       : original ? <MessageDetails runtime message={original}>{bubble}</MessageDetails> : bubble}
@@ -286,6 +298,7 @@ function continuesReplyTask(previous:WebState['messages'][number]|undefined,curr
   return Number.isFinite(day.getTime())&&day.toDateString()===new Date(current.createdAt).toDateString();
 }
 function AssistantMessage() {
+  const prefix=useContext(MessageIdPrefixContext);
   const status = useAuiState(s => s.message.status);
   const content = useAuiState(s => s.message.content);
   const metadata=useAuiState(s=>s.message.metadata.custom);
@@ -314,7 +327,7 @@ function AssistantMessage() {
     <ArtifactFiles files={messageFiles}/>
     <MessageTimestamp messageId={String(metadata.messageId)}/>
   </div>;
-  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
+  return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={prefix+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={original&&messageSourceParts(original)!==undefined?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
     {scheduled?<p className="message-schedule-title">{scheduleId&&openSchedule
       ?<button type="button" className="schedule-source" title={scheduleTitle} aria-haspopup="dialog" onClick={event=>openSchedule(scheduleId,event.currentTarget)}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></button>
       :<span className="schedule-source" title={scheduleTitle}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></span>}</p>:!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
@@ -430,14 +443,16 @@ function HomerSelectionToolbar({viewport,splitPreview}:{viewport:React.RefObject
     </Popover.Positioner></Popover.Portal>
   </Popover.Root>;
 }
-function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview }: {
+function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview,boundTask,scopeReceipts,submitScoped,bindScopedSend,onScopedReceipt,onTaskStale,checkScoped,taskUploads }: {
   annotationDraft:AnnotationDraft;bindPreview:(value:PreviewComposer|null)=>void;state: WebState; connected: boolean; stopping: string | null;
   bindFeedback:(start:StartFeedback|null)=>void;
   editDraft?: {text:string;id:string;source?:'welcome'};
   answerTarget?:WebInteraction;onAnswerTarget:(item:WebInteraction|undefined)=>void;interactionsVerified:boolean;
   attachmentOwner:HomerAttachmentAdapter;composerRuntime:ThreadComposerRuntime;bindAttachments:(read:()=>DraftContext)=>void;
-  onSend: (input: ConversationInput,target?:UnconfirmedInput['target']) => Promise<void>;onStop:()=>void;
-  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;captureShortcutRecording?:boolean;splitPreview:boolean;
+  onSend: (input: ConversationInput,target?:UnconfirmedInput['target'],scope?:WebSendScope) => Promise<void>;onStop:()=>void;
+  queueContent?:ReactNode;onQueueBusy?:(busy:boolean)=>void;onAccount?:()=>void;captureShortcutRecording?:boolean;splitPreview:boolean;boundTask?:TaskReference;
+  scopeReceipts?:ReadonlyMap<string,ScopedReceipt>;submitScoped?:SubmitScoped;bindScopedSend?:(owner:ScopedSendOwner|null)=>void;
+  onScopedReceipt?:(receipt:ScopedReceipt)=>void;onTaskStale?:()=>void;checkScoped?:()=>void;taskUploads?:TaskUploads;
 }) {
   const aui = useAui();
   const text = useAuiState(s => s.composer.text), selected = useAuiState(s => s.composer.quote);
@@ -453,7 +468,8 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   useLayoutEffect(()=>{composerMounted.current=true;return()=>{composerMounted.current=false;};},[]);
   const [pending,setPending]=useState<UnconfirmedInput[]>([]),[draftNotice,setDraftNotice]=useState('');
   const [scheduleContext,setScheduleState]=useState<ScheduleContext>();
-  const [taskReference,setTaskReferenceState]=useState<TaskReference>();
+  const [selectedTaskReference,setTaskReferenceState]=useState<TaskReference>();
+  const taskReference=boundTask??selectedTaskReference;
   const taskReferenceRef=useRef<TaskReference|undefined>(undefined);
   const taskContextKey=contextKey('task','selected');
   function setTaskReference(value:TaskReference|undefined){
@@ -522,7 +538,7 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     if(!canQuoteMessage())return;
     const editor:QuoteEditor={draftId:quote.draftId,quote,annotation:quote.annotation,existing:true,trigger,requestId:draftRequest.current,ready:true,error:''};
     quoteEditorRef.current=editor;setQuoteEditor(editor);
-    void locateSourceQuote(quote).then(range=>{if(!composerMounted.current||quoteEditorRef.current?.draftId!==quote.draftId||draftRequest.current!==editor.requestId)return;
+    void locateSourceQuote(quote,boundTask?composerBody.current?.closest('.task-conversation')??undefined:undefined).then(range=>{if(!composerMounted.current||quoteEditorRef.current?.draftId!==quote.draftId||draftRequest.current!==editor.requestId)return;
       const next={...quoteEditorRef.current,range,error:range?'':'原文暂无法准确定位；摘录与批注已保留。'};quoteEditorRef.current=next;setQuoteEditor(next);
     }).catch(()=>{});
   }
@@ -537,7 +553,7 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   const sending=useRef(new Set<UnconfirmedInput>()),reconciled=useRef(new WeakSet<UnconfirmedInput>());
   const clearing=useRef<{requestId:string;wait:Promise<void>}|null>(null);
   const receiptReader=useRef<{controller:AbortController;again:boolean}|null>(null);
-  const key = "homer-draft:" + state.threadId, pendingKey = "homer-unconfirmed:" + state.threadId;
+  const key = boundTask?taskDraftKey(state.threadId,boundTask.taskId):"homer-draft:" + state.threadId, pendingKey = "homer-unconfirmed:" + state.threadId;
   const editorKey='homer-queue-editor:'+state.threadId;
   function savePending(items:UnconfirmedInput[]){pendingRef.current=items;setPending(items);const saved=storage.write(pendingKey,items.length?items:undefined);if(!saved)setDraftNotice('未确认请求仅本次页面保留，请在当前页面核对或重试。');return saved;}
   useEffect(()=>{
@@ -548,21 +564,43 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   },[annotationDraft]);
   useEffect(() => {
     if (!state.threadId || restored.current) return;
-    const legacyKey='homer-pending:'+state.threadId,legacy=storage.read<ConversationInput>(legacyKey);
-    const cached=storage.read<UnconfirmedInput[]>(pendingKey)??(legacy?[{input:legacy}]:[]);
-    savePending(unconfirmedInputs(cached,state.acceptedRequestIds??[]));storage.write(legacyKey,undefined);
+    const legacyKey='homer-pending:'+state.threadId,legacy=boundTask?undefined:storage.read<ConversationInput>(legacyKey);
+    if(!boundTask){
+      const cached=storage.read<UnconfirmedInput[]>(pendingKey)??(legacy?[{input:legacy}]:[]);
+      acknowledge(cached,state.acceptedRequestIds??[]);storage.write(legacyKey,undefined);
+    }
     const draft=storage.read<{text:string;taskReference?:TaskReference;scheduleContext?:ScheduleContext;quote?:MessageQuote;quotes?:AnnotatedQuote[];resourceReference?:ResourceReference;resourceReferences?:ResourceReference[];htmlMetadata?:import('./annotation-draft').AnnotationDraftState['htmlMetadata'];imageAssets?:import('./annotation-draft').AnnotationDraftState['imageAssets'];preparingImages?:import('./annotation-draft').AnnotationDraftState['preparingImages'];requestId?:string;attachments?:MediaView[];unconfirmedUploads?:boolean;answerItem?:WebInteraction;contextOrder?:string[]}>(key);
-    const editing=storage.read<LegacyQueueEditSession>(editorKey);
+    const editing=boundTask?undefined:storage.read<LegacyQueueEditSession>(editorKey);
     const restore=restoreComposerDraft(draft??editing?.original,legacy,!!legacy&&!!state.acceptedRequestIds?.includes(legacy.requestId));
     if(restore){contextOrder.current=new ContextOrder(draft?.contextOrder);const single=singleComposerDraft(restore);setScheduleContext(single.scheduleContext);setTaskReference(single.taskReference);annotationDraft.restore({...single,htmlMetadata:draft?.htmlMetadata,imageAssets:draft?.imageAssets,preparingImages:draft?.preparingImages});aui.composer().setText(single.text);replaceQuotes(single.quotes);aui.composer().setQuote(undefined);if(single.requestId)draftRequest.current=single.requestId;setDraftNotice(single.notice??'');void (async()=>{for(const asset of single.attachments??[])await aui.composer().addAttachment(attachmentOwner.restore(asset));setRestoring(false);})();}else{setRestoring(false);}
     if(draft?.answerItem)onAnswerTarget(draft.answerItem);
-    if(draft?.unconfirmedUploads)setDraftNotice('上次未确认的附件需重新选择；已确认附件仍保留。');
+    if(draft?.unconfirmedUploads&&!taskUploads?.active.has(key))setDraftNotice('上次未确认的附件需重新选择；已确认附件仍保留。');
     restored.current=true;
   }, [state.threadId, aui, key, pendingKey, state.acceptedRequestIds]);
-  useEffect(()=>{if(restored.current){const next=unconfirmedInputs(pendingRef.current,state.acceptedRequestIds??[]);if(next.length!==pendingRef.current.length)savePending(next);}},[state.acceptedRequestIds]);
+  function acknowledge(items:UnconfirmedInput[],ids:readonly string[]){
+    const next=unconfirmedInputs(items,ids);
+    for(const item of items)if(item.taskScope&&!next.includes(item)){
+      const draft=storage.read<{requestId?:string}>(item.taskScope);
+      if(draft?.requestId===item.input.requestId)storage.write(item.taskScope,undefined);
+      onScopedReceipt?.({state:'accepted',input:item.input});
+    }
+    if(next.length!==pendingRef.current.length||items!==pendingRef.current)savePending(next);
+  }
+  useEffect(()=>{if(!boundTask&&restored.current)acknowledge(pendingRef.current,state.acceptedRequestIds??[]);},[state.acceptedRequestIds]);
   useEffect(() => {if(!selected)return;if(answerRef.current)setDraftNotice('当前编辑不能添加新引用；原普通草稿已保留。');else appendQuote(selected as MessageQuote);aui.composer().setQuote(undefined);},[selected,aui]);
   async function recoverRejectedSource(item:UnconfirmedInput,error:string){
     const {input,draft}=item;
+    if(item.taskScope){
+      // Only a confirmed rejection unlocks the original editable snapshot.
+      if(!pendingRef.current.includes(item))return;
+      if(!['task_reference_stale','task_reference_scope_denied','request_too_large','quote_source_mismatch','invalid_quote','invalid_attachments','invalid_message',
+        'invalid_resource_reference','preview_source_mismatch','media_scope_denied','media_asset_not_found','media_not_ready','service_not_ready','history_epoch_changed','queue_thread_conflict','service_generation_changed'].includes(error)){
+        onScopedReceipt?.({state:'pending',input,code:error||'unconfirmed'});return;
+      }
+      savePending(pendingRef.current.filter(value=>value!==item));
+      onScopedReceipt?.({state:'rejected',input,code:error});
+      return;
+    }
     const refs=referencesOf(input);
     const localImage=refs.some(ref=>ref.kind==='image'&&ref.source.kind==='message-file');
     const localFileError=localImage&&['preview_source_mismatch','artifact_missing','message_file_scope_denied','artifact_path_denied','file_type_or_size_denied','file_preview_unsupported','media_preview_unavailable'].includes(error);
@@ -612,7 +650,7 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   }
   function checkReceipts(){
     const needsReceipt=(item:UnconfirmedInput)=>!sending.current.has(item)&&!reconciled.current.has(item);
-    if(!connected||!state.history||!composerMounted.current||!pendingRef.current.some(needsReceipt))return;
+    if(boundTask||!connected||!state.history||!composerMounted.current||!pendingRef.current.some(needsReceipt))return;
     if(receiptReader.current){receiptReader.current.again=true;return;}
     const reader={controller:new AbortController(),again:false};
     receiptReader.current=reader;
@@ -622,21 +660,36 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
       const snapshot=pendingRef.current.filter(needsReceipt);
       for(let offset=0;offset<snapshot.length&&!signal.aborted;offset+=80){
         const batch=snapshot.slice(offset,offset+80);
-        const response=await fetch('/api/history/receipts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({requestIds:batch.map(item=>item.input.requestId)}),signal});
+        const response=await fetch('/api/history/receipts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({threadId:state.threadId,requestIds:batch.map(item=>item.input.requestId)}),signal});
         if(!response.ok)return;
         const receipt=await response.json() as QueueReceipts;if(signal.aborted)return;
         if(Array.isArray(receipt.acceptedRequestIds)){
-          const next=unconfirmedInputs(pendingRef.current,receipt.acceptedRequestIds);
-          if(next.length!==pendingRef.current.length)savePending(next);
+          acknowledge(pendingRef.current,receipt.acceptedRequestIds);
         }
         for(const status of receipt.statuses??[]){
           const item=batch.find(item=>item.input.requestId===status.requestId);
           if(item&&status.state==='rejected'&&typeof status.error==='string')await recoverRejectedSource(item,status.error);
+          if(item?.taskScope&&status.state==='unconfirmed'&&pendingRef.current.includes(item))onScopedReceipt?.({state:'pending',input:item.input,code:'unconfirmed'});
         }
       }
     }while(reader.again&&!signal.aborted);};
     void read().catch(()=>{}).finally(()=>{if(receiptReader.current===reader)receiptReader.current=null;});
   }
+  useLayoutEffect(()=>{
+    if(!bindScopedSend||boundTask)return;
+    bindScopedSend({check:checkReceipts,send:(input,taskScope)=>{
+      if(!state.history||pendingRef.current.some(item=>item.input.requestId===input.requestId))return;
+      const item:UnconfirmedInput={input,taskScope};
+      sending.current.add(item);
+      savePending([...pendingRef.current,item]);
+      onScopedReceipt?.({state:'pending',input});
+      const scope={threadId:state.threadId,readEpoch:state.history.readEpoch};
+      void onSend(input,undefined,scope).catch(error=>{
+        if(composerMounted.current)return recoverRejectedSource(item,error instanceof Error?error.message:'');
+      }).finally(()=>{sending.current.delete(item);checkReceipts();});
+    }});
+    return()=>bindScopedSend(null);
+  });
   useEffect(()=>()=>{receiptReader.current?.controller.abort();receiptReader.current=null;},[connected,state.threadId]);
   // A transport rejection can publish fresh state without changing the history page.
   useEffect(checkReceipts,[connected,state,state.history?.page.revision,restoring,pending.map(item=>item.input.requestId).join('|')]);
@@ -668,10 +721,54 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   const answerPending=answerKey?storage.read<ConversationInput>(answerKey+':pending'):undefined;
   const answerBlocked=!!answerEditing&&(!connected||!interactionsVerified||state.upgrade.phase!=='running'||!answerItem||!!answerPending);
 
-  const blocked=restoring||!canAcceptInput(connected,state.upgrade);
+  const scopedReceipt=boundTask?scopeReceipts?.get(draftRequest.current):undefined;
+  const scopedPending=!!boundTask&&(scopedReceipt?.state==='pending'||!scopedReceipt&&
+    !!storage.read<UnconfirmedInput[]>(pendingKey)?.some(item=>item.input.requestId===draftRequest.current&&item.taskScope===key));
+  const scopedStale=scopedReceipt?.code==='task_reference_stale'&&scopedReceipt.input.taskReference?.version===boundTask?.version&&scopedReceipt.input.taskReference?.title===boundTask?.title;
+  const removal=useRef<TaskUpload|null>(null);
+  const scopedUpload=taskUploads?.active.get(key);
+  const handedUpload=scopedUpload?.requestId===draftRequest.current?scopedUpload:undefined;
+  const blocked=restoring||scopedPending||!!handedUpload||!canAcceptInput(connected,state.upgrade);
+  useEffect(()=>{
+    if(!taskUploads||!handedUpload||handedUpload.pending||restoring)return;
+    let alive=true;
+    const restore=async()=>{
+      if(handedUpload.removed){
+        const asset=handedUpload.removed;
+        annotationDraft.forgetImage(asset);
+        const attachment=composerRuntime.getState().attachments.find(item=>attachmentAsset(item)?.assetId===asset.assetId&&attachmentAsset(item)?.revision===asset.revision);
+        if(attachment){
+          attachmentOwner.markSubmitted([attachment]);
+          await aui.composer().attachment({id:attachment.id}).remove();
+        }
+      }
+      const existing=new Set(composerRuntime.getState().attachments.map(item=>attachmentAsset(item)?.assetId??item.id));
+      for(const attachment of handedUpload.attachments??[]){
+        if(!alive||draftRequest.current!==handedUpload.requestId)return;
+        const asset=attachment.homer.asset;
+        if(existing.has(asset?.assetId??attachment.id))continue;
+        const file=asset?attachmentOwner.restore(asset):attachmentOwner.retryFile(attachment);
+        if(!asset)attachmentOwner.defer(file);
+        await aui.composer().addAttachment(file);
+      }
+      if(alive&&taskUploads.active.get(key)===handedUpload){taskUploads.active.delete(key);taskUploads.notify();}
+    };
+    void restore().catch(()=>{if(alive){taskUploads.active.delete(key);taskUploads.notify();setDraftNotice('附件草稿已保留，附件恢复未确认。');}});
+    return()=>{alive=false;};
+  },[handedUpload,restoring,taskUploads?.revision]);
+  useEffect(()=>{
+    if(!scopedReceipt||restoring)return;
+    if(scopedReceipt.state==='accepted'){
+      attachmentOwner.markSubmitted(composerRuntime.getState().attachments);
+      clearOrdinaryDraft(crypto.randomUUID());setDraftNotice('');
+    }else if(scopedReceipt.state==='rejected'){
+      if(scopedReceipt.code==='task_reference_stale')onTaskStale?.();
+      setDraftNotice(scopedReceipt.code==='task_reference_stale'?'事项引用已变化，草稿和附件已保留。请核对事项后重试。':'消息未获接收，草稿和附件已保留。');
+    }
+  },[scopedReceipt,restoring]);
   const latestSubmitDraft=useRef(submitDraft);
   latestSubmitDraft.current=submitDraft;
-  const captureReady=!!window.homerDesktopCapture&&!!state.threadId&&state.conversationView===CONVERSATION_VIEW&&!!state.features?.draftUpload&&state.upgrade.phase==='running'&&!blocked&&!uploading&&!answerEditing&&!quoteEditor&&!screenshot&&!captureShortcutRecording;
+  const captureReady=!boundTask&&!!window.homerDesktopCapture&&!!state.threadId&&state.conversationView===CONVERSATION_VIEW&&!!state.features?.draftUpload&&state.upgrade.phase==='running'&&!blocked&&!uploading&&!answerEditing&&!quoteEditor&&!screenshot&&!captureShortcutRecording;
   useLayoutEffect(()=>{
     const bridge=window.homerDesktopCapture;
     if(!bridge||!captureReady)return;
@@ -705,7 +802,32 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     void ready.then(registered=>{if(active)setDraftNotice(current=>registered?current===notice?'':current:current||notice);}).catch(()=>{});
     return()=>{active=false;unsubscribe();void bridge.setReady(null).catch(()=>{});};
   },[captureReady,state.threadId,draftRequest.current,resourceState.epoch]);
-  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,enabled:!blocked&&!answerEditing&&!!state.features?.draftUpload&&state.upgrade.phase==='running',notice:setDraftNotice,removed:(identity,file)=>{if(identity.threadId!==state.threadId||identity.requestId!==draftRequest.current)return;annotationDraft.forgetImage(identity.asset,annotationDraft.imageKeys(file));}}));
+  function attachmentRemoval(busy:boolean){
+    if(composerMounted.current)setUploading(busy);
+    if(!taskUploads)return;
+    if(busy){
+      const transfer={requestId:draftRequest.current,pending:true};
+      removal.current=transfer;taskUploads.active.set(key,transfer);taskUploads.notify();
+    }else if(removal.current&&taskUploads.active.get(key)===removal.current){
+      if(composerMounted.current||!removal.current.removed)taskUploads.active.delete(key);
+      else removal.current.pending=false;
+      removal.current=null;taskUploads.notify();
+    }
+  }
+  bindAttachments(()=>({threadId:state.threadId,requestId:draftRequest.current,
+    enabled:(!blocked||!!handedUpload&&uploadingRef.current)&&!answerEditing&&!!state.features?.draftUpload&&state.upgrade.phase==='running',
+    notice:setDraftNotice,removed:(identity,file)=>{
+      if(identity.threadId!==state.threadId||identity.requestId!==draftRequest.current)return;
+      const keys=annotationDraft.imageKeys(file);
+      annotationDraft.forgetImage(identity.asset,keys);
+      if(!boundTask||!identity.asset||!removal.current)return;
+      const asset=identity.asset;
+      removal.current.removed=asset;
+      const stored=storage.read<{requestId:string;attachments?:MediaView[];resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]}&Pick<AnnotationDraftState,'imageAssets'|'preparingImages'>>(key);
+      if(stored?.requestId!==identity.requestId)return;
+      const matches=(ref:{assetId:string;revision:number})=>ref.assetId===asset.assetId&&ref.revision===asset.revision;
+      storage.write(key,{...stored,...withoutDraftImage(stored,asset,keys),attachments:stored.attachments?.filter(ref=>!matches(ref))});
+    }}));
   useEffect(()=>{onQueueBusy?.(uploading||restoring||!!answerEditing);},[uploading,restoring,!!answerEditing]);
   useEffect(()=>{if(editDraft){if(answerRef.current){setDraftNotice(editDraft.source==='welcome'?'请先退出当前答复，再选择示例。':'请先退出当前编辑，再把历史文字加入新草稿。');return;}const current=aui.composer().getState().text;aui.composer().setText(current.trim()?current+'\n\n'+editDraft.text:editDraft.text);setDraftNotice(editDraft.source==='welcome'?'示例已加入输入框，确认后发送。':'已复制原消息到草稿，编辑后将作为新消息发送；历史记录保留。');}},[editDraft?.id,aui]);
   function uploadIssue(files:File[]){
@@ -810,10 +932,12 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   async function uploadFiles(files:File[]){
     if(screenshotRef.current){setDraftNotice('请先完成或取消截图。');return;}
     if(answerRef.current){setDraftNotice('当前编辑不能添加附件；原普通草稿的附件已保留。');return;}
-    if(uploadingRef.current||restoring||!state.features?.draftUpload||(blocked&&!mobileView)||state.upgrade.phase!=='running'){setDraftNotice('暂时无法添加附件，请等待当前上传或连接恢复后重试。');return;}
+    if(scopedPending||handedUpload||uploadingRef.current||restoring||!state.features?.draftUpload||(blocked&&!mobileView)||state.upgrade.phase!=='running'){setDraftNotice('暂时无法添加附件，请等待当前上传或连接恢复后重试。');return;}
     files=files.map(file=>file.name?file:new File([file],'screenshot-'+Date.now()+'.'+(file.type==='image/jpeg'?'jpg':'png'),{type:file.type}));
     const issue=uploadIssue(files);if(issue){setDraftNotice(issue);return;}
     const uploadRequest=draftRequest.current,uploadEpoch=annotationDraft.read().epoch;
+    const transfer=taskUploads?{requestId:uploadRequest,pending:true} as TaskUpload:undefined;
+    if(taskUploads&&transfer){taskUploads.active.set(key,transfer);taskUploads.notify();}
     // A native picker can return before RTC reconnects. Keep only the local
     // draft file and reuse explicit upload retry; never send while blocked.
     uploadingRef.current=true;setUploading(true);let paused=blocked;
@@ -832,7 +956,26 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
         }
       }
     }}catch(error){setDraftNotice('附件准备未确认，请核对后重试：'+(error instanceof Error?error.message:'web_upload_failed'));}
-    finally{uploadingRef.current=false;setUploading(false);if(fileInput.current)fileInput.current.value='';}
+    finally{
+      uploadingRef.current=false;
+      if(taskUploads&&transfer&&taskUploads.active.get(key)===transfer){
+        if(composerMounted.current)taskUploads.active.delete(key);
+        else{
+          transfer.pending=false;
+          const retained=new Map((composerRuntime.getState().attachments as readonly HomerAttachment[]).map(item=>[item.id,item]));
+          for(const file of files){const snapshot=attachmentOwner.snapshot(file);if(snapshot)retained.set(snapshot.id,snapshot);}
+          transfer.attachments=[...retained.values()];
+          const current=storage.read<{requestId:string;attachments?:MediaView[]}>(key);
+          if(current?.requestId===uploadRequest){
+            const attachments=new Map((current.attachments??[]).map(asset=>[asset.assetId,asset]));
+            for(const item of transfer.attachments)if(item.homer.asset)attachments.set(item.homer.asset.assetId,item.homer.asset);
+            storage.write(key,{...current,attachments:[...attachments.values()]});
+          }
+        }
+        taskUploads.notify();
+      }
+      if(composerMounted.current){setUploading(false);if(fileInput.current)fileInput.current.value='';}
+    }
   }
   async function discardUnconfirmed(){
     if(uploading||blocked)return;setUploading(true);
@@ -875,13 +1018,14 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
       return;
     }
     if(quotes.length&&referencesOf(resourceState).length&&state.features?.previewReferenceCollections!==2){setDraftNotice('当前连接不支持批注与消息引用共存，请刷新后重试。');return;}
-    const selectedTask=taskReferenceRef.current;
+    const selectedTask=boundTask??taskReferenceRef.current;
     if(selectedTask&&!state.features?.taskReference){setDraftNotice('当前连接暂不支持事项引用，草稿已保留。');return;}
     const submissionText=scheduleMessageText(text,scheduleRef.current);
     if(!canSubmitMessage(submissionText,quotes,attachments,resourceReference,resourceReferences)){setDraftNotice('加入定时任务引用后内容过长，请缩短后发送。');return;}
     const input=prepareMessage(submissionText,protocolQuotes(quotes),undefined,()=>draftRequest.current,attachments,resourceReference,resourceReferences,selectedTask);
     if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024){setDraftNotice('整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。');return;}
     try{checkQuotes(quotes);}catch(error){setDraftNotice((error as Error).message);return;}
+    if(boundTask){if(!scopedStale)submitScoped?.(input,key);return;}
     submitting.current=true;
     const clearedRequestId=crypto.randomUUID();
     const item:UnconfirmedInput={input,draft:{clearedRequestId,attachments:[...attachments],quotes:[...quotesRef.current],contextOrder:contextOrder.current.snapshot(),resources:{htmlMetadata:resourceState.htmlMetadata,imageAssets:resourceState.imageAssets}}};
@@ -889,13 +1033,18 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     const pendingSaved=savePending([...pendingRef.current.filter(entry=>entry.input.requestId!==input.requestId),item]);
     attachmentOwner.markSubmitted(draftAttachments);
     clearing.current={requestId:input.requestId,wait:aui.composer().clearAttachments()};
-    setScheduleContext(undefined);setTaskReference(undefined);aui.composer().setText('');aui.composer().setQuote(undefined);replaceQuotes([]);annotationDraft.clear();contextOrder.current=new ContextOrder();draftRequest.current=clearedRequestId;setDraftNotice(pendingSaved?'':'未确认请求仅本次页面保留，请在当前页面核对或重试。');storage.write(key,undefined);
+    clearOrdinaryDraft(clearedRequestId,false);setDraftNotice(pendingSaved?'':'未确认请求仅本次页面保留，请在当前页面核对或重试。');
     void onSend(input).catch(error=>recoverRejectedSource(item,error instanceof Error?error.message:''))
       .finally(()=>{sending.current.delete(item);checkReceipts();})
       .catch(()=>{});focusInput();queueMicrotask(()=>{submitting.current=false;});
   }
+  function clearOrdinaryDraft(requestId:string,clearAttachments=true){
+    if(clearAttachments)void aui.composer().clearAttachments();
+    setScheduleContext(undefined);setTaskReference(undefined);aui.composer().setText('');aui.composer().setQuote(undefined);
+    replaceQuotes([]);annotationDraft.clear();contextOrder.current=new ContextOrder();draftRequest.current=requestId;storage.write(key,undefined);
+  }
   function canQuoteMessage(){
-    if(restoring||answerRef.current)return false;
+    if(restoring||scopedPending||answerRef.current)return false;
     if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');return false;}
     if(state.features?.previewReferenceCollections!==2&&annotationValidationReferences(annotationDraft.read()).length){setDraftNotice('请先移除输入草稿中的成果批注，再引用消息。');return false;}
     return true;
@@ -907,7 +1056,7 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     focusInput();
   }
   async function addReference(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[]){
-    if(restoring||answerRef.current||!state.features?.previewReferenceCollections)throw Error('请先返回普通输入，或刷新支持批注集合的界面。');
+    if(restoring||scopedPending||answerRef.current||!state.features?.previewReferenceCollections)throw Error('请先返回普通输入，或刷新支持批注集合的界面。');
     if(state.features?.previewReferenceCollections!==2&&quotesRef.current.length)throw Error('请先移除当前消息引用，再保存成果批注。');
     const requestId=draftRequest.current,epoch=annotationDraft.read().epoch;
     const current=()=>composerMounted.current&&isCurrent()&&requestId===draftRequest.current&&epoch===annotationDraft.read().epoch&&!answerRef.current;
@@ -1000,15 +1149,15 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
   const [quoteNotice,setQuoteNotice]=useState('');
   const intentReference=answerEditing?undefined:resourceReference;
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
-  const notice=blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice||quoteNotice;
+  const notice=handedUpload?'正在保留该事项的附件草稿。':scopedPending?'发送结果待核对，草稿和附件已保留。':blocked?(accountRequired?'请先连接账号，重启并应用后即可开始。':connected?'当前暂不接收输入，草稿会保留。':'连接恢复后继续发送，草稿会保留。'):previewIntentTooLong({text,quotes,resourceReference:intentReference,resourceReferences:answerEditing?undefined:resourceReferences})?'整体要求与批注合计过长，请缩短后再发送。':draftNotice||quoteNotice;
   const range=quoteEditor?.range;
   const rangeBody=range?.startContainer.parentElement;
-  const quoteBoundary=splitPreview?composerBody.current?.closest<HTMLElement>('.conversation-panel')??undefined:undefined;
+  const quoteBoundary=splitPreview?composerBody.current?.closest<HTMLElement>(boundTask?'#canvas-panel':'.conversation-panel')??undefined:undefined;
   const quoteAnchor=quoteEditor&&quoteLine&&rangeBody?.isConnected?{contextElement:rangeBody,getBoundingClientRect:()=>quoteLine}:quoteEditor?.existing&&quoteEditor.trigger?.isConnected?quoteEditor.trigger:composerBody;
   return <div className="composer-area" ref={composerBody}>
     {screenshot&&!screenshot.joining&&<ScreenshotDialog file={screenshot.file} attachment={screenshot.attachment} annotations={screenshot.reference?.annotations??screenshot.annotations} ax={screenshot.ax} focusAnnotation={screenshot.focusAnnotation} initialError={screenshot.error}
       onDone={(notes,ax)=>finishScreenshot(screenshot,notes,ax)} onCancel={()=>cancelScreenshot(screenshot)} focusInput={focusInput}/>}
-    {(connected&&window.homerDesktopAccount||state.modelFailure)&&<ModelFailureNotice key={state.threadId} failure={state.modelFailure} onAccount={onAccount} onDismiss={focusInput}/>}
+    {!boundTask&&(connected&&window.homerDesktopAccount||state.modelFailure)&&<ModelFailureNotice key={state.threadId} failure={state.modelFailure} onAccount={onAccount} onDismiss={focusInput}/>}
     <Popover.Root open={!!quoteEditor} onOpenChange={(open,details)=>{
       if(open||!quoteEditorRef.current)return;
       const event=details.event as Event&{relatedTarget?:EventTarget|null};
@@ -1036,21 +1185,21 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
       const items=new Map<string,ReactNode>();
       if(taskReference)items.set(taskContextKey,<div className="annotation-chip" key={taskContextKey}>
         <div className="annotation-chip-open task-reference-chip" title={taskReference.title}><ListTodoIcon size={15} aria-hidden/><span className="compact-context-copy"><span className="compact-context-label">{taskReference.title}</span><span className="compact-context-source">事项引用</span></span></div>
-        <button type="button" className="annotation-chip-remove" aria-label="移除事项引用" onClick={()=>{setTaskReference(undefined);focusInput();}}>×</button>
+        {!boundTask&&<button type="button" className="annotation-chip-remove" aria-label="移除事项引用" onClick={()=>{setTaskReference(undefined);focusInput();}}>×</button>}
       </div>);
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
         const key=contextKey('ref',referenceKey(reference),note.id);
-        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(_,id)=>void removeComposerNote(reference,id).catch(error=>setDraftNotice(error.message))}/>);
+        items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(_,id)=>!scopedPending&&void removeComposerNote(reference,id).catch(error=>setDraftNotice(error.message))}/>);
       }
       quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId);items.set(key,<div className="annotation-chip" key={key}>
-        <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
-        <button type="button" className="annotation-chip-remove" aria-label={'删除引用 '+(i+1)} onClick={()=>{if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');return;}replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quote.draftId));focusInput();}}>×</button>
+        <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} disabled={scopedPending} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
+        <button type="button" className="annotation-chip-remove" aria-label={'删除引用 '+(i+1)} disabled={scopedPending} onClick={()=>{if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');return;}replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quote.draftId));focusInput();}}>×</button>
       </div>);});
       draftAttachments.forEach((attachment,index)=>{
         const asset=attachmentAsset(attachment),key=contextKey('attachment',asset?.assetId??attachment.id);
         const reference=savedReferences.filter(isDraftImageReference).find(ref=>ref.image.assetId===asset?.assetId&&ref.image.revision===asset.revision);
         items.set(key,<HomerAttachmentByIndex key={key} index={index} edit={reference?()=>openScreenshot(reference):undefined}
-          annotationCount={asset=>savedReferences.filter(r=>r.kind==='image'&&r.image.assetId===asset.assetId&&r.image.revision===asset.revision).reduce((count,r)=>count+(r.annotations?.length??1),0)} blocked={blocked} busy={uploading} removing={setUploading} removed={id=>{contextOrder.current.remove(contextKey('attachment',id));focusInput();}}/>);
+          annotationCount={asset=>savedReferences.filter(r=>r.kind==='image'&&r.image.assetId===asset.assetId&&r.image.revision===asset.revision).reduce((count,r)=>count+(r.annotations?.length??1),0)} blocked={blocked} busy={uploading} removing={attachmentRemoval} removed={id=>{contextOrder.current.remove(contextKey('attachment',id));focusInput();}}/>);
       });
       const ordered=contextOrder.current.snapshot().flatMap(key=>{const item=items.get(key);if(!item)return [];items.delete(key);return [item];});
       return [...ordered,...items.values()];
@@ -1060,16 +1209,24 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     {uploading&&<div className="composer-upload-status" role="status">正在处理附件…</div>}
     </div>}
     {!answerEditing&&retryAttachments.length>0&&<div className="composer-upload-actions"><button type="button" disabled={uploading||blocked||state.upgrade.phase!=='running'} onClick={()=>void uploadFiles(retryAttachments.map(attachment=>attachmentOwner.retryFile(attachment)))}>重试上传</button><button type="button" disabled={uploading||blocked} onClick={()=>void discardUnconfirmed()}>不添加这些附件</button></div>}
-    <HomerComposerInput className="composer-input" aria-label="给荷马发消息" placeholder={answerEditing?'回答上面的问题…':accountRequired?'请先连接账号':connected ? quotes.length ? "说说你对这段原文的要求…" : state.queueDispatch?.awaitingUser ? "发送消息，说明如何继续…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus disabled={blocked} onFiles={files=>void uploadFiles(files)} onPaste={answerEditing?event=>{if(event.clipboardData?.files.length){event.preventDefault();setDraftNotice('答复时不能添加附件，原普通草稿已保留。');}}:undefined}/>
+    <HomerComposerInput className="composer-input" aria-label={boundTask?'给事项发消息':'给荷马发消息'} placeholder={boundTask?'补充这项事项…':answerEditing?'回答上面的问题…':accountRequired?'请先连接账号':connected ? quotes.length ? "说说你对这段原文的要求…" : state.queueDispatch?.awaitingUser ? "发送消息，说明如何继续…" : "说说你想办的事…" : "连接恢复后继续发送，草稿会保留"} autoFocus={!boundTask} disabled={blocked} onFiles={files=>void uploadFiles(files)} onPaste={answerEditing?event=>{if(event.clipboardData?.files.length){event.preventDefault();setDraftNotice('答复时不能添加附件，原普通草稿已保留。');}}:undefined}/>
     <div className="composer-toolbar">
       {!answerEditing&&state.features?.draftUpload&&<><input ref={node=>{fileInput.current=node;if(node)node.oncancel=()=>pickerBusy(false);}} type="file" multiple hidden aria-label="选择附件" onChange={event=>{pickerBusy(false);void uploadFiles(Array.from(event.target.files??[]));}}/><button type="button" className="attach-button" aria-label="添加附件" title="添加附件" aria-busy={uploading} disabled={blocked||uploading||state.upgrade.phase!=='running'} onClick={()=>{pickerBusy(true);fileInput.current?.click();}}><ComposerIcon name="paperclip"/></button></>}
       <div className="composer-actions">
-      {state.activeMessageId&&<button type="button" className="stop-button" aria-label="停止回复" title="停止回复" aria-busy={!!stopping} disabled={!!stopping||!connected} onClick={onStop}><ComposerIcon name="square"/><span>{stopping?'停止中':'停止'}</span></button>}
-      <button type="submit" className="send-button" aria-label={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} title={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} disabled={!!screenshot||(answerEditing?answerBlocked||!text.trim()||text.length>16000:blocked||uploading||preparingKeys.length>0||retryAttachments.length>0||!canSubmitMessage(text,quotes,attachments,resourceReference,resourceReferences))}><ComposerIcon name="arrow"/></button>
+      {!boundTask&&state.activeMessageId&&<button type="button" className="stop-button" aria-label="停止回复" title="停止回复" aria-busy={!!stopping} disabled={!!stopping||!connected} onClick={onStop}><ComposerIcon name="square"/><span>{stopping?'停止中':'停止'}</span></button>}
+      <button type="submit" className="send-button" aria-label={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} title={answerEditing?'提交答复':state.isRunning?'排队发送':'发送消息'} disabled={!!scopedStale||!!screenshot||(answerEditing?answerBlocked||!text.trim()||text.length>16000:blocked||uploading||preparingKeys.length>0||retryAttachments.length>0||!canSubmitMessage(text,quotes,attachments,resourceReference,resourceReferences))}><ComposerIcon name="arrow"/></button>
     </div></div>
   </ComposerPrimitive.Root>
-  <ExecutionUsage usage={state.usage?.execution} stale={!connected}/>
-  {notice&&<p className="draft-notice" role="status">{notice}</p>}
+  {!boundTask&&<ExecutionUsage usage={state.usage?.execution} stale={!connected}/>}
+  {notice&&<p className="draft-notice" role="status">{notice}
+    {scopedStale&&<button type="button" onClick={onTaskStale}>重新核对事项</button>}
+    {scopedPending&&<button type="button" disabled={!connected} onClick={checkScoped}>核对接收</button>}
+    {scopedPending&&(!scopedReceipt||scopedReceipt.code)&&<button type="button" onClick={()=>{
+      attachmentOwner.markSubmitted(composerRuntime.getState().attachments);
+      clearOrdinaryDraft(crypto.randomUUID());
+      setDraftNotice('原请求保留核对，新草稿可继续输入。');
+    }}>另写一条</button>}
+  </p>}
   </div>;
 }
 function InteractionCard({ item, threadId, messages, acceptedRequestIds, onError,onNotLive,verified,onAnswer,onReveal,onShowPreview,structuredAnswers=true }: { verified:boolean; item: WebInteraction; threadId: string; messages: WebState["messages"]; acceptedRequestIds:string[]; onError: (message: string) => void;onNotLive:(item:WebInteraction)=>void;onAnswer?:(item:WebInteraction)=>void;onReveal?:(card:Element)=>void;onShowPreview?:(pageId:string)=>void;structuredAnswers?:boolean }) {
@@ -1197,6 +1354,64 @@ function readerContentSignature(message:WebState['messages'][number]){
 }
 // The runtime and the provider store commit separately. A prepend can expose
 // a new runtime index before the provider has that index; wait for its ID.
+function runtimeConversationMessage(message:WebState['messages'][number],notes?:WebState['inactiveInteractions'],claimPosition?:PositionClaim,preview?:string):ThreadMessageLike{
+ const projected=projectProcessMessage(preview?{...message,text:preview}:message);
+ return {
+    id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
+    metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
+    ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
+ };}
+
+type TaskReaderProps={
+  page:Pick<import('../src/web-history-pages').HistoryPage,'messages'|'artifacts'>;view:React.RefObject<HTMLDivElement|null>;
+  locate:(id:string,quote?:MessageQuote)=>void; original:(id:string)=>void;task:OverviewTask;
+  state:WebState;connected:boolean;onSend:(input:ConversationInput)=>Promise<void>;submitScoped:SubmitScoped;checkScoped:()=>void;taskUploads:TaskUploads;
+  scopeReceipts:ReadonlyMap<string,ScopedReceipt>;refresh:()=>void;onScroll:()=>void;onRows:()=>void;
+  openFile:(file:CanvasArtifact,trigger?:HTMLElement,focus?:{key:string;id:string})=>void;
+  openLink:(link:string,trigger:HTMLAnchorElement,resources:WebArtifact[])=>boolean;
+};
+function TaskReader({page,view,locate,original,task,state,connected,onSend,submitScoped,checkScoped,taskUploads,scopeReceipts,refresh,onScroll,onRows,openFile,openLink}:TaskReaderProps){
+ const context=useRef<()=>DraftContext>(()=>({threadId:'',requestId:'',enabled:false,notice:()=>{}}));
+ const attachmentOwner=useMemo(()=>createHomerAttachmentAdapter(()=>context.current()),[]);
+ const annotationDraft=useMemo(()=>createAnnotationDraft(),[]);
+ const focus=useRef<((atEnd?:boolean)=>void)|null>(null);
+ const composer=useRef<PreviewComposer|null>(null);
+ const browser=useContext(BrowserPreviewContext);
+ const resources=page.artifacts??[];
+ const messageMap=useMemo(()=>new Map(page.messages.map(m=>[m.id,m])),[page.messages]);
+ const messages=useMemo(()=>page.messages.map(message=>runtimeConversationMessage(message)),[page.messages]);
+ const runtime=useExternalStoreRuntime({messages,convertMessage:useCallback((message:ThreadMessageLike)=>message,[]),
+  adapters:{attachments:attachmentOwner},isSendDisabled:!canAcceptInput(connected,state.upgrade), onNew:async()=>{}});
+ const localPreview={openLink:(href:string,trigger:HTMLAnchorElement)=>openLink(href,trigger,resources),openReference:browser.openReference};
+ return <AssistantRuntimeProvider runtime={runtime}><ComposerInputFocusContext.Provider value={focus}>
+  <MessageIdPrefixContext.Provider value="task-message-"><QuoteNavigationContext.Provider value={quote=>locate(quote.messageId,quote)}>
+  <ProcessMessagesContext.Provider value={messageMap}><ArtifactsContext.Provider value={{files:resources,open:openFile}}>
+  <BrowserPreviewContext.Provider value={localPreview}><PreviewActionsContext.Provider value={{
+   canQuote:()=>composer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>composer.current?.openQuote(snapshot,trigger)??false,
+   quoteNotice:message=>composer.current?.quoteNotice(message),appendQuote:quote=>composer.current?.appendQuote(quote)}}>
+   <div className="thread-viewport" ref={view} tabIndex={-1} aria-label="事项消息" onScroll={onScroll}
+    onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locate(decodeURIComponent(link.hash.slice(9)));}}}>
+    <div className="messages"><MessageTimestamps messages={page.messages}>
+     <TaskMessageRows original={original} onRows={onRows}/>
+    </MessageTimestamps></div>
+   </div>
+   <MainComposer state={state} connected={connected} stopping={null} onStop={()=>{}} onSend={onSend}
+    boundTask={{taskId:task.id,version:task.headVersion,title:taskName(task).text}} scopeReceipts={scopeReceipts} submitScoped={submitScoped} checkScoped={checkScoped} taskUploads={taskUploads} onTaskStale={refresh}
+    composerRuntime={runtime.thread.composer} attachmentOwner={attachmentOwner} annotationDraft={annotationDraft}
+    bindAttachments={read=>{context.current=read;}} bindPreview={value=>{composer.current=value;}} bindFeedback={()=>{}} onAnswerTarget={()=>{}} interactionsVerified={false} splitPreview/>
+   <HomerSelectionToolbar viewport={view} splitPreview/>
+  </PreviewActionsContext.Provider></BrowserPreviewContext.Provider></ArtifactsContext.Provider></ProcessMessagesContext.Provider>
+  </QuoteNavigationContext.Provider></MessageIdPrefixContext.Provider></ComposerInputFocusContext.Provider></AssistantRuntimeProvider>;
+}
+function TaskMessageRows({original,onRows}:{original:(id:string)=>void;onRows:()=>void}){
+ const rows=useAuiState(state=>state.thread.messages),messages=useContext(ProcessMessagesContext);
+ const shown=rows.flatMap((row,index)=>messages.has(row.id)?[{id:row.id,index}]:[]);
+ useLayoutEffect(()=>{if(shown.length===messages.size)onRows();},[rows,messages,onRows]);
+ return shown.map(({id,index})=><div key={id}>
+  <ThreadPrimitive.MessageByIndex index={index} components={{UserMessage,AssistantMessage}}/>
+  <div className="task-message-origin"><button type="button" onClick={()=>original(id)}>在主对话查看</button></div>
+ </div>);
+}
 function VirtualMessage({id,index,measure}:{id:string;index:number;measure:(element:HTMLDivElement|null)=>void}){
   const ready=useAuiState(state=>state.thread.messages[index]?.id===id);
   useLayoutEffect(()=>{if(ready){const row=document.getElementById('message-'+id)?.parentElement;if(row)measure(row as HTMLDivElement);}},[ready,id,index,measure]);
@@ -1229,6 +1444,12 @@ function HomerApp() {
   const [statusContainer,setStatusContainer]=useState<HTMLDivElement|null>(null);
   const canvasTrigger=useRef<HTMLElement|null>(null);
   const previewComposer=useRef<PreviewComposer|null>(null);
+  const scopedSend=useRef<ScopedSendOwner|null>(null);
+  const transfers=useRef(new Map<string,TaskUpload>());
+  const [transferRevision,setTransferRevision]=useState(0);
+  const uploads:TaskUploads={active:transfers.current,revision:transferRevision,notify:()=>setTransferRevision(value=>value+1)};
+  const [scopeReceipts,setScopeReceipts]=useState<ReadonlyMap<string,ScopedReceipt>>(()=>new Map());
+  const taskViews=useRef(new Map<string,TaskConversationWindow>());
   const narrowPreview=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
   const splitNativePreview=!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview;
   const [state, setState] = useState<WebState>(empty);
@@ -1240,9 +1461,9 @@ function HomerApp() {
     setScheduleSelection({id,readEpoch:state.history.readEpoch});
   };
   const browser=useBrowserPages(state.threadId);
-  const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<PreviewTab&{trigger?:HTMLElement}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
+  const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<PreviewTab&{trigger?:HTMLElement;returnTo?:string}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
   if(previewTabs.threadId!==state.threadId){
-    setPreviewTabs({threadId:state.threadId,tabs:[],activeId:null});setCanvasOpen(false);canvasTrigger.current=null;
+    setPreviewTabs({threadId:state.threadId,tabs:[],activeId:null});setScopeReceipts(new Map());taskViews.current.clear();transfers.current.clear();setCanvasOpen(false);canvasTrigger.current=null;
   }
   const activePreviewTab=previewTabs.threadId===state.threadId?previewTabs.tabs.find(tab=>tab.id===previewTabs.activeId)??null:null;
   useEffect(()=>{
@@ -1251,7 +1472,7 @@ function HomerApp() {
       if(old.threadId!==state.threadId)return old;
       const files=old.tabs.filter(tab=>!('kind'in tab)||tab.kind!=='browser');
       const pages=browser.pages.filter(p=>p.resource||!files.some(tab=>!('kind'in tab)&&!tab.resource&&p.source.kind==='attachment'&&tab.assetId===p.source.assetId&&tab.revision===p.source.revision));
-      const tabs:typeof old.tabs=[...files,...pages.map(page=>({kind:'browser' as const,id:page.id,title:page.title,page}))];
+      const tabs:typeof old.tabs=[...files,...pages.map(page=>({...old.tabs.find(tab=>tab.id===page.id),kind:'browser' as const,id:page.id,title:page.title,page}))];
       const activeId=tabs.some(tab=>tab.id===old.activeId)?old.activeId:tabs[0]?.id??null;
       const signature=(items:typeof tabs,selected:string|null)=>JSON.stringify([items.map(tab=>({...tab,trigger:undefined})),selected]);
       return signature(tabs,activeId)===signature(old.tabs,old.activeId)?old:{...old,tabs,activeId};
@@ -1710,14 +1931,15 @@ function HomerApp() {
     });
     setStateRefresh(n=>n+1);
   }
-  const sendInput=useCallback((input:ConversationInput,target?:UnconfirmedInput['target'])=>{
+  const sendInput=useCallback((input:ConversationInput,target?:UnconfirmedInput['target'],scope?:WebSendScope)=>{
     if(!connected||!verifiedThread.current)return Promise.reject(new Error('service_not_ready'));
     if(input.taskReference&&!state.features?.taskReference)return Promise.reject(new Error('task_reference_scope_denied'));
     const ownerThread=verifiedThread.current;
-    setError('');
+    if(!scope)setError('');
     const send=async()=>{
-      try{await post(input.interactionId?'/api/interactions/'+input.interactionId:target?'/api/messages/interrupt':'/api/messages',target?{input,target}:input);if(input.interactionId&&verifiedThread.current===ownerThread)setState(old=>old.threadId===ownerThread?({...old,acceptedRequestIds:[...new Set([...(old.acceptedRequestIds??[]),input.requestId])]}):old);}
-      catch(error){if(verifiedThread.current===ownerThread)setError(error instanceof Error&&error.message==='request_too_large'?'整条消息超过96KiB，未获接收；原请求内容已保留，请减少内容后发送。':'发送未确认，消息和引用已逐条保留；可核对并重试：'+(error instanceof Error?error.message:'web_request_failed'));throw error;}
+      if(!reader.current.connected||verifiedThread.current!==ownerThread||scope&&history.current.epoch!==scope.readEpoch)throw Error('history_epoch_changed');
+      try{await post(input.interactionId?'/api/interactions/'+input.interactionId:target?'/api/messages/interrupt':'/api/messages',target?{input,target}:scope?{input,scope}:input);if(input.interactionId&&verifiedThread.current===ownerThread)setState(old=>old.threadId===ownerThread?({...old,acceptedRequestIds:[...new Set([...(old.acceptedRequestIds??[]),input.requestId])]}):old);}
+      catch(error){if(!scope&&verifiedThread.current===ownerThread)setError(error instanceof Error&&error.message==='request_too_large'?'整条消息超过96KiB，未获接收；原请求内容已保留，请减少内容后发送。':'发送未确认，消息和引用已逐条保留；可核对并重试：'+(error instanceof Error?error.message:'web_request_failed'));throw error;}
     };const task=input.interactionId?send():sendChain.current.catch(()=>{}).then(send);if(!input.interactionId)sendChain.current=task;return task;
   },[connected,state.features?.taskReference]);
   const onNew = useCallback(async (message: AppendMessage) => {
@@ -1735,12 +1957,8 @@ function HomerApp() {
     const preview=receipt?.finalText&&message.process?.id===receipt.processId&&message.status==='running'&&message.process.turnIds.at(-1)===receipt.turnId?receipt.finalText:undefined;
     const key=JSON.stringify([notes,preview]);
     const cached=messageCache.current.get(message.id);if(cached?.source===message&&cached.key===key)return cached.value;
-    const projected=projectProcessMessage(preview?{...message,text:preview}:message);
-    const value:ThreadMessageLike=({
-    id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
-    metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
-    ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
-  });messageCache.current.set(message.id,{source:message,key,value});return value;}),[state.messages,state.inactiveInteractions,claimPosition,receipt]);
+    const value=runtimeConversationMessage(message,notes,claimPosition,preview);
+    messageCache.current.set(message.id,{source:message,key,value});return value;}),[state.messages,state.inactiveInteractions,claimPosition,receipt]);
   const stopCurrent=async()=>{if(!state.activeMessageId)return;setStopping(state.activeMessageId);try{await post("/api/stop",{messageId:state.activeMessageId});}catch(e){setStopping(null);setError("停止未确认："+(e instanceof Error?e.message:"web_request_failed"));}};
   const runtime = useExternalStoreRuntime({ messages, convertMessage: useCallback((message: ThreadMessageLike) => message,[]), isRunning: state.isRunning, isSendDisabled: !canAcceptInput(connected,state.upgrade),
     adapters:{attachments:attachmentOwner},
@@ -1842,7 +2060,7 @@ function HomerApp() {
     const remove=(old:typeof previewTabs)=>{
       const at=old.tabs.findIndex(tab=>tab.id===id);if(at<0)return old;
       const tabs=old.tabs.filter(tab=>tab.id!==id);
-      return {...old,tabs,activeId:id===old.activeId?tabs[Math.min(at,tabs.length-1)]?.id??null:old.activeId};
+      return {...old,tabs,activeId:id===old.activeId?(tabs.find(tab=>tab.id===old.tabs[at]?.returnTo)??tabs[Math.min(at,tabs.length-1)])?.id??null:old.activeId};
     };
     const {tabs,activeId}=remove(previewTabs);if(tabs===previewTabs.tabs)return;
     if(id===previewTabs.activeId&&scope===previewScope.current.generation){
@@ -1850,20 +2068,33 @@ function HomerApp() {
       if(activeId)canvasTrigger.current=tabs.find(tab=>tab.id===activeId)?.trigger??null;
       else{captureAnchor();setCanvasOpen(false);}
     }
+    if(tab&&'kind'in tab&&tab.kind==='task')taskViews.current.delete(JSON.stringify([state.history?.readEpoch,tab.task.id]));
     setPreviewTabs(remove);
   };
+  function openTaskConversation(task:OverviewTask,trigger:HTMLElement){
+    if(!state.history)return;
+    const id='task:'+task.id;
+    canvasTrigger.current=trigger;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
+    setAnnotationFocus(undefined);
+    setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id===id)?old.tabs:[...old.tabs,{kind:'task',id,title:taskName(task).text,task,trigger}],activeId:id}));
+    setCanvasOpen(true);
+  }
+  function taskOrigin(trigger:Element|null|undefined){
+    return trigger?.closest('[data-task-conversation]')&&activePreviewTab&&'kind'in activePreviewTab&&activePreviewTab.kind==='task'?activePreviewTab.id:undefined;
+  }
   const openSchedules=(trigger:HTMLElement)=>{
     canvasTrigger.current=trigger;updatePreviewScope(true,'schedules');setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
     setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id==='schedules')?old.tabs:[...old.tabs,{id:'schedules',kind:'schedules',title:'定时任务',trigger}],activeId:'schedules'}));setCanvasOpen(true);
   };
   const openArtifact=(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>{
     const active=trigger??document.activeElement;
+    const returnTo=taskOrigin(active);
     const origin=active instanceof HTMLElement&&!active.closest('#canvas-panel')?active:undefined;
     if(origin)canvasTrigger.current=origin;
     const native=browser.pages.find(p=>!p.resource&&p.source.kind==='attachment'&&p.source.messageId===file.messageId&&p.source.assetId===file.assetId&&p.source.revision===file.revision);
     if(window.homerBrowserPreview&&(native||/\.html?$/i.test(file.title))){
-      if(native)showBrowser(native,annotation);
-      else void openBrowserPreview(state.threadId,{kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title}).then(page=>showBrowser(page,annotation)).catch(error=>setPageNotice(error.message));return;
+      if(native)showBrowser(native,annotation,false,returnTo);
+      else void openBrowserPreview(state.threadId,{kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title}).then(page=>showBrowser(page,annotation,false,returnTo)).catch(error=>setPageNotice(error.message));return;
     }
     if(annotation)setAnnotationFocus({...annotation,nonce:crypto.randomUUID()});
     if(canvasOpen&&canvasArtifact?.id===file.id)return;
@@ -1872,10 +2103,10 @@ function HomerApp() {
     updatePreviewScope(true,file.id);
     setPreviewTabs(old=>{
       const existing=old.tabs.some(tab=>tab.id===file.id);
-      return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id&&origin?{...tab,trigger:origin}:tab):[...old.tabs,{...file,trigger:origin}],activeId:file.id};
+      return {...old,tabs:existing?old.tabs.map(tab=>tab.id===file.id?{...tab,trigger:origin,returnTo}:tab):[...old.tabs,{...file,trigger:origin,returnTo}],activeId:file.id};
     });setCanvasOpen(true);
   };
-  function showBrowser(page:BrowserPage,focus?:{key:string;id:string;history?:PreviewRequest},keepFileTab=false){
+  function showBrowser(page:BrowserPage,focus?:{key:string;id:string;history?:PreviewRequest},keepFileTab=false,returnTo?:string){
     if(page.threadId!==state.threadId)return;
     const id=page.id;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
     setAnnotationFocus(focus?{...focus,nonce:crypto.randomUUID()}:undefined);
@@ -1886,7 +2117,7 @@ function HomerApp() {
         if(!keepFileTab&&source.kind==='message-file'&&'kind'in tab&&tab.kind==='message-file')return tab.messageId!==source.messageId||tab.destination!==source.destination;
         return true;
       });
-      return {...old,tabs:tabs.some(tab=>tab.id===id)?tabs:[...tabs,{kind:'browser',id,title:page.title,page}],activeId:id};
+      return {...old,tabs:tabs.some(tab=>tab.id===id)?tabs.map(tab=>tab.id===id&&returnTo?{...tab,returnTo}:tab):[...tabs,{kind:'browser',id,title:page.title,page,returnTo}],activeId:id};
     });setCanvasOpen(true);
   }
   function openLocalFile(messageId:string,destination:string,title:string,trigger?:HTMLElement,annotation?:{key:string;id:string;history?:PreviewRequest}){
@@ -1895,7 +2126,7 @@ function HomerApp() {
     updatePreviewScope(true,id);setAnnotationFocus(annotation?{...annotation,nonce:crypto.randomUUID()}:undefined);if(!canvasOpen)captureAnchor();
     setPreviewTabs(old=>{
       const existing=old.tabs.find(tab=>tab.id===id);
-      const tab={kind:'message-file' as const,id,title,trigger,messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
+      const tab={kind:'message-file' as const,id,title,trigger,returnTo:taskOrigin(trigger),messageId,destination,reload:existing&&'kind'in existing&&existing.kind==='message-file'?existing.reload+1:0};
       return {...old,tabs:existing?old.tabs.map(item=>item.id===id?tab:item):[...old.tabs,tab],activeId:id};
     });setCanvasOpen(true);
   }
@@ -1928,10 +2159,11 @@ function HomerApp() {
       if(isCurrentPreview())setPageNotice(error.message==='message_file_scope_denied'?'这个文件未单独交付或链接，无法在预览中打开。':'链接无法打开（'+error.message+'）。');
     });
   }
-  function openBrowserLink(destination:string,trigger:HTMLAnchorElement){
+  function openBrowserLink(destination:string,trigger:HTMLAnchorElement,resources=artifacts){
+    const returnTo=taskOrigin(trigger);
     const messageId=trigger.closest<HTMLElement>('[data-conversation-message]')?.dataset.conversationMessage;
     if(messageId&&(isMessageFileLink(destination)||messageAttachmentDestination(destination))){
-      const file=artifacts.find(item=>item.messageId===messageId&&item.destination&&decodeMessageLink(item.destination)===decodeMessageLink(destination));
+      const file=resources.find(item=>item.messageId===messageId&&item.destination&&decodeMessageLink(item.destination)===decodeMessageLink(destination));
       if(!mobileView&&window.homerBrowserPreview&&isMessageFileLink(destination)&&messageFileLineSuffix.test(decodeMessageLink(destination)??'')){
         const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
         openLocalFile(messageId,destination,file?.title??title,trigger);
@@ -1947,11 +2179,11 @@ function HomerApp() {
     if(local){
       const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
       const existing=browser.pages.find(page=>page.source.kind==='message-file'&&page.source.messageId===messageId&&page.source.destination===destination);
-      if(existing)void openBrowserPreview(state.threadId,existing.source).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));
+      if(existing)void openBrowserPreview(state.threadId,existing.source).then(page=>showBrowser(page,undefined,false,returnTo)).catch(error=>setPageNotice(error.message));
       else openLocalFile(messageId,destination,title,trigger);
       return true;
     }
-    void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page)).catch(error=>setPageNotice(error.message));return true;
+    void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page,undefined,false,returnTo)).catch(error=>setPageNotice(error.message));return true;
   }
   function openBrowserReference(reference:PreviewRequest,id:string,history=false){
     if(!window.homerBrowserPreview)return;
@@ -2003,7 +2235,7 @@ function HomerApp() {
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} splitPreview={splitNativePreview} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} splitPreview={splitNativePreview} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?openTaskConversation:undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -2057,10 +2289,26 @@ function HomerApp() {
             <span className="sr-only" role="status">AI 正在处理</span>
             <img ref={indicator.sprite} className="processing-sprite" data-docked={indicator.docked} src={homerProcessing} width={40} height={40} alt=""/>
           </>}
-          <MainComposer splitPreview={splitNativePreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} bindFeedback={start=>{feedbackDraft.current=start;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+          <MainComposer splitPreview={splitNativePreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} bindFeedback={start=>{feedbackDraft.current=start;}} bindScopedSend={send=>{scopedSend.current=send;}}
+           onScopedReceipt={result=>setScopeReceipts(old=>{
+            const previous=old.get(result.input.requestId);
+            if(previous?.input===result.input&&previous.state===result.state&&previous.code===result.code)return old;
+            const next=new Map([...old].filter(([id,receipt])=>id===result.input.requestId||receipt.input.taskReference?.taskId!==result.input.taskReference?.taskId));
+            next.set(result.input.requestId,result);return next;
+           })} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} splitPreview={splitNativePreview} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onDetails={openScheduleDetail} onExample={example=>{
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} taskContent={tab=>{
+       if(!state.history)return null;
+       const historyKey=JSON.stringify([state.history.readEpoch,tab.task.id]);
+       let cache=taskViews.current.get(historyKey);
+       if(!cache){cache={pages:[],before:null,revision:-1,details:false,task:tab.task};taskViews.current.set(historyKey,cache);}
+       const original=(id:string,quote?:MessageQuote)=>{if(narrowPreview){canvasTrigger.current=null;closeCanvas();}locateMessage(id,quote);};
+       return <TaskConversation key={historyKey} cache={cache} readEpoch={state.history.readEpoch} threadId={state.threadId} revision={state.history.page.revision} connected={connected}
+        onTask={task=>setPreviewTabs(old=>({...old,tabs:old.tabs.map(item=>item.id===tab.id&&'kind'in item&&item.kind==='task'&&(item.task.revision!==task.revision||item.title!==taskName(task).text)?{...item,task,title:taskName(task).text}:item)}))}
+        onOriginal={original} render={(page,view,locate,task,refresh,onScroll,onRows)=><TaskReader key={task.id} page={page} view={view} locate={locate} original={original} task={task} state={state}
+         connected={connected} onSend={sendInput} submitScoped={(input,scope)=>scopedSend.current?.send(input,scope)} checkScoped={()=>scopedSend.current?.check()} taskUploads={uploads} scopeReceipts={scopeReceipts} refresh={refresh} onScroll={onScroll} onRows={onRows} openFile={openArtifact} openLink={openBrowserLink}/>}/>;
+      }} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onDetails={openScheduleDetail} onExample={example=>{
         const composer=previewComposer.current;
         if(!composer)return '暂时无法输入，请稍后重试。';
         return composer.insertScheduleExample(example,narrowPreview?()=>{canvasTrigger.current=null;closeCanvas();}:undefined);

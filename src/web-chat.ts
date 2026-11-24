@@ -74,7 +74,7 @@ export function createWebChat(bridge:WebBridge){
     if(!input||typeof input!=='object'||Array.isArray(input))throw Error('history_request_invalid');
     if(path==='/api/history/page'){
       const r=input.request;
-      if(typeof input.readEpoch!=='string'||input.readEpoch.length>100||!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(key=>!['limit','before','after','around'].includes(key))||['before','after','around'].some(key=>r[key]!==undefined&&(typeof r[key]!=='string'||r[key].length>600)))throw Error('history_request_invalid');
+      if(typeof input.readEpoch!=='string'||input.readEpoch.length>100||!r||typeof r!=='object'||Array.isArray(r)||Object.keys(r).some(key=>!['limit','before','after','around','taskId','range'].includes(key))||r.taskId!==undefined&&!id(r.taskId)||r.range!==undefined&&(!r.taskId||typeof r.range!=='string'||r.range.length>600)||['before','after','around'].some(key=>r[key]!==undefined&&(typeof r[key]!=='string'||r[key].length>600)))throw Error('history_request_invalid');
       return (await boundedRead(()=>bridge.history!.page(input)));
     }
     if(path==='/api/history/process'||path==='/api/history/resolve'){
@@ -101,7 +101,14 @@ export function createWebChat(bridge:WebBridge){
     if(!bridge.media?.discard)throw Error('web_upload_unavailable');
     return (await bridge.media.discard(input));
   }
-  if (path === "/api/messages") return (await bridge.submit(conversationInput(input)));
+  if(path==='/api/messages'){
+    if(!input||typeof input!=='object'||!Object.hasOwn(input,'scope'))return bridge.submit(conversationInput(input));
+    const scope=input.scope,message=conversationInput(input.input);
+    if(!message.taskReference||message.interactionId||!id(scope?.threadId)||!id(scope.readEpoch)||
+       Object.keys(scope).some(key=>!['threadId','readEpoch'].includes(key))||
+       Object.keys(input).some(key=>!['input','scope'].includes(key)))throw Error('task_reference_scope_denied');
+    return bridge.submit(message,scope);
+  }
   if (path === '/api/messages/feedback') {
     if (!bridge.feedback) throw Error('feedback_unavailable');
     if (typeof input?.messageId !== 'string' || !/^[\w:-]{1,100}$/.test(input.messageId) || !['up','down',null].includes(input.value)) throw Error('invalid_feedback');

@@ -5,7 +5,7 @@ import type {MainInputs} from './recursive-main-inputs.js';
 import {isScheduleId,scheduleTitle} from './schedule-display.js';
 import {projectConversation,type DisplayMessage,type ConversationBoundary} from './conversation-projection.js';
 import type {ChannelPlugin} from './channel-plugin.js';
-export type HistoryPageRequest={limit?:number;before?:string;after?:string;around?:string};
+export type HistoryPageRequest={limit?:number;before?:string;after?:string;around?:string;taskId?:string;range?:string};
 type Identity={id:string;threadId:string;messageId:string;replyId:string|null;requestId:string|null;sourceKind:string;position:number|null};
 const processPrefix='publicMainNode:v1:';
 const marks=(ids:readonly unknown[])=>ids.map(()=>'?').join(',');
@@ -136,9 +136,9 @@ export class WebHistoryPages{
  }
  // Indexed identity relations let the original owner expose boundary facts.
  // A local page is never asked to infer that outside records do not exist.
- read(threadId:string,request:HistoryPageRequest={},details=false){
+ read(threadId:string,request:HistoryPageRequest={},details=false,bounds?:{lower?:number;upper?:number;forward?:boolean;refresh?:boolean}){
   const limit=request.limit??40;
-  if(!Number.isSafeInteger(limit)||limit<1||limit>80)throw Error('history_limit_invalid');
+  if(!Number.isSafeInteger(limit)||limit<1||limit>(bounds?.refresh?240:80))throw Error('history_limit_invalid');
   if([request.before,request.after,request.around].filter(x=>x!==undefined).length>1)throw Error('history_direction_invalid');
   let position:number|undefined,inclusive=false;
   if(request.before)position=this.anchor(threadId,request.before);
@@ -152,13 +152,18 @@ export class WebHistoryPages{
       ??this.db.prepare('SELECT messageId FROM web_process_ids WHERE threadId=? AND replyId=? AND position IS NOT NULL ORDER BY position DESC LIMIT 1').get(threadId,String(original.id));
    position=this.position(threadId,owner?String(owner.messageId):String(original.id));inclusive=true;
   }
-  const direction=request.after?'ASC':'DESC',comparison=request.after?'>':inclusive?'<=':'<';
+  const forward=!!(request.after||bounds?.forward);
+  const direction=forward?'ASC':'DESC',comparison=forward?'>':inclusive?'<=':'<';
 
   // The thread-only index preserves rowid order; no timestamp sort or OFFSET.
-  const sql=`SELECT u.id,u.position,m.requestId FROM web_formal_ids u JOIN conversation_messages m ON m.id=u.id WHERE u.threadId=? ${position===undefined?'':`AND u.position${comparison}?`} ORDER BY u.position ${direction} LIMIT ?`;
-  const bindings=[threadId,...(position===undefined?[]:[position]),limit+1];
+  const clauses:string[]=[],bindings:(number|string)[]=[threadId];
+  if(position!==undefined){clauses.push('AND u.position'+comparison+'?');bindings.push(position);}
+  if(bounds?.lower!==undefined){clauses.push('AND u.position>=?');bindings.push(bounds.lower);}
+  if(bounds?.upper!==undefined){clauses.push('AND u.position<=?');bindings.push(bounds.upper);}
+  const sql=`SELECT u.id,u.position,m.requestId FROM web_formal_ids u JOIN conversation_messages m ON m.id=u.id WHERE u.threadId=? ${clauses.join(' ')} ORDER BY u.position ${direction} LIMIT ?`;
+  bindings.push(limit+1);
   const found=this.db.prepare(sql).all(...bindings) as {id:string;position:number;requestId:string|null}[];
-  const more=found.length>limit,selected=found.slice(0,limit);if(!request.after)selected.reverse();
+  const more=found.length>limit,selected=found.slice(0,limit);if(!forward)selected.reverse();
   const selectedIds=selected.map(row=>row.id),nodeRows=selectedIds.length?this.db.prepare(`SELECT * FROM web_process_ids WHERE threadId=? AND messageId IN (${marks(selectedIds)})`).all(threadId,...selectedIds) as Identity[]:[];
   const nodes=this.processes.headers(nodeRows.map(row=>row.id),details);
   const requests=[...new Set([...selected.flatMap(row=>row.requestId?[row.requestId]:[]),...nodeRows.flatMap(row=>row.requestId?[row.requestId]:[])])];
@@ -195,6 +200,7 @@ export class WebHistoryPages{
   });
   const first=selected[0],last=selected.at(-1);
   return {protocol:3 as const,threadId,revision:this.revision,...display,units:selectedIds,
+   ...(bounds?{scanned:{first:first?.position,last:last?.position,more}}:{}),
    before:first&&(request.after||more)?this.cursor(threadId,first.id):null,
    after:last&&(request.before||inclusive||request.after&&more)?this.cursor(threadId,last.id):null};
  }
@@ -265,4 +271,4 @@ export class WebHistoryPages{
   const node=this.processes.exact(id);if(!node||node.threadId!==threadId)throw Error('history_process_not_found');return node;
  }
 }
-export type HistoryPage=ReturnType<WebHistoryPages['read']>&{artifacts?:import('./web-contract.js').WebArtifact[];inactiveInteractions?:import('./web-contract.js').InactiveInteraction[];inactiveMore?:boolean};
+export type HistoryPage=ReturnType<WebHistoryPages['read']>&{scope?:{taskId:string;range:string;tail:string};artifacts?:import('./web-contract.js').WebArtifact[];inactiveInteractions?:import('./web-contract.js').InactiveInteraction[];inactiveMore?:boolean};

@@ -35,6 +35,7 @@ import type {QueuedInput,DispatchInput,MainDispatchInput,QueueChange,QueueMove,Q
 import type {MainGeneration} from './service.js';
 import type {NativeTokenUsage} from './native-usage.js';
 
+export type WebSendScope={threadId:string;readEpoch:string};
 export type ActiveReadVersion={threadId:string;readEpoch:string;revision:number};
 export type ActiveReadResult<T>=ActiveReadVersion&{items:T[];after:number|null};
 type QueueUser=import('./web-history.js').ConversationMessage&{media?:import('./media-store.js').MediaView[]};
@@ -60,7 +61,7 @@ export type WebState = {
   // Current host observation only; never reconstruct it from legacy message text.
   modelFailure?:{messageId:string;code:'engine_quota_insufficient'|'engine_rate_limited'|'engine_authentication_failed'|'engine_account_status_unconfirmed'|'engine_model_unavailable'|'main_turn_failed';source?:'codex'|'website'};
   processNodes?: import('./main-process.js').ProcessNode[];
-  features?:{draftUpload?:boolean;taskOverview?:boolean;taskArchive?:1;taskReference?:1;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
+  features?:{draftUpload?:boolean;taskOverview?:boolean;taskConversation?:1;taskArchive?:1;taskReference?:1;workerExecution?:1;workerEventCards?:1;queueDispatch?:1;queueSources?:1;nativeQuestionAnswers?:1;previewReferences?:1;previewReferenceCollections?:1|2};
   runningTaskIds?:string[];
   threadId: string; messages: import('./conversation-projection.js').DisplayMessage[]; isRunning: boolean; activeMessageId: string | null;
   queue?: (QueuedInput & Partial<import('./conversation-projection.js').DisplayQueueInput>)[];generation?:MainGeneration|null;
@@ -87,7 +88,7 @@ export type WebBridge = {
   onStateChange?(listener:()=>void):()=>void;
   taskOverview?: {archive?(input:TaskArchiveRequest):Promise<TaskArchiveResult>;execution?(selector:import('./worker-execution.js').ExecutionSelector,before?:string):Promise<import('./worker-execution.js').WorkerExecutionPage>;call?(selector:import('./worker-execution.js').ExecutionSelector,callKey:string):Promise<import('./worker-execution.js').WorkerCallDetail>;progress?(id:string):Promise<import('./task-status.js').TaskProgress>;list(page?:import('./task-overview.js').OverviewPage):Promise<import('./task-overview.js').TaskOverview>;detail(id:string,query?:import('./task-overview.js').WorkerConversationQuery):Promise<import('./task-overview.js').TaskDetail>;summary?(id:string):Promise<import('./task-overview.js').TaskDetail>;origin?(id:string,messageId:string):Promise<ArtifactOrigin>};
   media?:{read(input:MessageAttachment&{preview?:'voice';resource?:string}):Promise<{filename:string;mime:string;data:string;sha256?:string}>;origin?(input:MessageAttachment):Promise<ArtifactOrigin>;reveal?(input:MessageAttachment):Promise<{target:'source'|'snapshot';device:'homer-host'}>;upload?(input:import('./web-upload.js').WebUpload):Promise<import('./media-store.js').MediaView>;discard?(input:unknown):Promise<unknown>;previewDraft?(input:unknown):Promise<{mime:string;data:string}>};
-  submit(input: ConversationInput): Promise<unknown>;
+  submit(input: ConversationInput,scope?:WebSendScope): Promise<unknown>;
   queue?:{
     edit(input:QueueChange&{input:ConversationInput}):Promise<unknown>;
     cancel(input:QueueChange):Promise<unknown>;

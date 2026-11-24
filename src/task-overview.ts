@@ -13,7 +13,7 @@ export type TaskRequirement={taskId:string;version:number;goal:string|null;sourc
 export type RecoveryFacts={operations:{id:string;taskId:string;kind:string;state:string;revision:number}[];receipts:{messageId:string;taskId:string;taskVersion:number;state:string;revision:number}[];interactions:{id:string;runId:string;taskVersion:number|null;kind:string;state:string}[]};
 export type WorkerConversationQuery={workerId:string;after?:number;messageId?:string;offset?:number};
 export type WorkerConversation={taskId:string;workerId:string;threadId:string|null;messages:{id:string;seq:number;kind:'worker_input'|'worker_reply';runId:string|null;version:number;workTitle?:string;text:string;offset:number;nextOffset:number|null;receipt?:string}[];nextCursor:number|null};
-export type TaskDetail={taskId:string;historyState?:OverviewTask['historyState'];creationOrder?:number;publicMessages?:{id:string;role:'user'|'assistant';excerpt:string}[];moreMessages?:boolean;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;assignments?:WorkAssignment[];artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
+export type TaskDetail={taskId:string;historyState?:OverviewTask['historyState'];creationOrder?:number;overview?:OverviewTask;publicMessages?:{id:string;role:'user'|'assistant';excerpt:string}[];moreMessages?:boolean;conversation?:WorkerConversation;requirements?:TaskRequirement[];moreHistory?:boolean;assignments?:WorkAssignment[];artifacts?:import('./web-contract.js').WebArtifact[];moreArtifacts?:boolean;recovery?:RecoveryFacts;runs:(OverviewRun&{stateRevision:number;activeMs:number;createdAt:number;startedAt:number|null;endedAt:number|null})[]};
 const assignmentRows=`SELECT assigned.workerId,assigned.id runId,m.id messageId,json_extract(m.payloadJson,'$.workTitle') title
   FROM agent_messages m JOIN runs assigned ON assigned.id=m.targetRunId AND assigned.taskId=m.taskId AND assigned.version=m.taskVersion
   JOIN operations o ON o.id=m.operationKey AND o.kind IN ('worker_open','worker_message') AND o.state='confirmed'
@@ -21,7 +21,7 @@ const assignmentRows=`SELECT assigned.workerId,assigned.id runId,m.id messageId,
 export function readWorkAssignments(db:DatabaseSync,taskId:string,limit=-1):WorkAssignment[]{
  return db.prepare(`${assignmentRows} AND m.taskId=? ORDER BY m.seq LIMIT ?`).all(taskId,limit) as WorkAssignment[];
 }
-export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverview{
+export function readTaskOverview(db:DatabaseSync,page:OverviewPage={},taskId?:string):TaskOverview{
  const {view='visible',before}=page;
  if(!['visible','archived'].includes(view)||before!==undefined&&(!Number.isSafeInteger(before)||before<1))throw Error('task_overview_invalid');
  const liveInteraction=`(i.state='pending_main' OR i.state='pending_user' AND i.responseUserMessageId IS NOT NULL)
@@ -31,7 +31,7 @@ export function readTaskOverview(db:DatabaseSync,page:OverviewPage={}):TaskOverv
        AND EXISTS(SELECT 1 FROM agent_messages m WHERE m.senderRunId=r.id AND m.kind='worker_reply' AND m.senderEpoch=i.runEpoch))
    AND (i.source='ask_main' OR NOT EXISTS(SELECT 1 FROM runs next WHERE next.workerId=r.workerId AND next.rowid>r.rowid))`;
  const pageRows=db.prepare(`SELECT t.rowid AS creationOrder,t.id,t.title,t.notes,t.headVersion,t.revision,t.state,t.historyState,t.createdAt,
-   v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE t.historyState=? AND t.rowid<? ORDER BY t.rowid DESC LIMIT 21`).all(view,before??Number.MAX_SAFE_INTEGER) as (Omit<OverviewTask,'workers'|'sourceRequestIds'|'hasExecutingWorker'>&{sources:string|null})[];
+   v.goal,v.sourceRequestId,json_extract(v.authorityJson,'$.sourceRequestIds') AS sources FROM tasks t JOIN task_versions v ON v.taskId=t.id AND v.version=t.headVersion WHERE ${taskId?'t.id=?':'t.historyState=? AND t.rowid<?'} ORDER BY t.rowid DESC LIMIT 21`).all(...(taskId?[taskId]:[view,before??Number.MAX_SAFE_INTEGER])) as (Omit<OverviewTask,'workers'|'sourceRequestIds'|'hasExecutingWorker'>&{sources:string|null})[];
  if(!pageRows.length)return {tasks:[]};
  const tasks=pageRows.slice(0,20),ids=JSON.stringify(tasks.map(t=>t.id));
  const inPage='t.id IN (SELECT value FROM json_each(?))';
@@ -83,7 +83,7 @@ export function readTaskSummary(db:DatabaseSync,taskId:string):TaskDetail{
  const location=db.prepare('SELECT historyState,rowid AS creationOrder FROM tasks WHERE id=?').get(taskId) as Pick<TaskDetail,'historyState'|'creationOrder'>|undefined;
  if(!location)throw Error('task_not_found');
  const requirements=db.prepare(`SELECT v.taskId,v.version,v.goal,v.sourceRequestId FROM task_versions v JOIN tasks t ON t.id=v.taskId AND t.headVersion=v.version WHERE t.id=?`).all(taskId) as TaskRequirement[];
- return {taskId,...location,runs:[],requirements};
+ return {taskId,...location,runs:[],requirements,overview:readTaskOverview(db,{},taskId).tasks[0]};
 }
 export function readTaskReference(db:DatabaseSync,taskId:string){
  const task=db.prepare(`SELECT t.title,t.headVersion,t.state,t.historyState,v.goal

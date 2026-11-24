@@ -1,3 +1,4 @@
+import {readTaskConversation} from './task-conversation.js';
 import {taskSourceRequestsSql} from './recursive-tasks.js';
 import {decodeConversationReferences} from './web-history.js';
 import {conversationUserText} from './user-intent.js';
@@ -7,7 +8,7 @@ import type {DisplayMessage,TaskMessageSource} from './conversation-projection.j
 
 // Read-only page enrichment. Inputs are the already-authorized persisted page,
 // never arbitrary caller IDs or an inbox listing. No inspect/ACK/file grants.
-export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
+export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string,includeCoveredSources=false):DisplayMessage[]{
  const batch=(sql:string,keys:readonly string[])=>{
   const out:Record<string,any>[]=[];
   for(let at=0;at<keys.length;at+=200){const part=keys.slice(at,at+200);out.push(...db.prepare(sql.replace('$keys',part.map(()=>'?').join(','))).all(...part));}
@@ -118,11 +119,12 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   const events=node?.items.flatMap(i=>i.kind==='workerEvent'&&i.event?[i.event]:[])??[];
   const eventMessages=new Set(events.map(e=>e.sourceMessageId)),eventOperations=new Set(events.map(e=>e.operationKey));
   if(node?.sourceKind==='worker'&&node.turnIds.length)for(const id of node.sourceMessageIds){
-   if(eventMessages.has(id))continue;
+   if(eventMessages.has(id)&&!includeCoveredSources)continue;
    const notice=notices.get(id),run=notice?.senderRunId?runs.get(notice.senderRunId):undefined;
    if(!notice||notice.senderAgentId!=='host'||notice.operationState!=='confirmed'||notice.scopeId!==notice.taskId){unresolved.add(message.id);continue;}
    const runMatches=run&&run.taskId===notice.taskId&&run.version===notice.taskVersion&&notice.senderEpoch!=null&&notice.senderEpoch<=run.epoch;
    const received=typeof notice.receivedTurnId==='string'&&node.turnIds.includes(notice.receivedTurnId);
+   if(includeCoveredSources&&!received)continue;
    const interaction=interactions.get(id);
    const verified=notice.operationKind==='interaction_notice'
     ? notice.actorAgentId==='host'&&notice.kind==='interaction_required'&&received&&runMatches&&interaction?.threadId===threadId&&(interaction.historyThread==null||interaction.historyThread===threadId)
@@ -137,8 +139,8 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   if(!node)continue;
   for(const {item,activity,target} of taskActions(node)){
    const operation=operations.get(target.operationKey);
-   if(eventOperations.has(target.operationKey??null))continue;
-   if(!operation||operation.actorAgentId!==main||!(operation.scopeId===target.taskId||['task_create','worker_open'].includes(operation.kind)&&operation.responseTaskId===target.taskId)){unresolved.add(message.id);continue;}
+   if(eventOperations.has(target.operationKey??null)&&!includeCoveredSources)continue;
+   if(!operation||includeCoveredSources&&operation.state!=='confirmed'||operation.actorAgentId!==main||!(operation.scopeId===target.taskId||['task_create','worker_open'].includes(operation.kind)&&operation.responseTaskId===target.taskId)){unresolved.add(message.id);continue;}
    const verified=operation.kind==='task_control'
     ? activity.action==='update_task'&&activity.outcome==='update_confirmed'&&item.status==='completed'&&operation.state==='confirmed'
       &&operation.responseTaskId===target.taskId&&operation.responseVersion===target.version&&!target.runId
@@ -159,12 +161,13 @@ import { CONVERSATION_VIEW,type WebBridge,type DispatchQueuePage,type WebArtifac
 
 // Enrich only the authorized page. User decisions stay on their original message;
 // the projection cannot grant authority or release an interaction callback.
-export function withInteractionResponses(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
- const requests=[...new Set(messages.flatMap(m=>m.threadId===threadId&&m.requestId?[m.requestId]:[]))];
- if(!requests.length)return [...messages];
+function verifiedInteractionResponses(db:DatabaseSync,requests:readonly string[],threadId:string){
+ if(!requests.length)return [];
  const rows=db.prepare(`SELECT w.id,w.kind,w.source,w.runId,w.userQuestion,w.responseUserText,u.text userText,u.quote userQuote,
   json_extract(w.details,'$.approval') approval,json_extract(w.details,'$.method') method,
-  json_extract(w.details,'$.params.questions') questions,w.decision,w.state,w.deliveredAt,c.requestId,c.replyId,u.id userId
+  json_extract(w.details,'$.params.questions') questions,w.decision,w.state,w.deliveredAt,
+  (SELECT r.taskId FROM runs r WHERE r.id=CASE WHEN w.runId LIKE 'main-native:worker-native:%' THEN substr(w.runId,27) ELSE w.runId END
+    AND (w.runId LIKE 'main-native:worker-native:%' OR r.version=w.taskVersion AND r.threadId=w.threadId AND r.turnId=w.turnId)) taskId,source.requestId sourceRequestId,c.requestId,c.replyId,u.id userId
   FROM worker_interactions w
   JOIN conversation_inputs c ON c.requestId=w.responseUserMessageId AND c.threadId=?
   JOIN conversation_messages u ON u.threadId=c.threadId AND u.requestId=c.requestId AND u.role='user'
@@ -177,19 +180,23 @@ export function withInteractionResponses(db:DatabaseSync,messages:readonly Displ
       AND c.threadId=(SELECT value FROM meta WHERE key='mainThread')
       AND EXISTS(SELECT 1 FROM runs r WHERE r.id=w.runId AND r.threadId=w.threadId AND r.turnId=w.turnId AND r.version=w.taskVersion)))
   AND (json_type(w.details,'$.historyThreadId') IS NULL OR json_extract(w.details,'$.historyThreadId')=c.threadId)`)
-  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';source:string;runId:string;userQuestion:string|null;responseUserText:string;userText:string;userQuote:string|null;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;requestId:string;replyId:string;userId:string}[];
+  .all(threadId,...requests) as {id:string;kind:'authorization'|'question';source:string;runId:string;userQuestion:string|null;responseUserText:string;userText:string;userQuote:string|null;approval:string|null;method:string|null;questions:string|null;decision:string|null;state:string;deliveredAt:number|null;taskId:string|null;sourceRequestId:string|null;requestId:string;replyId:string;userId:string}[];
  const byRequest=new Map<string,typeof rows[number]|null>();
  for(const row of rows)byRequest.set(row.requestId,byRequest.has(row.requestId)?null:row);
+ return [...byRequest.values()].filter((row):row is typeof rows[number]=>{
+  if(!row)return false;
+  if(row.userText===row.responseUserText)return true;
+  if(row.kind!=='question'||row.source!=='ask_main'||!row.userQuote)return false;
+  try{return conversationUserText({text:row.userText,...decodeConversationReferences(row.userQuote)})===row.responseUserText;}
+  catch{return false;}
+ });
+}
+
+export function withInteractionResponses(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
+ const requests=[...new Set(messages.flatMap(m=>m.threadId===threadId&&m.requestId?[m.requestId]:[]))];
  const cards=new Map<string,NonNullable<DisplayMessage['interaction']>>(),hidden=new Set<string>();
  const text=(value:unknown):value is string=>typeof value==='string'&&!!value.trim();
- for(const row of byRequest.values()){
-  if(!row)continue;
-  if(row.userText!==row.responseUserText){
-   if(row.kind!=='question'||row.source!=='ask_main'||!row.userQuote)continue;
-   try{
-    if(conversationUserText({text:row.userText,...decodeConversationReferences(row.userQuote)})!==row.responseUserText)continue;
-   }catch{continue;}
-  }
+ for(const row of verifiedInteractionResponses(db,requests,threadId)){
   const approval:WebApproval|undefined=row.approval?JSON.parse(row.approval):undefined;
   const card:NonNullable<DisplayMessage['interaction']>={id:row.id,kind:row.kind,title:row.userQuestion??'',answers:row.userText.trim()?[{text:row.userText}]:[]};
   if(row.kind==='authorization'){
@@ -274,7 +281,21 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
   };
   return {
     history:{
-      page:async input=>{epoch(input.readEpoch);return page(input.request);},
+      page:async input=>{
+        epoch(input.readEpoch);
+        if(!input.request.taskId)return page(input.request);
+        const db=app.store.db,thread=app.store.meta('mainThread')!;
+        const result=readTaskConversation(db,pageReader(),thread,input.readEpoch,input.request,{
+          responses:requests=>verifiedInteractionResponses(db,requests,thread).filter(row=>!['pending_user','pending_main'].includes(row.state)),
+          related:messages=>withTaskSources(db,messages,thread,true),
+          message:id=>app.history.message(id),
+        });
+        const messages=withInteractionResponses(app.store.db,result.messages,result.threadId).map(message=>({...message,
+          ...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),
+          ...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}));
+        if(input.request.around&&!messages.some(message=>message.id===input.request.around))throw Error('history_message_not_found');
+        return {...result,messages,artifacts:files(messages)};
+      },
       process:async input=>{
         epoch(input.readEpoch);const thread=app.store.meta('mainThread')!,node=pageReader().process(input.id,thread);
         const activityLinks:Record<string,import('./activity-facts.js').ActivityLink>={};
@@ -340,7 +361,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
           if(receipt)activity.finalText=app.liveReceiptText(receipt);
         }
         return {...current,threadId,messages:recent.messages,queue:queue.items,artifacts,inactiveInteractions,work:[],interactions,conversationView:CONVERSATION_VIEW,acceptedRequestIds:[],processNodes:[],
-        queueDispatch:app.inputs.dispatchSummary(),runningTaskIds:app.runningTaskIds?.(),features:{draftUpload,taskOverview:true,taskArchive:1,taskReference:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
+        queueDispatch:app.inputs.dispatchSummary(),runningTaskIds:app.runningTaskIds?.(),features:{draftUpload,taskOverview:true,taskConversation:1,taskArchive:1,taskReference:1,workerEventCards:1,queueDispatch:1,queueSources:1,nativeQuestionAnswers:1,previewReferences:1,previewReferenceCollections:2},upgrade:{phase:'running'},
         history:{protocol:3,readEpoch:app.webReadEpoch,page:pageInfo,moreQueue:queue.after,moreInteractions:pending.after}};
         };
         return app.receptionTimings?app.receptionTimings.measure('state_history',build):build();
@@ -397,7 +418,10 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       }
     },
     media:{read:async input=>app.readAttachment(input),origin,reveal:input=>revealAttachmentFile(app.revealAttachment(input)),...(draftUpload?{upload:(input:import('./web-upload.js').WebUpload)=>app.uploadAttachment(input),discard:async(input:unknown)=>app.discardAttachment(input),previewDraft:async(input:unknown)=>app.readDraftImage(input)}:{})},
-    submit: async input => app.submitMessage(input),
+    submit: async (input,scope) => {
+      if(scope){epoch(scope.readEpoch);if(scope.threadId!==app.store.meta('mainThread'))throw Error('queue_thread_conflict');}
+      return app.submitMessage(input);
+    },
     queue:{edit:async input=>app.editQueued(input),cancel:async input=>app.cancelQueued(input),move:async input=>app.moveQueued(input),interrupt:async(input,target)=>app.submitMessage(input,undefined,target)},
     stop: id => app.stopMain(id),
     feedback: async (id, value) => app.history.feedback(app.store.meta('mainThread')!, id, value),

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {historyFixture} from './web-history-loading-fixture.js';
+import {historyFixture,updateSyntheticPublicText} from './web-history-loading-fixture.js';
 import {projectConversation} from '../src/conversation-projection.js';
 import {WebHistoryPages} from '../src/web-history-pages.js';
 
@@ -370,5 +370,83 @@ test('scheduled history projects only the verified delivery title and schedule t
   assert.equal(byId.get('verified')!.process!.sourceMessageIds[0],verified);
   assert.doesNotMatch(JSON.stringify(page),/私有正文|来源已撤销的标题/);
   assert.deepEqual(reader.read(threadId,{around:'verified',limit:1}).messages[0]!.scheduledSource,{scheduleId,title:'投递时的标题'});
+ }finally{f.close();}
+});
+
+test('task history advances sparse scans, replaces revoked rows, and distinguishes around scope',async()=>{
+ const f=historyFixture(20);try{
+  const thread='synthetic-history',db=f.store.db;
+  f.store.setMeta('mainAgentId','main:synthetic');
+  const {taskId}=f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'},{operationId:'synthetic-task',goal:'Synthetic task',workingDirectory:process.cwd()});
+  db.prepare("UPDATE conversation_messages SET quote=? WHERE id='user-1'").run(JSON.stringify({taskReference:{taskId,version:1,title:'Synthetic task'}}));
+  updateSyntheticPublicText(f,'node-1','Public answer to the referenced input');
+  db.prepare("UPDATE conversation_messages SET audience='internal' WHERE id='node-1'").run();
+  const page=(request:import('../src/web-history-pages.js').HistoryPageRequest)=>bridgeFixtureOnce.history!.page({readEpoch:'synthetic-epoch',request:{...request,taskId}});
+  const bridgeFixtureOnce=bridgeFixture(f);
+  const recent=await page({limit:1});
+  assert.deepEqual(recent.messages,[]);
+  assert.ok(recent.before);
+  const foreign=f.tasks.createTask({agentId:'main:synthetic',threadId:thread},{operationId:'foreign',goal:'Other task',workingDirectory:process.cwd()}).taskId;
+  await assert.rejects(bridgeFixtureOnce.history!.page({readEpoch:'synthetic-epoch',request:{taskId:foreign,before:recent.before!}}),/history_cursor_invalid/);
+  await assert.rejects(page({around:'user-19'}),/history_message_outside_task/);
+  const linked=await page({around:'node-1'});
+  assert.equal(linked.messages.find(message=>message.id==='node-1')?.text,'Public answer to the referenced input');
+  assert.equal(linked.messages.find(message=>message.id==='node-1')?.process,undefined);
+  assert.ok(linked.scope?.range);
+  assert.ok(f.history.revokeMessage(thread,'node-1'));
+  const refreshed=await page({range:linked.scope!.range});
+  assert.equal(refreshed.messages.some(message=>message.id==='node-1'),false);
+  await assert.rejects(page({around:'node-1'}),/history_message_not_found/);
+ }finally{f.close();}
+});
+
+test('task ranges follow moved public finals and never derive resources for another task',async()=>{
+ const f=historyFixture(9);try{
+  const thread='synthetic-history',db=f.store.db;
+  f.store.setMeta('mainAgentId','main:synthetic');
+  const {taskId}=f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'},{operationId:'task-a',goal:'Task A',workingDirectory:process.cwd()});
+  const other=f.tasks.createTask({agentId:'main:synthetic',threadId:thread},{operationId:'task-b',goal:'Task B',workingDirectory:process.cwd()}).taskId;
+  const visible=commitSyntheticMessage(f,thread,'Confirmed direct delivery',[],undefined,{taskId,taskVersion:1});
+  const hidden=commitSyntheticMessage(f,thread,'Another task',[],undefined,{taskId:other,taskVersion:1});
+  // This media owner has no fixture asset. A leak before filtering would throw.
+  db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(hidden.messageId,JSON.stringify([{assetId:'missing',revision:1}]));
+  db.prepare("UPDATE conversation_messages SET quote=? WHERE id='user-3'").run(JSON.stringify({taskReference:{taskId,version:1,title:'Task A'}}));
+  updateSyntheticPublicText(f,'node-3','Public answer part');
+  const bridge=bridgeFixture(f);
+  const read=(request:import('../src/web-history-pages.js').HistoryPageRequest)=>bridge.history!.page({readEpoch:'synthetic-epoch',request:{taskId,...request}});
+  const prior=await read({});
+  assert.ok(prior.messages.some(message=>message.id===visible.messageId));
+  assert.ok(prior.messages.some(message=>message.id==='node-3'));
+  assert.ok(prior.messages.every(message=>message.id!==hidden.messageId));
+  db.prepare("UPDATE conversation_messages SET operationKey='request-final:reply-3',text='Public answer part' WHERE id='reply-3'").run();
+  const after=await read({range:prior.scope!.range});
+  assert.deepEqual(after.messages.filter(message=>message.text==='Public answer part').map(message=>message.id),['reply-3']);
+ }finally{f.close();}
+});
+
+test('task references retain exact public sources and scoped submission rejects a foreign thread or epoch',async()=>{
+ const f=historyFixture(6);try{
+  const thread='synthetic-history',db=f.store.db;
+  f.store.setMeta('mainAgentId','main:synthetic');
+  const {taskId}=f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-1'},{operationId:'task-reference-test',goal:'Task A',workingDirectory:process.cwd()});
+  const reference={taskId,version:1,title:'Task A'};
+  const url='https://example.test/note';
+  const browser=(source:object)=>({kind:'web',source:{kind:'browser',title:'Note',url,...source},annotations:[{id:'note',element:'p',elementPath:'p',comment:'Referenced excerpt',x:1,y:1}]});
+  const update=db.prepare("UPDATE conversation_messages SET quote=? WHERE id='user-1'");
+  const write=()=>update.run(JSON.stringify({taskReference:reference,resourceReferences:[browser({requestId:'request-0'}),browser({messageId:'node-0'})]}));
+  write();
+  updateSyntheticPublicText(f,'node-0','[Note]('+url+')');
+  db.prepare("UPDATE conversation_messages SET audience='internal' WHERE id='node-0'").run();
+  const bridge=bridgeFixture(f);
+  const read=()=>bridge.history!.page({readEpoch:'synthetic-epoch',request:{taskId,around:'user-1'}});
+  const refs=async()=>((await read()).messages.find(message=>message.id==='user-1')?.resourceReferences??[]).map(ref=>ref.source.kind);
+  assert.deepEqual(await refs(),['browser','browser']);
+  assert.ok(f.history.revokeMessage(thread,'node-0'));
+  assert.deepEqual(await refs(),['browser']);
+  assert.ok(f.history.revokeMessage(thread,'user-0'));
+  assert.deepEqual(await refs(),[]);
+  const input={requestId:'scoped-submit',text:'合成补充',taskReference:reference};
+  await assert.rejects(bridge.submit(input,{threadId:'foreign',readEpoch:'synthetic-epoch'}),/queue_thread_conflict/);
+  await assert.rejects(bridge.submit(input,{threadId:thread,readEpoch:'old'}),/history_epoch_changed/);
  }finally{f.close();}
 });

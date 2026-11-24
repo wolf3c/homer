@@ -50,7 +50,7 @@ class PatchPreviewBoundary extends Component<{children:ReactNode;fallback:ReactN
 
 export type CanvasArtifact = {id:string;title:string;messageId:string;assetId:string;revision:number;sha256:string;size?:number;resource?:string};
 type MessageFileTab={kind:'message-file';id:string;title:string;messageId:string;destination:string;reload:number};
-export type PreviewTab=CanvasArtifact|MessageFileTab|{kind:'schedules';id:'schedules';title:string}|{kind:'browser';id:string;title:string;page:BrowserPage};
+export type PreviewTab={kind:'task';id:string;title:string;task:import('../src/task-overview').OverviewTask}|CanvasArtifact|MessageFileTab|{kind:'schedules';id:'schedules';title:string}|{kind:'browser';id:string;title:string;page:BrowserPage};
 type LocalFileInfo={kind:'local';filename:string;size:number;overLimit:boolean;reveal:boolean;platform:string};
 const messageFileErrors:Record<string,string>={
   artifact_missing:'找不到本地文件。恢复原路径后可以重试。',
@@ -154,9 +154,9 @@ const markdownComponents:Components={
  img:LazyMarkdownImage,
  a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
 };
-type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
+type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;taskContent?:(tab:Extract<PreviewTab,{kind:'task'}>)=>ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
 
-export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
+export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
   const {artifact,webSource,onClose}=readerProps;
   const selected=activeId??artifact?.id??null;
   const host=useRef<HTMLDivElement>(null),panel=useRef<HTMLDivElement>(null),collapseButton=useRef<HTMLButtonElement>(null),rail=useRef<HTMLDivElement>(null);
@@ -182,7 +182,8 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
   const collapse=<button type="button" ref={collapseButton} className="canvas-collapse" aria-controls="canvas-panel" aria-expanded={true} aria-label="收起预览" title="收起预览" onClick={onClose}><PanelRight size={18} aria-hidden/></button>;
   const browser=tabs?.find(tab=>tab.id===selected&&'kind'in tab&&tab.kind==='browser');
   const local=tabs?.find((tab):tab is MessageFileTab=>tab.id===selected&&'kind'in tab&&tab.kind==='message-file');
-  const reader=selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview onLocationApproval={readerProps.onLocationApproval} page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce} historyNote={readerProps.annotationFocus?.history?.kind==='web'?readerProps.annotationFocus.history.annotations.find(note=>note.id===readerProps.annotationFocus?.id):undefined}/>:<CanvasReader {...readerProps} local={local} threadId={threadId} key={JSON.stringify([threadId,local?.id??artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
+  const task=tabs?.find(tab=>tab.id===selected&&'kind' in tab&&tab.kind==='task');
+  const reader=task&&'kind' in task&&task.kind==='task'?taskContent?.(task):selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview onLocationApproval={readerProps.onLocationApproval} page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce} historyNote={readerProps.annotationFocus?.history?.kind==='web'?readerProps.annotationFocus.history.annotations.find(note=>note.id===readerProps.annotationFocus?.id):undefined}/>:<CanvasReader {...readerProps} local={local} threadId={threadId} key={JSON.stringify([threadId,local?.id??artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
   const activeTitle=webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'预览';
   const nativeBrowser=!!browser;
   const statusBar=!nativeBrowser&&<PreviewToolbar title={activeTitle} detail={webSource?new URL(webSource.url).host:undefined}><div ref={setActions} className="canvas-tab-actions"/></PreviewToolbar>;
@@ -217,7 +218,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,threadId='',onSelectA
         })}
       </Tabs.List>
       {collapse}</div>
-      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==selected}>{tab.id===selected?<>{statusBar}{reader}</>:null}</Tabs.Panel>)}
+      {tabs.map(tab=><Tabs.Panel className="canvas-tab-panel" key={tab.id} value={tab.id} keepMounted hidden={tab.id!==selected}>{tab.id===selected?<>{!task&&statusBar}{reader}</>:null}</Tabs.Panel>)}
     </Tabs.Root>:<><div className="canvas-tab-bar"><span className="canvas-preview-label" title={webSource?.title??artifact?.title??'预览'}>{webSource?.title??artifact?.title??'预览'}</span>{collapse}</div>{statusBar}{reader}</>}
     </Dialog.Popup>
   </Dialog.Portal></Dialog.Root></div>;

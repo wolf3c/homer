@@ -59,12 +59,13 @@ export async function completeSourceQuote(snapshot:SourceQuoteSelection):Promise
  if(!snapshot.anchor||snapshot.flowText===undefined)return snapshot.quote;
  return {...snapshot.quote,position:{...snapshot.anchor,sourceHash:await sourceHash(snapshot.flowText)}};
 }
-export async function locateSourceQuote(quote:MessageQuote):Promise<Range|undefined>{
+export async function locateSourceQuote(quote:MessageQuote,container?:HTMLElement):Promise<Range|undefined>{
  if(!quote.position)return;
- const root=document.getElementById('message-'+quote.messageId);if(!root||root.dataset.conversationMessage!==quote.messageId)return;
+ const find=()=>container?.querySelector<HTMLElement>('[data-conversation-message="'+CSS.escape(quote.messageId)+'"]')??(!container?document.getElementById('message-'+quote.messageId):null);
+ const root=find();if(!root||root.dataset.conversationMessage!==quote.messageId)return;
  if(quote.itemIds?.some(id=>![...root.querySelectorAll<HTMLElement>('[data-message-item-id]')].some(item=>item.dataset.messageItemId===id)))return;
  for(const body of root.querySelectorAll<HTMLElement>('[data-aui-quote-selectable]:not([data-aui-quote-selectable="false"])')){
-  const text=previewTextFlow(body).text;if(await sourceHash(text)!==quote.position.sourceHash||!body.isConnected||document.getElementById('message-'+quote.messageId)!==root||root.dataset.conversationMessage!==quote.messageId||previewTextFlow(body).text!==text)continue;
+  const text=previewTextFlow(body).text;if(await sourceHash(text)!==quote.position.sourceHash||!body.isConnected||find()!==root||root.dataset.conversationMessage!==quote.messageId||previewTextFlow(body).text!==text)continue;
   const range=restoreTextRange(body,quote.position,'markdown');if(!range)continue;
   // All selected logical items must still belong to the recorded source.
   const ids=sourceItemIds(root,range);

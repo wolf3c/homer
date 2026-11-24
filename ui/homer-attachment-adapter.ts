@@ -15,12 +15,18 @@ export function createHomerAttachmentAdapter(context:()=>DraftContext,request:ty
  function identityFor(file:File):Identity{
   const c=context();let identity=identities.get(file);if(!identity||identity.threadId!==c.threadId||identity.requestId!==c.requestId){identity={threadId:c.threadId,requestId:c.requestId,uploadId:crypto.randomUUID()};identities.set(file,identity);}return identity;
  }
+ const pendingAttachment=(file:File,identity:Identity,status:PendingAttachment['status']):HomerAttachment=>
+  ({id:identity.uploadId,type:file.type.startsWith('image/')?'image':'file',name:file.name,contentType:file.type,file,status,homer:identity});
  const owner={
   accept:'*',
   uploadId(file:File){return identityFor(file).uploadId;},
   confirmed(file:File){return !!identities.get(file)?.asset;},
   asset(file:File){return identityFor(file).asset;},
   retryFile(attachment:HomerAttachment){identities.set(attachment.file,attachment.homer);return attachment.file;},
+  snapshot(file:File){
+   const identity=identities.get(file);
+   if(identity)return pendingAttachment(file,identity,identity.asset?{type:'requires-action',reason:'composer-send'}:{type:'incomplete',reason:'upload-paused'});
+  },
   restore(asset:MediaView){
    const file=new File([],asset.filename,{type:asset.mime??''}),c=context();
    identities.set(file,{threadId:c.threadId,requestId:c.requestId,uploadId:asset.assetId,asset});
@@ -30,7 +36,7 @@ export function createHomerAttachmentAdapter(context:()=>DraftContext,request:ty
   markSubmitted(attachments:readonly Attachment[]){for(const attachment of attachments)submitted.add(identityKey((attachment as HomerAttachment).homer));},
   async *add({file}:{file:File}):AsyncGenerator<HomerAttachment,void>{
    const c=context();let identity=identityFor(file);
-   const pending=(status:PendingAttachment['status']):HomerAttachment=>({id:identity.uploadId,type:file.type.startsWith('image/')?'image':'file',name:file.name,contentType:file.type,file,status,homer:identity});
+   const pending=(status:PendingAttachment['status'])=>pendingAttachment(file,identity,status);
    if(identity.asset){yield pending({type:'requires-action',reason:'composer-send'});return;}
    if(!file.size&&file.type.startsWith('image/')){c.notice('Homer 无法解码空图片，空普通文件可上传。');throw Error('media_decode_failed');}
    if(file.size>8*1024*1024||/[\x00-\x1f/\\]/.test(file.name)){c.notice('Homer 每个上传文件最多8MiB，文件名不能包含路径或控制字符。');throw Error('upload_invalid_file');}

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createAnnotationDraft,annotationValidationReferences} from '../ui/annotation-draft.js';
+import {createAnnotationDraft,annotationValidationReferences,withoutDraftImage} from '../ui/annotation-draft.js';
 import {referenceKey,referencesOf,parseResourceReferences,type ResourceReference} from '../src/preview-reference.js';
 const source={kind:'attachment' as const,messageId:'message-synthetic-draft',assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,sha256:'a'.repeat(64),title:'Synthetic.png'};
 const notes=[{id:'one',region:{x:1,y:1,width:3,height:3},comment:'First'},{id:'two',region:{x:5,y:1,width:3,height:3},comment:'Second'}];
@@ -41,4 +41,18 @@ test('restore keeps the exact legacy wire and only confirmed renderer metadata; 
  const second=createAnnotationDraft();assert.equal(referencesOf(second.read()).length,0);
  assert.notEqual(referenceKey(legacy),referenceKey({...legacy,source:{...source,title:'Synthetic.txt',sha256:'b'.repeat(64)}}));
  const serialized=JSON.parse(JSON.stringify(draft.read()));assert.equal('file' in serialized,false);assert.deepEqual(serialized.resourceReference,legacy);
+});
+
+test('confirmed removal removes matching saved image context while retaining another revision',()=>{
+ const first={...image,image:asset};
+ const next={...image,source:{...source,revision:2},image:{...asset,revision:2}};
+ const firstKey=referenceKey(first),nextKey=referenceKey(next);
+ const saved={resourceReferences:[first,next],imageAssets:{[firstKey]:first.image,[nextKey]:next.image},preparingImages:{[firstKey]:image}};
+ const cleaned=withoutDraftImage(saved,asset);
+ assert.deepEqual(cleaned.resourceReferences,[next]);
+ assert.deepEqual(cleaned.imageAssets,{[nextKey]:next.image});
+ assert.deepEqual(cleaned.preparingImages,{});
+ const reopened=createAnnotationDraft();
+ reopened.restore(saved);reopened.forgetImage(asset);
+ assert.deepEqual(referencesOf(reopened.read()),[next]);
 });
