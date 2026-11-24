@@ -16,10 +16,11 @@ const require=createRequire(import.meta.url);
 const ui=process.env.HOMER_PREVIEW_UI,runtime=process.env.HOMER_PREVIEW_RUNTIME,evidence=process.env.HOMER_PREVIEW_EVIDENCE;
 if(!ui||!runtime||!evidence)throw Error('preview_electron_requires_explicit_ui_runtime_evidence');
 test('desktop Preview links enforce source authority and preserve foreground ownership', {timeout:60000},()=>runPreview(true));
+test('native HTML modal annotation preserves its draft and uses the real Composer', {timeout:60000},()=>runPreview(false,true));
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},()=>runPreview(false));
-test('desktop Preview locates linked source lines in Markdown and plain text', {timeout:60000},()=>runPreview(false,true));
-async function runPreview(linksOnly,linesOnly=false){
- const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':linesOnly?'lines':'.');await mkdir(out,{recursive:true});
+test('desktop Preview locates linked source lines in Markdown and plain text', {timeout:60000},()=>runPreview(false,false,true));
+async function runPreview(linksOnly,modalOnly=false,linesOnly=false){
+ const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':'.');await mkdir(out,{recursive:true});
  const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
@@ -93,6 +94,91 @@ async function runPreview(linksOnly,linesOnly=false){
   watchdog=setTimeout(()=>electron.process()?.kill('SIGKILL'),110000);
   const host=await electron.firstWindow();host.on('pageerror',e=>errors.push(e.message));
   const electronExit=new Promise(resolve=>electron.process().once('exit',(code,signal)=>resolve({code,signal})));
+  const waitPage=async target=>{let p;await until(()=>!!(p=electron.context().pages().find(p=>p.url()===target)));return p;};
+  async function annotationMode(active){const button=host.getByRole('button',{name:'批注',exact:true});await button.click();await host.waitForFunction(active=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-pressed')===String(active),active);await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');}
+  async function hoverMatch(target,selector){await target.locator(selector).hover();await target.waitForFunction(selector=>{const h=document.querySelector('[data-homer-annotation]')?.shadowRoot?.querySelector('.annotation-hover-outline'),e=document.querySelector(selector);if(!h||!e)return false;const a=h.getBoundingClientRect(),b=e.getBoundingClientRect();return Math.abs(a.x-b.x)<1&&Math.abs(a.y-b.y)<1&&Math.abs(a.width-b.width)<1&&Math.abs(a.height-b.height)<1;},selector);}
+  if(modalOnly){
+   await host.getByRole('link',{name:'打开业务网页',exact:true}).click();releaseSlowPage();
+   const page=await waitPage(url+'/start');page.on('pageerror',error=>errors.push(error.message));
+   await annotationMode(true);
+   await page.locator('#target').click();
+   await page.getByRole('textbox',{name:'网页元素批注'}).fill('普通网页对照');
+   await page.getByRole('button',{name:'保存',exact:true}).click();
+   await host.locator('.annotation-chip').filter({hasText:'普通网页对照'}).waitFor();
+   await page.evaluate(()=>{
+    const lower=document.createElement('dialog'),upper=document.createElement('dialog');
+    lower.id='annotation-modal';upper.id='annotation-upper';
+    lower.style.cssText='width:350px;max-height:70vh;transform:translateX(22px);overflow:hidden';
+    lower.innerHTML='<div id="annotation-scroll" style="height:220px;overflow:auto"><p style="height:40px">网页模态</p><button id="modal-target">模态内的原始内容</button><div style="height:400px"></div></div>';
+    upper.innerHTML='<button autofocus>上层网页模态</button>';
+    document.body.append(lower,upper);lower.showModal();
+   });
+   await hoverMatch(page,'#modal-target');
+   const modalHost=page.locator('#annotation-modal > [data-homer-annotation]:popover-open');
+   await modalHost.waitFor({state:'attached',timeout:3000});
+   assert.equal(await modalHost.locator('.annotation-marker').count(),0);
+   await page.locator('#modal-target').click();
+   const modalInput=modalHost.getByRole('textbox',{name:'网页元素批注'});
+   await modalInput.click();await modalInput.fill('下层草稿不可丢失');
+   await page.screenshot({path:join(out,'web-modal-editor.png')});
+   await page.evaluate(()=>document.querySelector('#annotation-upper').showModal());
+   assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'上层网页模态');
+   assert.equal(await modalInput.inputValue(),'下层草稿不可丢失');
+   assert.equal(await modalInput.evaluate(element=>{const rect=element.getBoundingClientRect();return document.elementFromPoint(rect.x+10,rect.y+10)===element.getRootNode().host;}),false);
+   await page.evaluate(()=>{const lower=document.querySelector('#annotation-modal');lower.tabIndex=-1;document.querySelector('#annotation-upper').close();lower.focus();});
+   assert.equal(await modalInput.inputValue(),'下层草稿不可丢失');
+   assert.equal(await page.evaluate(()=>document.activeElement?.id),'annotation-modal');
+   const popupTop=await modalInput.evaluate(element=>element.getBoundingClientRect().top);
+   await page.evaluate(()=>{document.querySelector('#annotation-scroll').scrollTop=35;});
+   await until(async()=>Math.abs(await modalInput.evaluate(element=>element.getBoundingClientRect().top)-popupTop+35)<2);
+   await electron.evaluate(()=>{
+    const contents=globalThis.testWindow.webContents,send=contents.send;
+    contents.send=function(channel,...args){
+     if(channel==='homer:preview:annotation'){
+      contents.send=send;
+      args[0]={...args[0],baseRevision:-1};
+     }
+     return send.call(contents,channel,...args);
+    };
+   });
+   await modalHost.getByRole('button',{name:'保存',exact:true}).click();
+   await modalHost.getByRole('alert').filter({hasText:'输入已保留'}).waitFor();
+   assert.equal(await modalInput.inputValue(),'下层草稿不可丢失');
+   assert.equal(await host.locator('.annotation-chip').filter({hasText:'下层草稿不可丢失'}).count(),0);
+   await modalHost.getByRole('button',{name:'保存',exact:true}).click();
+   await host.locator('.annotation-chip').filter({hasText:'下层草稿不可丢失'}).waitFor();
+   await modalHost.getByRole('button',{name:'批注 2',exact:true}).click();await modalInput.fill('替换目标后仍保留草稿');
+   await page.evaluate(()=>{const target=document.querySelector('#modal-target');const replacement=target.cloneNode(true);replacement.textContent='替换后的内容';target.replaceWith(replacement);});
+   assert.equal(await modalInput.inputValue(),'替换目标后仍保留草稿');
+   assert.equal(await modalHost.locator('blockquote').textContent(),'模态内的原始内容');
+   await page.evaluate(()=>document.querySelector('#annotation-modal').close());
+   const documentHost=page.locator('body > [data-homer-annotation]');
+   await documentHost.getByRole('textbox',{name:'网页元素批注'}).waitFor();
+   assert.equal(await documentHost.getByRole('textbox',{name:'网页元素批注'}).inputValue(),'替换目标后仍保留草稿');
+   await documentHost.getByRole('button',{name:'取消',exact:true}).click();
+   assert.equal(await host.locator('.annotation-chip').filter({hasText:'替换目标后仍保留草稿'}).count(),0);
+   assert.equal(await documentHost.getByRole('button',{name:'批注 2',exact:true}).count(),0);
+   await host.locator('.composer-area .annotation-chip').filter({hasText:'下层草稿不可丢失'}).locator('.annotation-chip-remove').click();
+   await page.evaluate(()=>{document.querySelector('#annotation-modal').remove();document.querySelector('#annotation-upper').remove();});
+   record('native dialog annotations keep lower drafts, anchor during scroll, and do not rebind removed targets');
+   await page.evaluate(()=>{
+    const portal=document.createElement('div');
+    portal.setAttribute('role','dialog');portal.style.cssText='position:fixed;inset:20% auto auto 20%;z-index:50;transform:translateX(10px);background:white;padding:20px';
+    portal.innerHTML='<button id="portal-target">CSS 弹窗内容</button>';document.body.append(portal);
+   });
+   await hoverMatch(page,'#portal-target');
+   await page.locator('#portal-target').click();
+   await documentHost.getByRole('textbox',{name:'网页元素批注'}).fill('普通 CSS 弹窗对照');
+   await documentHost.getByRole('button',{name:'取消',exact:true}).click();
+   assert.equal(await documentHost.evaluate(element=>element.hasAttribute('popover')),false);
+   record('CSS portal keeps the existing body annotation path');
+   assert.deepEqual(errors,[]);
+   const versions=await electron.evaluate(()=>({electron:process.versions.electron,chromium:process.versions.chrome}));
+   await electron.close();const exit=await electronExit;assert.deepEqual(exit,{code:0,signal:null});
+   clearTimeout(watchdog);electronClosed=true;
+   await writeFile(join(out,'modal-report.json'),JSON.stringify({checks,versions,errors,exit,watchdog:false},null,2));
+   return;
+  }
   await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
   await host.getByRole('heading',{name:'合成本地原文',exact:true}).waitFor();
   if(linesOnly){
@@ -417,10 +503,7 @@ async function runPreview(linksOnly,linesOnly=false){
    await host.evaluate(({id,threadId})=>window.homerBrowserPreview.control({pageId:id,threadId,action:'close'}),first);
    record('slow-page-receipt', {explicitOpenAndReuseMs:performance.now()-started});
   }finally{releaseSlowPage();}
-  const waitPage=async target=>{let p;await until(()=>!!(p=electron.context().pages().find(p=>p.url()===target)));return p;};
   const page=await waitPage(url+'/start');page.on('pageerror',e=>errors.push(e.message));
-  async function annotationMode(active){const button=host.getByRole('button',{name:'批注',exact:true});await button.click();await host.waitForFunction(active=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-pressed')===String(active),active);await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');}
-  async function hoverMatch(target,selector){await target.locator(selector).hover();await target.waitForFunction(selector=>{const h=document.querySelector('[data-homer-annotation]')?.shadowRoot?.querySelector('.annotation-hover-outline'),e=document.querySelector(selector);if(!h||!e)return false;const a=h.getBoundingClientRect(),b=e.getBoundingClientRect();return Math.abs(a.x-b.x)<1&&Math.abs(a.y-b.y)<1&&Math.abs(a.width-b.width)<1&&Math.abs(a.height-b.height)<1;},selector);}
 
   await host.locator('.preview-toolbar-navigation').waitFor();assert.equal(await host.getByRole('button',{name:'交还 AI',exact:true}).count(),0);assert.equal(await host.locator('.preview-toolbar-navigation button').count(),3);assert.equal(await host.locator('.preview-toolbar-navigation button svg').count(),3);
   await annotationMode(true);await hoverMatch(page,'#heading');await hoverMatch(page,'#target');await page.screenshot({path:join(out,'web-hover.png')});await annotationMode(false);await page.locator('.annotation-hover-outline').waitFor({state:'detached'});await page.locator('#business').click();assert.equal(await page.locator('#business').innerText(),'已完成点击');await annotationMode(true);await page.locator('#target').click();

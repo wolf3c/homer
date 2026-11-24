@@ -82,6 +82,8 @@
 Markdown附件Preview已复用保存的原路径和媒体通道解析相邻图片（包括子目录与`../`），不要求图片同批交付；正文快照与当前图片语义明确，无路径不猜测。498项定向离线回归及1440／390px实际合成Preview验证通过；未安装部署或手机真机／真实RTC验收。见[实施边界与验证](main-worker-chat-architecture.md#markdown-附件相对图片2026-11-17)。
 
 Apple 芯片正式 `v0.1.6` 已用隔离资料验证从 `v0.1.4` 读取原会话、下载原附件、沿原线程续聊并回退读取。本机覆盖安装也核对了原会话与附件读取。[升级验收](../desktop-release-0.1.6-preparation.md)
+Preview [网页模态内的元素批注](preview-architecture.md#网页模态内的元素批注)已接入源码，隔离 Electron 完整专项 4/4 通过，包括双层模态、普通页面及 CSS Portal 对照，以及真实 Composer 保存拒收与重试；安装包待验，不包含编辑虚线优化。
+
 
 主提示词更新已接入宿主冷恢复。Apple 芯片上的隔离源码候选用固定 Codex 0.163.0 验证了 v0.1.4 和 build 291 旧会话的首轮、重启及压缩。采用相同注入方式的原型另通过真实模型对照。[宿主升级回归](../../tests/scenarios/prompt-resources.md#宿主升级回归)
 
