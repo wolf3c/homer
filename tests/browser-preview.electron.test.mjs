@@ -86,6 +86,13 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   const archivePath=join(await realpath(scratch),'test-build.zip');
   await writeFile(archivePath,Buffer.from([80,75,3,4]));await truncate(archivePath,412*1024*1024);
   f.app.history.record('desktop-archive-fixture',f.app.store.meta('mainThread'),`[打开测试安装包](${pathToFileURL(archivePath).href})`);
+  const codeString='`first\nsecond ${1}`';
+  const codeTarget='\t跨行 <>& 检查\r\n*/ const value = '+codeString+';';
+  const wrappedLine='// '+'wrap '.repeat(60);
+  const codeSource='// context\r\n'.repeat(136)+wrappedLine+'\r\n/* before\r'+codeTarget+'\r\n';
+  const codeBytes=Buffer.from('\uFEFF'+codeSource);
+  const denseSource=('1;'.repeat(50)+'\n').repeat(320)+'const dense = 1;';
+  const largeSource='// '+'x'.repeat(300)+'\r\n';
   if(linesOnly){
    const documentPath=join(scratch,'source.md'),plainPath=join(scratch,'source.txt');
    const paragraphs=Array.from({length:16},(_,index)=>`第 ${index+1} 段上下文。\n\n`).join('');
@@ -95,6 +102,11 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    const shapes=join(scratch,'shapes.md'),shapeLink=pathToFileURL(shapes).href;
    await writeFile(shapes,['- 父项','  - 子项甲','  - 子项乙','','| 题 |','| --- |','| 数据 |','','```js','const value = 1;','```','','折行 $x','+y$ 公式正文','','$$','x^2','$$','','- 父项正文','  ## 项内标题','  项内尾段','  - 子项'].join('\n'));
    const md=pathToFileURL(documentPath).href,html=pathToFileURL(localHtml).href;
+   const codePath=join(scratch,'source.ts'),densePath=join(scratch,'dense.ts'),largePath=join(scratch,'large.js');
+   await writeFile(codePath,codeBytes);await writeFile(densePath,denseSource);
+   await writeFile(largePath,largeSource.repeat(120)+'const large = 1;');
+   f.app.history.record('desktop-syntax-fixture',f.app.store.meta('mainThread'),
+    `[打开源码行](${pathToFileURL(codePath).href}:139) · [打开源码范围](${pathToFileURL(codePath).href}:139-141) · [打开高密度源码](${pathToFileURL(densePath).href}:321) · [打开长源码](${pathToFileURL(largePath).href}:121)`);
    await writeFile(localHtml,'<!doctype html>\n<meta charset="utf-8">\n<title>源码定位测试</title>\n<h1>页面原样</h1>');
    f.app.history.record('desktop-line-fixture',f.app.store.meta('mainThread'),
     `[打开第 37 行](${md}:37:3) · [打开跨段范围](${md}:35-37) · [打开空行](${md}:36) · [打开文本末行](${pathToFileURL(plainPath).href}:2001) · [打开 HTML 源码](${html}:4) · [打开列表范围](${shapeLink}:1-2) · [打开表格与代码范围](${shapeLink}:7-10) · [打开公式段落](${shapeLink}:13-14) · [打开显示公式](${shapeLink}:17) · [打开项内范围](${shapeLink}:21-22) · [打开越界范围](${shapeLink}:9-30)`);
@@ -412,6 +424,61 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
     await panel.getByRole('button',{name:'收起预览',exact:true}).click();
     await host.getByRole('link',{name,exact:true}).click();
    }
+   for(const [width,name,label] of [[1280,'打开源码行','139'],[760,'打开源码范围','139–141']]){
+    await electron.evaluate((_,width)=>testWindow.setContentSize(width,800),width);
+    await openOther(name);
+    await panel.getByText(`源文件第 ${label} 行`,{exact:true}).waitFor();
+    await located('跨行 <>& 检查','MARK');
+    const source=body.locator('pre[data-preview-text]');
+    assert.equal(await source.textContent(),codeSource);
+    assert.equal(await target.textContent(),width===760?codeTarget:'\t跨行 <>& 检查');
+    assert.equal(await target.locator('.hljs-comment').count(),1);
+    assert.equal(await target.locator('.hljs-comment').textContent(),width===760?'\t跨行 <>& 检查\r\n*/':'\t跨行 <>& 检查');
+    assert.equal(await source.locator('.hljs-keyword').textContent(),'const');
+    assert.equal(await source.locator('.hljs-string').textContent(),codeString);
+    assert.equal(await source.locator('.hljs-string .hljs-subst').textContent(),'${1}');
+    assert.ok(await source.locator('.hljs-comment').filter({hasText:wrappedLine.trim()}).evaluate(element=>element.getClientRects().length>1));
+    assert.equal(await source.evaluate(element=>{const range=document.createRange();range.selectNodeContents(element);return range.toString();}),codeSource);
+    assert.ok(await target.evaluate(mark=>{
+     const luminance=color=>color.match(/\d+/g).slice(0,3).map(Number).map(value=>value/255)
+      .map(value=>value<=0.04045?value/12.92:((value+0.055)/1.055)**2.4)
+      .reduce((sum,value,index)=>sum+value*[0.2126,0.7152,0.0722][index],0);
+     const background=luminance(getComputedStyle(mark).backgroundColor);
+     return [...mark.querySelectorAll('span')].every(span=>(background+0.05)/(luminance(getComputedStyle(span).color)+0.05)>=4.5);
+    }));
+    await host.screenshot({path:join(out,`syntax-${width}.png`)});
+   }
+   const selectedCode='const value = '+codeString;
+   assert.equal(await target.evaluate(mark=>{
+    const range=document.createRange();
+    const start=mark.querySelector('.hljs-keyword').firstChild,end=mark.querySelector('.hljs-string').lastChild;
+    range.setStart(start,0);range.setEnd(end,end.length);
+    const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    return range.toString();
+   }),selectedCode);
+   await host.locator('[data-slot=selection-toolbar-quote]').click();
+   await host.getByRole('textbox',{name:/文件批注/}).fill('保留跨语法标记的源码选区');
+   await host.getByRole('button',{name:'保存',exact:true}).click();
+   await host.locator('.composer-area .annotation-chip').filter({hasText:'保留跨语法标记的源码选区'}).waitFor();
+   await host.waitForFunction(code=>[...CSS.highlights.values()].some(highlight=>[...highlight].some(range=>range.toString()===code)),selectedCode);
+   const downloadedCode=join(scratch,'downloaded.ts');
+   await electron.evaluate((_,path)=>testWindow.webContents.session.once('will-download',(_event,download)=>download.setSavePath(path)),downloadedCode);
+   await panel.locator('[data-slot=file-download]').click();
+   await until(async()=>codeBytes.equals(await readFile(downloadedCode).catch(()=>Buffer.alloc(0))));
+   let opened=performance.now();
+   await openOther('打开高密度源码');
+   await located('const dense = 1;','MARK');
+   const denseOpenMs=Math.round(performance.now()-opened);
+   assert.equal(await body.locator('pre').textContent(),denseSource);
+   assert.equal(await body.locator('pre span').count(),0);
+   opened=performance.now();
+   await openOther('打开长源码');
+   await located('const large = 1;','MARK');
+   const largeOpenMs=Math.round(performance.now()-opened);
+   assert.equal(await body.locator('pre').textContent(),largeSource.repeat(120)+'const large = 1;');
+   assert.equal(await body.locator('pre span').count(),0);
+   record('TypeScript retains mixed line endings and cross-line tokens at 1280/760px, preserves annotation offsets, and falls back on dense and large files with their targets intact',{denseOpenMs,largeOpenMs});
    await openOther('打开跨段范围');
    await panel.getByText('源文件第 35–37 行',{exact:true}).waitFor({timeout:3500});
    await located('前一项','P',2);

@@ -19,7 +19,7 @@ import {isMessageFileLink,messageFileLineSuffix} from '../src/message-links';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import { Highlight } from './markdown-code';
+import { Highlight, SourceCodePreview } from './markdown-code';
 import './canvas-panel.css';
 import {ImageRoot,ImagePreview} from './vendor/assistant-ui/image';
 import {FileDownload,FileSize} from './vendor/assistant-ui/file';
@@ -437,7 +437,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   const isMarkdown=file?.mime==='text/markdown'||!!file&&(!local||isText)&&/\.md$/i.test(file.name);
   const sourceLines=isText&&!isPatch&&!annotationFocus?file?.sourceLines:undefined;
   const location=useMemo(()=>file&&sourceLines?fileLineRange(file.text,sourceLines):undefined,[file,sourceLines]);
-  const sourceRange=location&&'from'in location?location:undefined;
+  const sourceRange=location?.from===undefined?undefined:location;
   const hasMarkdownTarget=!!(isMarkdown&&file&&sourceRange&&/\S/.test(file.text.slice(sourceRange.from,sourceRange.to)));
   const markdownLinePlugin=useMemo(()=>hasMarkdownTarget&&sourceLines?rehypeSourceLines(sourceLines):undefined,[hasMarkdownTarget,sourceLines]);
   const showSource=!!sourceLines&&(isHtml||(sourceView??(isMarkdown&&!!sourceRange&&!hasMarkdownTarget)));
@@ -453,9 +453,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
     const offset=target.getBoundingClientRect().top-reader.getBoundingClientRect().top;
     reader.scrollTop+=offset-reader.clientHeight/4;
   },[file,sourceRange,showSource,sourceView]);
-  const rawText=file&&<pre data-preview-text>{sourceRange?<>
-    {file.text.slice(0,sourceRange.from)}<mark data-preview-source-target="">{file.text.slice(sourceRange.from,sourceRange.to)}</mark>{file.text.slice(sourceRange.to)}
-  </>:file.text}</pre>;
+  const rawText=file&&<SourceCodePreview name={file.name} code={file.text} size={file.blob.size} range={sourceRange}/>;
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   const nativeHtml=isHtml&&!showSource&&window.homerBrowserPreview&&source;
