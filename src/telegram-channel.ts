@@ -10,6 +10,7 @@ import {imageThumbnail} from './media-decode.js';
 import {detectMedia,imageDimensions,MEDIA_POLICY} from './media-policy.js';
 import {MediaWorkQueue} from './media-work.js';
 import {telegramReplyContext,type TelegramContextMessage} from './telegram-context.js';
+import {telegramMarkdown} from './telegram-markdown.js';
 import type {TelegramApiCredentials,TelegramUpstream} from './telegram-mtproto.js';
 
 const tokenPattern=/^[1-9]\d{0,15}:[A-Za-z0-9_-]{10,128}$/;
@@ -420,11 +421,13 @@ export class TelegramChannel implements ChannelAdapter {
     const destination={chat_id,...(telegramGroup?.topicId?{message_thread_id:telegramGroup.topicId}:{}),
       ...(telegramGroup&&telegramReply!==false?{reply_parameters:{message_id:telegramGroup.messageId}}:{})};
     let body:object,method='sendMessage';
-    if(part.kind==='text'&&part.text.length<=4096){
-      body={...destination,text:part.text,link_preview_options:{is_disabled:true}};
+    const rendered=part.kind==='text'?telegramMarkdown(part.text):{file:Buffer.from(part.data,'base64')};
+    if('text' in rendered){
+      const {text,entities}=rendered;
+      body={...destination,text,...(entities.length?{entities}:{}),link_preview_options:{is_disabled:true}};
     }else{
       // One network effect per outbox part, even for text above Telegram's limit.
-      const bytes=part.kind==='attachment'?Buffer.from(part.data,'base64'):Buffer.from(part.text);
+      const bytes=typeof rendered.file==='string'?Buffer.from(rendered.file):rendered.file;
       if(!bytes.length||bytes.length>50_000_000)return {state:'failed'};
       method='sendDocument';
       const form=new FormData();

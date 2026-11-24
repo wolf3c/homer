@@ -15,6 +15,7 @@ import {secureWindowsDirectory} from '../scripts/windows-security.mjs';
 const A={token:'101:synthetic-bot-token-A',chatId:4_260_000_001,userId:4_260_000_001};
 const B={token:'102:synthetic-bot-token-B',chatId:4_260_000_002,userId:4_260_000_002};
 const ok=(result:unknown)=>Response.json({ok:true,result});
+const addressA={adapterId:'telegram',accountKey:'101',senderKey:String(A.userId),conversationKey:String(A.chatId)};
 
 test('an authorized Telegram group uses the main Agent and replies to the original message and topic',async()=>{
   const group={id:-100001,type:'supergroup'},unknown={id:-100002,type:'group'};
@@ -240,9 +241,9 @@ test('configured Telegram bots route replies and subscriptions through the Homer
   const f=fixture(adapters);
   const runtime=f.app.config.runtime;
   const file=join(f.app.config.workspace,'report.md');
-  const report=`[Background report](${pathToFileURL(file).href})`;
+  const report=`**[Background report](${pathToFileURL(file).href})**`;
   writeFileSync(file,'# Telegram fixture');
-  const sent:{bot:number;chatId:string;method:string;text?:string;filename?:string}[]=[];
+  const sent:{bot:number;chatId:string;method:string;text?:string;filename?:string;entities?:unknown}[]=[];
   const polled=new Set<number>();
   let usernameA: string | undefined='homer_work_bot';
   let usernameB: string | undefined='homer_personal_bot';
@@ -275,7 +276,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
     }else{
       assert.equal(method,'sendMessage');
       const data=JSON.parse(String(init?.body));
-      sent.push({bot,chatId:data.chat_id,method,text:data.text});
+      sent.push({bot,chatId:data.chat_id,method,text:data.text,entities:data.entities});
     }
     return ok({message_id:sent.length,chat:{id:chat.chatId},from:{id:bot}});
   };
@@ -317,7 +318,7 @@ test('configured Telegram bots route replies and subscriptions through the Homer
         const final=++background>1?report:'Before subscription';
         return {status:'completed',text:final,messages:[{itemId:'final',phase:'final_answer',text:final}]};
       }
-      return {status:'completed',text:'Reply to '+text};
+      return {status:'completed',text:'Reply to '+(text.startsWith('hello')?'*'+text+'*':text)};
     });
     const finishWorker=async()=>{
       await until(()=>f.engines.some(engine=>engine.finish));
@@ -337,6 +338,9 @@ test('configured Telegram bots route replies and subscriptions through the Homer
     await finishWorker();
     await until(()=>sent.some(item=>item.method==='sendDocument'));
     assert.deepEqual([...polled],[101]);
+    const reportIndex=sent.findIndex(item=>item.method==='sendDocument');
+    assert.deepEqual(sent[reportIndex-1],{bot:101,chatId:String(A.chatId),method:'sendMessage',text:'Background report',
+      entities:[{type:'bold',offset:0,length:17}]});
     assert.deepEqual(sent.find(item=>item.method==='sendDocument'),
       {bot:101,chatId:String(A.chatId),method:'sendDocument',text:'# Telegram fixture',filename:'report.md'});
 
@@ -367,6 +371,8 @@ test('configured Telegram bots route replies and subscriptions through the Homer
     assert.equal(f.inputs.at(-1),spoof);
     assert.deepEqual(sent.filter(item=>item.text?.startsWith('Reply to hello')).map(item=>[item.bot,item.chatId,item.text]).sort(),
       [[101,String(A.chatId),'Reply to hello A'],[102,String(B.chatId),'Reply to hello B']]);
+    for(const item of sent.filter(item=>item.text?.startsWith('Reply to hello')))
+      assert.deepEqual(item.entities,[{type:'italic',offset:9,length:7}]);
     await configure([B]);
     inbound(101,7,'unbound');
     inbound(102,7,'after restart');
@@ -418,6 +424,186 @@ test('an invalid optional Telegram history config preserves Bot API messaging',a
   }finally{await f.close();}
 });
 
+const markdownPacket={address:addressA,messageId:'test',attemptId:'test',
+  part:{kind:'text' as const,text:'**fixture**'}};
+
+test('Telegram sends rendered Markdown and UTF-16 entities in a single request',async()=>{
+  const requests:{url:string;body:any}[]=[];
+  const adapter=new TelegramChannel([A],async(url,init)=>{
+    requests.push({url:String(url),body:JSON.parse(String(init?.body))});
+    return ok({message_id:17,chat:{id:A.chatId},from:{id:101}});
+  });
+  const signal=new AbortController().signal;
+  const send=async(text:string)=>{
+    const before=requests.length;
+    assert.deepEqual(await adapter.send({...markdownPacket,part:{kind:'text',text}},signal),{state:'sent',receipt:'17'});
+    assert.equal(requests.length,before+1);
+    const request=requests.at(-1)!;
+    assert.match(request.url,/\/sendMessage$/);
+    return request.body;
+  };
+  const body=await send([
+    '# Heading',
+    '😀 ***é 👩‍💻*** [**read** ][REF] **before `a<&` after** [read `code`](https://example.com/) <https://example.net/bare>',
+    '```txt\n  code  \n  more  \n```',
+    '[ref]: https://example.com/a?b=c&d=x\n[REF]: https://second.example/',
+  ].join('\n\n'));
+  assert.equal(body.text,'Heading\n\n😀 é 👩‍💻 read  before a<& after read code https://example.net/bare\n\n  code  \n  more  ');
+  assert.deepEqual(body.entities,[
+    {type:'bold',offset:0,length:7},
+    {type:'bold',offset:12,length:8},
+    {type:'italic',offset:12,length:8},
+    {type:'bold',offset:21,length:4},
+    {type:'text_link',offset:21,length:4,url:'https://example.com/a?b=c&d=x'},
+    {type:'bold',offset:27,length:6},
+    {type:'code',offset:34,length:3},
+    {type:'bold',offset:37,length:6},
+    {type:'code',offset:49,length:4},
+    {type:'pre',offset:80,length:15},
+  ]);
+  assert.deepEqual(body.link_preview_options,{is_disabled:true});
+  assert.ok(!('parse_mode' in body));
+
+  const structures=await send([
+    '> quoted **bold**  \n> next\n>\n> ```\n>   code\n> ```',
+    '3. one\n   - **two**\n4. three',
+    'A|B\n-| -\n$x^2$|![photo](https://image.example/secret)',
+    '<i data-local="/tmp/hidden">inline</i>',
+    '<div>hidden /home/me</div>',
+    '**unclosed [markup',
+  ].join('\n\n'));
+  assert.equal(structures.text,'› quoted bold\n› next\n\n›   code\n\n3. one\n  • two\n4. three\n\nA ｜ B\nx^2 ｜ photo\n\ninline\n\nHTML 内容已省略\n\n**unclosed [markup');
+  assert.deepEqual(structures.entities,[{type:'bold',offset:9,length:4},{type:'bold',offset:43,length:3}]);
+
+  const paths=await send([
+    '[label](file:///Users/A%20B/private) [relative](folder/private.txt) [folder/private.txt](folder/private.txt)',
+    '[script](javascript:alert%281%29) [credential](https://alice:secret@example.com/private) [odd](https:///host)',
+    'Read /Users/Jane Doe, then continue.',
+    'Run cat /tmp/A(B)/name',
+    'See ~/Private Folder',
+    'Windows C:\\Users\\Test (Lab)\\file',
+    'Share \\\\nas\\share\\Private Folder',
+    '![Share \\\\nas\\share\\Private Folder](https://image.example/picture)',
+    'Keep "/Users/Shared Folder" for later, and folder/private.txt.',
+    '[Known](file:///Users/Jane) is a label. Read /Users/Jane Doe',
+    '👩‍💻 **Check `/tmp/A(B)/name`**',
+    '```sh\n  cat /tmp/Private Folder\n  echo ok\n```',
+    'Math 1 / 2 and <https://example.com/api/path> stay.',
+  ].join('\n\n'));
+  assert.equal(paths.text,[
+    'label relative 附件','script credential odd','Read 附件','Run cat 附件','See 附件','Windows 附件','Share 附件','Share 附件',
+    'Keep "附件" for later, and 附件.','Known is a label. Read 附件','👩‍💻 Check 附件',
+    '  cat 附件\n  echo ok','Math 1 / 2 and https://example.com/api/path stay.',
+  ].join('\n\n'));
+  assert.deepEqual(paths.entities,[
+    {type:'bold',offset:paths.text.indexOf('Check'),length:5},
+    {type:'code',offset:paths.text.indexOf('Check')+6,length:2},
+    {type:'pre',offset:paths.text.indexOf('  cat'),length:'  cat 附件\n  echo ok'.length},
+  ]);
+
+  for(const input of [' \n\t','![ ](https://image.example/)','**/Users/**alice/**private**',
+    'Read **/Users/Jane** Doe','Share **\\\\nas\\share** Private Folder']){
+    const fallback=await send(input);
+    assert.equal(fallback.text,'此回复没有可发送的正文。');
+    assert.ok(!('entities' in fallback));
+  }
+});
+
+test('Telegram selects the long text document before sending and uses the rendered safe text',async()=>{
+  const requests:{url:string;body:RequestInit['body']}[]=[];
+  const adapter=new TelegramChannel([A],async(url,init)=>{
+    requests.push({url:String(url),body:init?.body});
+    return ok({message_id:18,chat:{id:A.chatId},from:{id:101}});
+  });
+  const send=async(text:string)=>{
+    const before=requests.length;
+    assert.deepEqual(await adapter.send({...markdownPacket,part:{kind:'text',text}},new AbortController().signal),
+      {state:'sent',receipt:'18'});
+    assert.equal(requests.length,before+1);
+    return requests.at(-1)!;
+  };
+  const edge='👩‍💻'+'字'.repeat(4091);
+  const direct=await send(edge);
+  assert.match(direct.url,/\/sendMessage$/);
+  assert.equal(JSON.parse(String(direct.body)).text,edge);
+  const document=async(input:string)=>{
+    const request=await send(input);
+    assert.match(request.url,/\/sendDocument$/);
+    assert.ok(request.body instanceof FormData);
+    assert.equal(request.body.get('chat_id'),String(A.chatId));
+    const file=request.body.get('document');
+    assert.ok(file instanceof File);
+    assert.equal(file.name,'homer-reply.txt');
+    assert.equal(file.type,'text/plain');
+    return file.text();
+  };
+  assert.equal(await document(edge+'x'),edge+'x');
+  const prefix='字'.repeat(3950);
+  const formatted=prefix+[
+    '**read** [guide](https://example.com/a) [https://example.com](https://example.com) /home/Private (Lab) Folder',
+    '[unused]: https://example.com/'+('x'.repeat(200)),
+  ].map(block=>'\n\n'+block).join('');
+  assert.ok(formatted.length>4096);
+  const safe=await document(formatted);
+  assert.ok(safe.length<4096);
+  assert.equal(safe,prefix+'\n\nread guide (https://example.com/a) https://example.com 附件');
+  const numbered='1. q\n'.repeat(810).trimEnd();
+  assert.ok(numbered.length<4096);
+  const expanded=await document(numbered);
+  assert.ok(expanded.length>4096);
+  assert.equal(expanded,Array.from({length:810},(_,index)=>(index+1)+'. q').join('\n'));
+});
+
+test('Telegram advances attachments after the fallback receipt and pins an unknown formatted body across restart',async()=>{
+  const messages:{method:string;text:string;entities?:unknown;filename?:string;mime?:string}[]=[];
+  const telegram=new TelegramChannel([A],async(url,init)=>{
+    const method=new URL(String(url)).pathname.split('/').at(-1)!;
+    if(init?.body instanceof FormData){
+      const file=init.body.get('document');
+      assert.ok(file instanceof File);
+      messages.push({method,text:await file.text(),filename:file.name,mime:file.type});
+    }else{
+      const {text,entities}=JSON.parse(String(init?.body));
+      messages.push({method,text,entities});
+      if(text.startsWith('Unknown'))return ok({message_id:3,chat:{id:B.chatId},from:{id:101}});
+    }
+    return ok({message_id:messages.length,chat:{id:A.chatId},from:{id:101}});
+  });
+  const f=fixture([{id:'telegram',send:telegram.send.bind(telegram)}]);
+  try{
+    const file=join(f.app.config.workspace,'report.txt');
+    writeFileSync(file,'Original attachment 😀\n');
+    f.setScript(async(_main,input)=>{
+      const prefix=input.endsWith('unknown')?'**Unknown**':'**/Users/**alice/**private**';
+      const text=prefix+'\n\n[Report]('+pathToFileURL(file).href+')';
+      return {status:'completed',text,messages:[{itemId:'final',phase:'final_answer',text}]};
+    });
+    telegram.applyBindings(f.app.channels!);
+    await f.app.start();
+    const send=async(eventId:string)=>{
+      f.app.channels!.receiveText({...addressA,eventId,text:eventId});
+      await f.app.idle();
+      await f.app.channels!.synchronize();
+    };
+    await send('fallback');
+    await send('unknown');
+    assert.deepEqual(messages,[
+      {method:'sendMessage',text:'此回复没有可发送的正文。',entities:undefined},
+      {method:'sendDocument',text:'Original attachment 😀\n',filename:'report.txt',mime:'text/plain'},
+      {method:'sendMessage',text:'Unknown\n\nReport',entities:[{type:'bold',offset:0,length:7}]},
+    ]);
+    await f.restart(app=>telegram.applyBindings(app.channels!));
+    await f.app.channels!.synchronize();
+    assert.equal(messages.length,3);
+    const db=new DatabaseSync(join(f.app.config.runtime,'channels.sqlite'),{readOnly:true});
+    try{
+      const row=db.prepare("SELECT nextPart,receipts FROM channel_outbox WHERE state='unknown'").get();
+      assert.equal(row?.nextPart,0);
+      assert.deepEqual(JSON.parse(String(row?.receipts)).map((receipt:{state:string})=>receipt.state),['unknown']);
+    }finally{db.close();}
+  }finally{await f.close();}
+});
+
 test('Telegram config protects secrets and delivery distinguishes rejection from unknown',async()=>{
   const f=fixture();
   try{
@@ -435,17 +621,22 @@ test('Telegram config protects secrets and delivery distinguishes rejection from
       assert.throws(()=>telegramChannel(f.app.config.runtime),/telegram_config_(permissions|unreadable)/);
     }
     let attempt=0;
-    const adapter=new TelegramChannel([A],async url=>{
-      if(++attempt===1)return Response.json({ok:false,error_code:403},{status:403});
-      throw Error(String(url));
+    const adapter=new TelegramChannel([A],async(url,init)=>{
+      assert.match(String(url),/\/sendMessage$/);
+      const body=JSON.parse(String(init?.body));
+      assert.deepEqual(body.entities,[{type:'bold',offset:0,length:7}]);
+      if(++attempt===1)return Response.json({ok:false,error_code:400},{status:400});
+      if(attempt===2)return ok({message_id:1,chat:{id:B.chatId},from:{id:101}});
+      await wait(1000,undefined,{signal:init?.signal??undefined});
+      throw Error('expected_abort');
     });
-    const packet={address:{adapterId:'telegram',accountKey:'101',senderKey:String(A.userId),conversationKey:String(A.chatId)},
-      messageId:'test',attemptId:'test',part:{kind:'text' as const,text:'fixture'}};
+    const packet=markdownPacket;
     const signal=new AbortController().signal;
     assert.deepEqual(await adapter.send(packet,signal),{state:'failed'});
     assert.deepEqual(await adapter.send(packet,signal),{state:'unknown'});
+    assert.deepEqual(await adapter.send(packet,AbortSignal.timeout(10)),{state:'unknown'});
     assert.deepEqual(await adapter.send({...packet,address:{...packet.address,conversationKey:'999'}},signal),{state:'failed'});
-    assert.equal(attempt,2);
+    assert.equal(attempt,3);
     const methods:string[]=[];
     const wrongBot=new TelegramChannel([A],async url=>{
       methods.push(new URL(String(url)).pathname.split('/').at(-1)!);

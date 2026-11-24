@@ -8,7 +8,10 @@ import {webMediaRoute} from './web-contract.js';
 export type MessageSource = { id: string; url: string; title: string; kind: 'reply-link' };
 type Node = { type: string; url?: string; identifier?: string; value?: string; children?: Node[];position?:{start:{offset:number};end:{offset:number}} };
 const walk = (node:Node,visit:(node:Node)=>void) => {visit(node);node.children?.forEach(child=>walk(child,visit));};
-const parse=(markdown:string)=>fromMarkdown(markdown,{extensions:[gfm(),math()],mdastExtensions:[gfmFromMarkdown(),mathFromMarkdown()]}) as Node;
+export const parseMessageMarkdown=(markdown:string)=>fromMarkdown(markdown,{
+  extensions:[gfm(),math()],mdastExtensions:[gfmFromMarkdown(),mathFromMarkdown()],
+});
+const parse=(markdown:string)=>parseMessageMarkdown(markdown) as Node;
 const label=(node:Node):string=>node.value??node.children?.map(label).join('')??'';
 
 const previewSegmenter=new Intl.Segmenter(undefined,{granularity:'grapheme'});
