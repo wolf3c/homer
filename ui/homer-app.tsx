@@ -1991,7 +1991,8 @@ function HomerApp() {
             <div className="messages" ref={messageList}><MessageTimestamps messages={state.messages}>
               {virtualRows.map((row,i)=><Fragment key={row.key}>
                 <div aria-hidden="true" style={{height:Math.max(0,row.start-(virtualRows[i-1]?.end??listTop))}}/>
-                <div data-index={row.index} data-continues-task={continuesReplyTask(processMessages.get(rows[row.index-1]?.id),processMessages.get(rows[row.index].id),runtimeMessages[rows[row.index].index].content.some(part=>part.type==='text'))||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
+                <div data-index={row.index} data-processing-tail={processingInline&&row.index===rows.length-1||undefined}
+                  data-continues-task={continuesReplyTask(processMessages.get(rows[row.index-1]?.id),processMessages.get(rows[row.index].id),runtimeMessages[rows[row.index].index].content.some(part=>part.type==='text'))||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
               </Fragment>)}
               <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
             </MessageTimestamps>
