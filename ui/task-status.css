@@ -25,7 +25,7 @@
 }
 .homer-task-status .status-task-row:not(:has(.status-task-workers)){align-content:center}
 .homer-task-status .status-task-title{grid-column:1}
-.homer-task-status button .status-task-title{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.homer-task-status .status-task-title-truncated{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .homer-task-status .status-task-running{grid-column:2;grid-row:1;display:grid;place-items:center;color:hsl(var(--muted-foreground))}
 .homer-task-status .status-task-workers{grid-column:1;display:flex;align-items:center;gap:5px;margin-top:3px;color:hsl(var(--muted-foreground));font-size:.75rem;font-variant-numeric:tabular-nums}
 .homer-task-status .status-task-entry:is([data-reference],[data-archive]) {position:relative;--task-action-size:24px;--task-top-action-size:21px}
@@ -54,17 +54,7 @@
 .homer-task-status .status-task-archive:disabled{filter:opacity(.45)}
 .homer-task-status :is(.status-task-reference,.status-task-archive):active{background:var(--strong-line)}
 .homer-task-status :is(.status-task-reference,.status-task-archive):focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
-@media (hover:hover){.homer-task-status button.status-task-row:hover{background:var(--soft)}}
-.homer-task-status button.status-task-row[aria-pressed="true"]{background:var(--soft-hover)}
-.homer-task-status button.status-task-row:active{background:var(--strong-line)}
-.homer-task-status button.status-task-row:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
-@media (forced-colors:active){
- .homer-task-status button.status-task-row[aria-pressed="true"]{outline:1px solid Highlight;outline-offset:-1px}
- .homer-task-status button.status-task-row:focus-visible{outline:2px solid CanvasText;outline-offset:-2px}
-}
-.homer-task-status .status-full-title{margin:6px 6px 0;padding:8px 0;border-top:1px solid var(--line);font-size:.875rem;overflow-wrap:anywhere}
-.homer-task-status .status-full-title span{display:block;color:hsl(var(--muted-foreground));font-size:.75rem}
-.homer-task-status .status-full-title small{display:block;margin-block-start:4px;color:hsl(var(--muted-foreground))}
+.homer-task-status [data-todo-id]:focus-visible>.status-task-entry .status-task-row{outline:2px solid var(--focus);outline-offset:-2px}
 .homer-task-status .status-archive-notice:not(:empty){padding:6px;font-size:.75rem;color:hsl(var(--muted-foreground))}
 .homer-task-status .status-list:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:2px}
 .homer-task-status .status-list .status-archive-toggle{justify-content:flex-start}

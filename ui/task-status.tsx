@@ -26,29 +26,26 @@ function archiveReason(reason:string){
   default:return '仍有事项记录待处理。';
  }
 }
-function TaskStatusRow({label,workerCount,running,selected,onSelect,onReference,archive}:{
- label:string;workerCount:number;running:boolean;selected:boolean;onSelect?:()=>void;onReference?:()=>void;
+function TaskStatusRow({label,workerCount,running,archived,onReference,archive}:{
+ label:string;workerCount:number;running:boolean;archived:boolean;onReference?:()=>void;
  archive?:{reason:string|null;pending:boolean;activate:()=>void};
 }){
- const id=useId();
- const Row=onSelect?'button':'div';
- const description=[running&&id+'-running',workerCount>0&&id+'-workers',archive?.reason&&id+'-archive-reason'].filter(Boolean).join(' ');
+ const archiveReasonId=useId();
  return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-archive={archive?'available':undefined}>
- <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}
-  {...(onSelect?{type:'button' as const,onClick:onSelect,'aria-labelledby':id,'aria-describedby':description||undefined,'aria-pressed':selected}:{})}>
-  <span id={id} className="status-task-title">{label}</span>
-  {running&&<span id={id+'-running'} className="status-task-running" role="img" aria-label="运行中" title="运行中">
+ <div data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}>
+  <span className={archived?'status-task-title':'status-task-title status-task-title-truncated'}>{label}</span>
+  {running&&<span className="status-task-running" role="img" aria-label="运行中" title="运行中">
    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin motion-reduce:animate-none">
     <circle cx="7" cy="7" r="6" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5"/>
     <path d="M7 1a6 6 0 0 1 6 6" stroke="currentColor" strokeWidth="1.5"/>
    </svg>
   </span>}
-  {workerCount>0&&<span id={id+'-workers'} className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
- </Row>
+  {workerCount>0&&<span className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
+ </div>
  {archive&&!running&&<button type="button" className="status-task-archive" aria-label={(archive.pending?'正在归档：':'归档事项：')+label}
   title={archive.reason??(archive.pending?'正在归档…':'归档事项')} disabled={!!archive.reason&&!archive.pending}
-  aria-disabled={archive.pending||undefined} onClick={archive.activate}><ArchiveIcon size={16} aria-hidden/></button>}
- {archive?.reason&&<span id={id+'-archive-reason'} className="sr-only">{archive.reason}</span>}
+  aria-disabled={archive.pending||undefined} aria-describedby={archive.reason?archiveReasonId:undefined} onClick={archive.activate}><ArchiveIcon size={16} aria-hidden/></button>}
+ {archive?.reason&&!running&&<span id={archiveReasonId} className="sr-only">{archive.reason}</span>}
  {onReference&&<button type="button" className="status-task-reference" aria-label={'引用事项：'+label} title="引用到对话" onClick={onReference}><MessageCirclePlus size={16} aria-hidden/></button>}
  </div>;
 }
@@ -60,7 +57,6 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onA
  running?:ReadonlySet<string>;onReference?:ListProps['onReference'];
  onArchive?:(task:OverviewTask)=>void;archiving?:ReadonlySet<string>;
 }){
- const [selectedId,setSelectedId]=useState<string>();
  const {data,reading,failure,stale,retry}=read;
  const retryButton=failure&&<button type="button" className={ghostButton} disabled={!!reading||!connected} onClick={event=>{
   if(document.activeElement===event.currentTarget)event.currentTarget.closest('section')?.focus({preventScroll:true});
@@ -76,12 +72,10 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onA
    const archive=onArchive&&!archived&&!stale&&(executing||task.archiveBlocker!==undefined)?{
     reason:task.archiveBlocker?archiveReason(task.archiveBlocker):null,pending:archiving?.has(task.id)===true,activate:()=>onArchive(task),
    }:undefined;
-   return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title}>
-    <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archive={archive}
-     onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}
-     selected={task.id===selectedId} onSelect={archived?undefined:()=>setSelectedId(id=>id===task.id?undefined:task.id)}/>
+   return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title} tabIndex={-1}>
+    <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archived={archived} archive={archive}
+     onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}/>
     {archived&&task.archiveReviewIssue&&<p className="status-archive-notice" role="status">{task.archiveReviewIssue==='failed'?'归档复核失败，事项已归档。':'归档复核结果待确认。'}</p>}
-    {!archived&&<div role="status" aria-atomic="true">{task.id===selectedId&&<p className="status-full-title"><span>完整标题</span>{title}{archive?.reason&&<small>{archive.reason}</small>}</p>}</div>}
    </section>;
   })}</div>
   {reading==='append'&&<p role="status">正在读取更多事项…</p>}
@@ -152,9 +146,7 @@ function TaskList({connected,refreshKey,running,onReference,location,onLocated,a
   const row=document.getElementById('task-'+encodeURIComponent(taskId));
   if(!row||!list.current?.contains(row))return false;
   row.scrollIntoView({block:'nearest'});
-  const control=row.querySelector<HTMLButtonElement>('button[data-slot="task-status-row"]');
-  if(control)control.focus({preventScroll:true});
-  else{row.tabIndex=-1;row.focus({preventScroll:true});}
+  row.focus({preventScroll:true});
   return true;
  }
 

@@ -76,8 +76,10 @@ try{
   const workStatus=page.getByRole('button',{name:'工作状态，2 项事项运行中',exact:true});
   assert.equal(await workStatus.locator('.status-entry-count').textContent(),'2');
   await workStatus.click();
-  const row=page.locator('[data-todo-id="task"] [data-slot="task-status-row"]');await row.click();
-  assert.equal(await row.locator('.status-task-title').innerText(),'合成精简事项');assert.ok(await row.getByRole('img',{name:'1 个 Worker'}).isVisible());assert.equal(await row.getAttribute('aria-pressed'),'true');
+  const taskRegion=page.locator('[data-todo-id="task"]');
+  const row=taskRegion.locator('[data-slot="task-status-row"]');await row.click();
+  assert.equal(await row.locator('.status-task-title').innerText(),'合成精简事项');assert.ok(await row.getByRole('img',{name:'1 个 Worker'}).isVisible());assert.equal(await row.getAttribute('aria-pressed'),null);
+  assert.equal(await taskRegion.locator('.status-full-title').count(),0);
   assert.equal(await row.getByRole('img',{name:'运行中'}).count(),1);
   const input=page.getByRole('textbox',{name:'给荷马发消息'});
   await workStatus.click();await input.fill('补上缺少的验证结果。');await workStatus.click();
@@ -90,10 +92,9 @@ try{
    const title=button.parentElement.querySelector('.status-task-title'),text=title.getBoundingClientRect(),control=button.getBoundingClientRect();
    return text.right<=control.left&&Math.abs(text.top+text.height/2-control.top-control.height/2)<=1&&getComputedStyle(title).textOverflow==='ellipsis';
   }));
-  await row.focus();
   if(width!==390)await row.hover();
   await page.locator('#task-status-panel').screenshot({path:join(destination,'task-reference-list-'+width+'.png'),animations:'disabled'});
-  if(width===390)await ref.tap();else{await row.hover();await ref.click();}
+  if(width===390)await ref.tap();else{await ref.focus();await page.keyboard.press('Enter');}
   await page.getByRole('button',{name:'移除事项引用'}).waitFor();
   assert.ok(await input.evaluate(el=>el===document.activeElement));
   assert.equal(await input.innerText(),'补上缺少的验证结果。');
@@ -104,7 +105,7 @@ try{
   assert.deepEqual(fixture.received.messages.at(-1)?.taskReference,{taskId:'task',version:1,title:task.title});
   assert.equal(fixture.received.messages.at(-1)?.text,'补上缺少的验证结果。');
   await sent.click();
-  await row.waitFor();await page.waitForFunction(()=>document.activeElement?.getAttribute('data-slot')==='task-status-row');
+  await row.waitFor();await page.waitForFunction(()=>document.activeElement?.getAttribute('data-todo-id')==='task');
   await page.screenshot({path:join(destination,'work-status-'+width+'.png'),animations:'disabled'});
   await page.keyboard.press('Escape');
   await page.locator('#task-status-panel').waitFor({state:'hidden'});

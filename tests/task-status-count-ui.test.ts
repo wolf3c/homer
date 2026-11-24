@@ -11,7 +11,7 @@ import type {TaskOverview,OverviewTask} from '../src/task-overview.js';
 // Real component + React SSR; only the async data-hook boundary is controlled.
 // This checks rendered semantics, not layout, focus, browser or hook scheduling.
 const output=await build({entryPoints:['ui/task-status.tsx'],bundle:true,write:false,platform:'node',format:'cjs',packages:'external',jsx:'automatic',loader:{'.css':'empty'},plugins:[{name:'snapshot-boundary',setup(b){b.onLoad({filter:/task-status-data\.ts$/},()=>({contents:'export function useTaskStatusData(){return globalThis.snapshot;}',loader:'ts'}));}}]});
-const context={module:{exports:{}},require:createRequire(new URL('../ui/task-status.tsx',import.meta.url)),EventTarget,snapshot:{} as Record<string,unknown>};
+const context={module:{exports:{}},require:createRequire(new URL('../ui/task-status.tsx',import.meta.url)),EventTarget,TextEncoder,snapshot:{} as Record<string,unknown>};
 runInNewContext(output.outputFiles[0]!.text,context);
 const Component=(context.module.exports as {TaskStatusPopover:ComponentType<Record<string,unknown>>}).TaskStatusPopover;
 const task=(id:string):OverviewTask=>({id,title:'合成任务',goal:'合成任务',notes:'',headVersion:1,revision:1,state:'open',historyState:'visible',sourceRequestId:null,workers:[{id:'worker-'+id,taskId:id,pendingMain:0,run:{id:'run-'+id,workerId:'worker-'+id,taskId:id,status:'running',phase:'executing',version:1,epoch:0,sourceRequestId:null}}]});

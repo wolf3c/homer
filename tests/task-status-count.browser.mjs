@@ -84,23 +84,11 @@ try{
    const row=el.getBoundingClientRect(),title=el.firstElementChild.getBoundingClientRect();
    return el.offsetHeight>=44&&Math.abs(row.top+row.bottom-title.top-title.bottom)<1;
   })&&await normal.locator('svg').count()===0,'zero Worker title is centered without metadata '+width);
-  if(width===1440){
-   await normal.hover();
-   const waitForBackground=color=>page.waitForFunction(expected=>getComputedStyle(document.querySelector('[data-todo-id="ordinary"] button')).backgroundColor===expected,color);
-   await waitForBackground('rgb(238, 236, 232)');
-   ok(true,'row hover shows a background');
-   await page.mouse.down();
-   await waitForBackground('rgb(203, 199, 191)');
-   ok(true,'row press has distinct feedback');
-   await page.mouse.up();
-  }else await normal.tap();
-  const full=current.getByRole('status').filter({hasText:'完整标题'});
-  ok(await normal.getAttribute('aria-pressed')==='true'&&await full.innerText()==='完整标题\n整理采购要求'&&await current.getByText(/不应显示的|执行记录/).count()===0,'selection reveals only the title '+width);
-  if(width!==390)await panel.screenshot({path:join(destination,'selection-'+width+'.png'),animations:'disabled'});
-  await normal.press('Space');
-  ok(await normal.getAttribute('aria-pressed')==='false'&&await full.count()===0,'keyboard clears selection '+width);
-  await normal.press('Enter');
-  ok(await normal.getAttribute('aria-pressed')==='true'&&await normal.evaluate(el=>el.matches(':focus-visible')),'keyboard selects with visible focus '+width);
+  const rowHeight=()=>normal.evaluate(el=>el.closest('[data-todo-id]').offsetHeight);
+  const height=await rowHeight();
+  if(width===1440)await normal.click();else await normal.tap();
+  ok(await rowHeight()===height&&await current.getByText(/完整标题|不应显示的|执行记录/).count()===0,'pressing the row reveals no content '+width);
+  ok(await normal.evaluate(el=>el.tagName==='DIV'&&el.tabIndex===-1&&!el.hasAttribute('aria-pressed')),'current row has no disclosure control '+width);
   ok(await toggle.getAttribute('aria-expanded')==='false'&&await archive.count()===0,'archive starts collapsed '+width);
   const layout=await toggle.evaluate(button=>{
    const row=button.closest('.status-list').querySelector('[data-slot="task-status-row"]');
@@ -132,7 +120,7 @@ try{
   const list=panel.getByRole('region',{name:'事项列表'});
   const scroll=()=>list.evaluate(el=>el.scrollTop);
   await current.locator('[data-todo-id="root-9"]').waitFor();
-  ok(await current.locator('[data-todo-id]').count()===23&&await normal.getAttribute('aria-pressed')==='true','underfilled first batch appends and keeps selection '+width);
+  ok(await current.locator('[data-todo-id]').count()===23&&await normal.isVisible(),'underfilled first batch appends and keeps existing rows '+width);
   ok(await panel.getByRole('button',{name:/上一页|下一页/}).count()===0,'no pagination controls '+width);
   await toggle.scrollIntoViewIfNeeded();await toggle.focus();
   const position=await scroll(),start=paths.length;
@@ -182,13 +170,12 @@ try{
   return title.height===21&&text.scrollWidth>text.clientWidth&&getComputedStyle(text).textOverflow==='ellipsis'&&title.right<=icon.left&&icon.top===title.top&&title.bottom<count.top&&el.scrollWidth<=el.clientWidth;
  })&&(await row.getAttribute('title'))===longTitle,'long title truncates beside icon and above count');
  await row.tap();
- ok(await panel.getByRole('status').filter({hasText:longTitle}).isVisible(),'touch reveals the entire long title');
- await row.focus();
+ ok(await panel.getByText(longTitle,{exact:true}).count()===1&&await panel.locator('.status-full-title').count()===0,'touch keeps a single truncated title');
  snapshot.tasks[0].headVersion++;
  snapshot.tasks[0].hasExecutingWorker=false;
  await page.evaluate(()=>window.statusFixture.update());
  await loading.waitFor({state:'hidden'});
- ok(await row.evaluate(el=>el===document.activeElement)&&await row.getAttribute('aria-pressed')==='true','matter revision preserves focus and selection');
+ ok(await row.getByText(longTitle,{exact:true}).isVisible(),'matter revision preserves the title');
  snapshot.tasks[0].hasExecutingWorker=true;
  await page.evaluate(()=>window.statusFixture.update());
  await loading.waitFor();
@@ -209,7 +196,7 @@ try{
  const notify=()=>page.evaluate(()=>window.statusFixture.update());
  const requestPaths=()=>paths.filter(path=>!path.startsWith(archivePath));
  const bottom=()=>scrollList.evaluate(el=>el.scrollTop=el.scrollHeight);
- const offset=id=>rows.filter({has:page.getByRole('button',{name:'合成任务 '+id,exact:true})}).evaluate(el=>el.getBoundingClientRect().top-el.closest('.status-list').getBoundingClientRect().top);
+ const offset=id=>current.getByRole('region',{name:'合成任务 '+id,exact:true}).evaluate(el=>el.getBoundingClientRect().top-el.closest('.status-list').getBoundingClientRect().top);
  await rows.nth(19).waitFor();
  ok(await rows.count()===20,'starts with one real-sized batch');
  const unfocusedToggle=panel.getByRole('button',{name:'已归档',exact:true});
