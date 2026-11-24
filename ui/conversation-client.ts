@@ -35,8 +35,10 @@ export function restoreComposerDraft(draft: { taskReference?:TaskReference; sche
   if (accepted) return same ? undefined : current;
   return current ?? previous;
 }
+export const homerFeedbackPrompt='请把下面的问题反馈给 Homer 团队。';
+
 export function canSubmitMessage(text: string, quotes: readonly AnnotatedQuote[], attachments: Readonly<NonNullable<ConversationInput['attachments']>>=[],resourceReference?:ResourceReference,resourceReferences?:ResourceReference[]): boolean {
-  if(text.length>16000||previewIntentTooLong({text,quotes:[...quotes],resourceReference,resourceReferences}))return false;
+  if(text.trim()===homerFeedbackPrompt||text.length>16000||previewIntentTooLong({text,quotes:[...quotes],resourceReference,resourceReferences}))return false;
   if(referencesOf({resourceReference,resourceReferences}).some(r=>r.kind==='image'&&!attachments.some(ref=>ref.assetId===r.image.assetId&&ref.revision===r.image.revision)))return false;
   return !!text.trim() || quotes.some(quote => !!quote.annotation.trim()) || attachments.length>0 || referencesOf({resourceReference,resourceReferences}).some(resourceHasComment);
 }

@@ -3,15 +3,15 @@ import { useAuiState } from '@assistant-ui/react';
 import { LexicalComposerInput, type LexicalComposerInputProps } from '@assistant-ui/react-lexical';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { mergeRegister } from '@lexical/utils';
-import { $addUpdateTag, $getSelection, COMMAND_PRIORITY_CRITICAL, DROP_COMMAND, KEY_DOWN_COMMAND, PASTE_COMMAND, SKIP_SCROLL_INTO_VIEW_TAG } from 'lexical';
+import { $addUpdateTag, $getRoot, $getSelection, COMMAND_PRIORITY_CRITICAL, DROP_COMMAND, KEY_DOWN_COMMAND, PASTE_COMMAND, SKIP_SCROLL_INTO_VIEW_TAG } from 'lexical';
 import { mobileView } from './web-connection-client';
 import './homer-composer-input.css';
 
 // The thread owns this callback; the mounted Lexical editor supplies focus.
-export const ComposerInputFocusContext = createContext<RefObject<(() => void) | null> | null>(null);
+export const ComposerInputFocusContext = createContext<RefObject<((atEnd?:boolean) => void) | null> | null>(null);
 export function useComposerInputFocus() {
   const focus = useContext(ComposerInputFocusContext);
-  return useCallback(() => { focus?.current?.(); }, [focus]);
+  return useCallback((atEnd?:boolean) => { focus?.current?.(atEnd); }, [focus]);
 }
 
 function HomerFocusPlugin() {
@@ -19,11 +19,15 @@ function HomerFocusPlugin() {
   const focus = useContext(ComposerInputFocusContext);
   useLayoutEffect(() => {
     if (!focus) return;
-    const focusEditor = () => {
+    const focusEditor = (atEnd?:boolean) => {
       if (!editor.isEditable()) return;
       // Lexical restores its caret (or selects the end), focuses with
       // preventScroll, and skips its separate caret scroll for this update.
-      editor.update(() => { $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG); editor.focus(); }, { discrete: true });
+      editor.update(() => {
+        $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+        if (atEnd === true) $getRoot().selectEnd();
+        editor.focus();
+      }, { discrete: true });
     };
     focus.current = focusEditor;
     return () => { if (focus.current === focusEditor) focus.current = null; };

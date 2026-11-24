@@ -899,8 +899,13 @@ function registerDesktopSettings(){
  });
  ipcMain.handle('homer:settings:open-about-link',async(event,...args)=>{
   const [link]=args;
-  if(args.length!==1||(link!=='website'&&link!=='github')||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');
-  try{await shell.openExternal(link==='website'?'https://super-tree.com/homer':'https://github.com/wolf3c/homer');}
+  const links={
+   website:'https://super-tree.com/homer',
+   github:'https://github.com/wolf3c/homer',
+   issue:'https://github.com/wolf3c/homer/issues/new?template=bug_report.yml',
+  };
+  if(args.length!==1||typeof link!=='string'||!Object.hasOwn(links,link)||!permissionCaller(event,event.senderFrame))throw Error('desktop_settings_forbidden');
+  try{await shell.openExternal(links[link]);}
   catch{throw Error('desktop_settings_link_unavailable');}
  });
 }

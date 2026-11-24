@@ -102,7 +102,6 @@ test('macOS focus guidance follows the reminder switches and keeps the manual pa
 }));
 test('about displays the version supplied by the desktop app',async()=>withDom(async d=>{
  let reads=0;
- window.homerDesktopFeatureTour={pending:async()=>false,dismiss:async()=>{}};
  window.homerDesktopSettings={onOpen:()=>()=>{},openAboutLink:async()=>{},getVersion:async()=>{reads++;return '9.8.7';}};
  await d.render(React.createElement(get().DesktopSettings));await d.click(button(d,'设置'));
  assert.equal(reads,0);
@@ -238,7 +237,7 @@ test('settings entry opens the approved dialog and two columns; close and thread
  assert.ok(d.find(n=>n.getAttribute('class')==='desktop-settings-layout'));
  assert.ok(d.find(n=>n.getAttribute('class')==='desktop-settings-nav'));
  assert.ok(d.find(n=>n.getAttribute('class')==='desktop-settings-content'));
- assert.equal(b.calls.length,1);assert.equal(focusProps.at(-1).initialFocus().getAttribute('role'),'tab');assert.equal(focusProps.at(-1).finalFocus.current,entry);
+ assert.equal(b.calls.length,1);assert.equal(focusProps.at(-1).initialFocus().getAttribute('role'),'tab');assert.equal(focusProps.at(-1).finalFocus(),entry);
  const wait=pending();b.check=()=>wait.promise;await d.click(button(d,'重新检查辅助功能'));await d.click(button(d,'关闭设置'));
  await act(async()=>wait.resolve(granted));assert.ok(!row(d,'辅助功能'));
  const threadWait=pending();b.check=()=>threadWait.promise;await d.click(entry);assert.ok(row(d,'辅助功能'));await render('b');await act(async()=>threadWait.resolve(granted));assert.ok(!row(d,'辅助功能'));

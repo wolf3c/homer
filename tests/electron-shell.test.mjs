@@ -1108,7 +1108,7 @@ test('desktop about reads the running app version only from the trusted main pag
  await assert.rejects(()=>version(event,'extra'),/desktop_settings_forbidden/);
  await assert.rejects(()=>version({...event,senderFrame:{...event.senderFrame}}),/desktop_settings_forbidden/);
 });
-test('desktop about opens only the two product links from the trusted main page',async()=>{
+test('desktop about opens only the three product links from the trusted main page',async()=>{
  let unavailable=false;
  const f=await permissionFixture({external:async()=>{if(unavailable)throw Error('private_browser_detail');}});
  const event=permissionEvent(f),open=f.handlers.get('homer:settings:open-about-link');
@@ -1118,9 +1118,11 @@ test('desktop about opens only the two product links from the trusted main page'
  assert.deepEqual(f.nativeCalls.filter(call=>call[0]==='external'),[]);
  await open(event,'website');
  await open(event,'github');
+ await open(event,'issue');
  assert.deepEqual(f.nativeCalls.filter(call=>call[0]==='external'),[
   ['external','https://super-tree.com/homer'],
   ['external','https://github.com/wolf3c/homer'],
+  ['external','https://github.com/wolf3c/homer/issues/new?template=bug_report.yml'],
  ]);
  unavailable=true;
  await assert.rejects(()=>open(event,'website'),error=>error.message==='desktop_settings_link_unavailable');

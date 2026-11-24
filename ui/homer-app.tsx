@@ -15,6 +15,7 @@ import {isDraftImageReference,parseResourceReference,parseResourceReferences,ref
 import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,type PreviewComposer,type PreviewRequest} from './preview-reference';
 import {TaskStatusPopover} from './task-status';
 import {MobileSettings} from './mobile-settings';
+import type {StartFeedback} from './settings-about';
 import {ExecutionUsage} from './execution-usage';
 import homerProcessing from './assets/homer-processing.gif';
 import {useMainProcessingIndicator} from './main-processing-indicator';
@@ -34,6 +35,7 @@ import {FileList} from './file-list';
 import {CanvasPanel, type CanvasArtifact,type PreviewTab} from "./canvas-panel";
 import{BrowserPreviewContext,openBrowserPreview,openPreviewLink,useBrowserPages}from'./browser-preview';
 import type{BrowserPage}from'../src/browser-preview';
+import {flushSync} from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Fragment,createContext,useContext,useCallback,useLayoutEffect, useEffect, useRef, useState,useMemo, type FormEvent, type ReactNode } from "react";
 import {
@@ -72,7 +74,7 @@ import { QuestionFlow } from './vendor/assistant-ui/question-flow';
 import { ElicitationForm } from './vendor/assistant-ui/elicitation-form';
 import {questionReply} from '../src/question-schema';
 import type { ConversationInput, MessageQuote, AnnotatedQuote, TaskReference } from "../src/web-history";
-import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
+import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, homerFeedbackPrompt, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {AttachmentRef,MediaView} from '../src/media-store';
 import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge,type DesktopNotice} from './desktop-permissions';
 import {DesktopFeatureTour} from './desktop-feature-tour';
@@ -420,8 +422,9 @@ function HomerSelectionToolbar({viewport}:{viewport:React.RefObject<HTMLDivEleme
     </Popover.Positioner></Popover.Portal>
   </Popover.Root>;
 }
-function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview }: {
+function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connected, stopping, onSend,onStop,editDraft,attachmentOwner,composerRuntime,bindAttachments,queueContent,onQueueBusy,answerTarget,onAnswerTarget,interactionsVerified,onAccount,captureShortcutRecording,splitPreview }: {
   annotationDraft:AnnotationDraft;bindPreview:(value:PreviewComposer|null)=>void;state: WebState; connected: boolean; stopping: string | null;
+  bindFeedback:(start:StartFeedback|null)=>void;
   editDraft?: {text:string;id:string;source?:'welcome'};
   answerTarget?:WebInteraction;onAnswerTarget:(item:WebInteraction|undefined)=>void;interactionsVerified:boolean;
   attachmentOwner:HomerAttachmentAdapter;composerRuntime:ThreadComposerRuntime;bindAttachments:(read:()=>DraftContext)=>void;
@@ -949,6 +952,23 @@ function MainComposer({ bindPreview,annotationDraft,state, connected, stopping, 
     const metadata={...annotationDraft.read().htmlMetadata};if(htmlNotes)metadata[key]=Object.fromEntries(htmlNotes.map(({id,isFixed,selectedText,isMultiSelect,elementBoundingBoxes})=>[id,{isFixed,selectedText,isMultiSelect,elementBoundingBoxes}]));
     annotationDraft.replace(refs,metadata);setDraftNotice('');
   }
+  useLayoutEffect(()=>{
+    bindFeedback(closeSettings=>{
+      if(blocked||submitting.current)return '暂时无法输入，请稍后重试。';
+      if(answerRef.current||quoteEditorRef.current||screenshotRef.current)return '请先处理当前草稿，再通过 Homer 反馈。';
+      const {text}=composerRuntime.getState(),prefix=homerFeedbackPrompt+'\n';
+      const next=text.startsWith(prefix)?text:text===homerFeedbackPrompt?prefix:prefix+text;
+      if(next.length>16000)return '草稿过长，缩短后可加入反馈引导。';
+      // Release the modal focus trap within the same user gesture.
+      flushSync(()=>{
+        if(next!==text)aui.composer().setText(next);
+        setDraftNotice('');
+        closeSettings();
+      });
+      focusInput(true);
+    });
+    return ()=>bindFeedback(null);
+  });
   useLayoutEffect(()=>{bindPreview({selectTask:value=>{
     if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current||!state.features?.taskReference){
       setDraftNotice('请先返回普通输入，再引用事项。');return false;
@@ -1178,6 +1198,8 @@ function HomerApp() {
   const [composerBusy,setComposerBusy]=useState(false);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [captureShortcutRecording,setCaptureShortcutRecording]=useState(false);
+  const feedbackDraft=useRef<StartFeedback|null>(null);
+  const startFeedback:StartFeedback=close=>feedbackDraft.current?feedbackDraft.current(close):'暂时无法输入，请稍后重试。';
   const accountSettings=useRef<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>(null);
   const [canvasOpen,setCanvasOpen]=useState(false);
   const hostStateFrame=useRef(0);
@@ -1209,7 +1231,7 @@ function HomerApp() {
   const canvasArtifact=activePreviewTab&&!('kind' in activePreviewTab)?activePreviewTab:activeBrowser?.source.kind==='attachment'?{...activeBrowser.source,id:JSON.stringify([activeBrowser.source.messageId,activeBrowser.source.assetId,activeBrowser.source.revision])}:null;
   const annotationDraft=useMemo(()=>createAnnotationDraft(),[state.threadId]);
   const [annotationFocus,setAnnotationFocus]=useState<{key:string;id:string;nonce:string;history?:PreviewRequest}>();
-  const focusEditor=useMemo<{current:(()=>void)|null}>(()=>({current:null}),[state.threadId]);
+  const focusEditor=useMemo<{current:((atEnd?:boolean)=>void)|null}>(()=>({current:null}),[state.threadId]);
   const previewScope=useRef({key:'',generation:0});
   function updatePreviewScope(open:boolean,id:string|null){
     const key=JSON.stringify([state.threadId,open,id]);
@@ -1936,7 +1958,7 @@ function HomerApp() {
       <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings/>:<DesktopSettings key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -1989,7 +2011,7 @@ function HomerApp() {
             <span className="sr-only" role="status">AI 正在处理</span>
             <img ref={indicator.sprite} className="processing-sprite" data-docked={indicator.docked} src={homerProcessing} width={40} height={40} alt=""/>
           </>}
-          <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
+          <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} bindFeedback={start=>{feedbackDraft.current=start;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
       </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onLocationApproval={id=>{if(narrowPreview)closeCanvas();void readActivePage('interactions',activePages.current.interactions.cursor,id).then(found=>{if(found===true)setInteractionFocus(id);else setPageNotice('原请求已处理或失效。');});}} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
