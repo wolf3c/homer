@@ -13,6 +13,7 @@ export function ScheduleCard({
   statusLabel,
   timeLabel,
   endAction,
+  note,
   onDetails,
   detailLabel,
   className,
@@ -33,6 +34,7 @@ export function ScheduleCard({
   statusLabel?: string;
   timeLabel: string;
   endAction?: ReactNode;
+  note?: string;
   onDetails?: () => void;
   detailLabel?: string;
 }) {
@@ -41,35 +43,29 @@ export function ScheduleCard({
       data-slot="schedule-card"
       className={cn(
         paper,
-        "flex w-full max-w-sm flex-col gap-3 rounded-2xl p-4",
+        "flex w-full flex-col gap-3 rounded-2xl p-4",
         className,
       )}
 
       {...props}
     >
       {onDetails && <button type="button" className="card-detail-trigger" aria-label={detailLabel} onClick={onDetails} />}
-      <div className="flex items-center gap-2.5 schedule-heading">
-        <span className="bg-foreground/[0.05] text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-lg">
-          <ClockIcon className="size-3.5" />
+      <div className="schedule-heading">
+        <span className="schedule-clock bg-foreground/[0.05] text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-lg">
+          <ClockIcon className="size-3.5" aria-hidden />
         </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="schedule-title-line"><span className="truncate text-[13.5px] font-medium">{name}</span>{statusLabel && <span className="schedule-status">{statusLabel}</span>}</div>
-          <div className="schedule-meta-line"><span className={cn(mono, "text-muted-foreground")}>{cadence}</span>{endAction}</div>
+        <span className="schedule-title text-[13.5px] font-medium">{name}</span>
+        {statusLabel && <span className="schedule-status" data-enabled={statusLabel === "已启用" ? "" : undefined}>{statusLabel}</span>}
+        <span className={cn(mono, "schedule-cadence text-muted-foreground")}>{cadence}</span>
+      </div>
+      <div className="schedule-bottom">
+        <div className={cn(field, "schedule-delivery rounded-xl px-3 py-2")}>
+          <span className={cn(mono, "text-muted-foreground")}>{timeLabel}</span>
+          <span className="text-foreground/80 text-[13px]">{nextRun}</span>
         </div>
+        {endAction}
       </div>
-
-      <div
-        className={cn(
-          field,
-          "flex items-center gap-2 rounded-xl px-3 py-2",
-        )}
-      >
-        <span className={cn(mono, "text-muted-foreground")}>{timeLabel}</span>
-        <span className="text-foreground/80 min-w-0 flex-1 text-[13px]">
-          {nextRun}
-        </span>
-      </div>
-
+      {note && <p className="schedule-note">{note}</p>}
 
     </div>
   );

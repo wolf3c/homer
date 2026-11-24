@@ -29,8 +29,11 @@ function coalesceReads(run:(signal:AbortSignal,offset:number)=>Promise<void>){
  };
  return {load,close:()=>controller.abort()};
 }
-export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void}){
- const [items,setItems]=useState<ScheduleSummary[]>([]),[next,setNext]=useState<number|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+const scheduleExample='每周五下午 5 点，提醒我写周报。';
+
+export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onExample}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void;onExample:(text:string)=>string|undefined}){
+ const [items,setItems]=useState<ScheduleSummary[]>([]),[next,setNext]=useState<number|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState('');
+ const [exampleError,setExampleError]=useState<string>();
  const [selected,setSelected]=useState<string|null>(null);
  const [detailState,setDetail]=useState<{id:string;result?:Extract<ScheduleReadResult,{item:unknown}>}|null>(null);
  const origin=useRef<HTMLElement|null>(null),listRead=useRef<(offset?:number)=>void>(()=>{}),detailRead=useRef<()=>void>(()=>{});
@@ -68,15 +71,25 @@ export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference}:{t
  useEffect(()=>{refresh();},[refreshKey,threadId,readEpoch]);
  const current=detailState?.id===selected?detailState:null;
  const detail=current?.result?.item;
- const card=(row:ScheduleSummary)=><div className="schedule-record" key={row.scheduleId}><ScheduleCard name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className="homer-schedule-card" detailLabel={'查看定时任务详情：'+row.title} onDetails={()=>{origin.current=document.activeElement as HTMLElement;setSelected(row.scheduleId);}} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>{row.note&&<p className="schedule-note">{row.note}</p>}</div>;
+ const card=(row:ScheduleSummary)=><ScheduleCard key={row.scheduleId} name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className={row.enabled?'homer-schedule-card':'homer-schedule-card schedule-inactive'} note={row.note} detailLabel={'查看定时任务详情：'+row.title} onDetails={()=>{origin.current=document.activeElement as HTMLElement;setSelected(row.scheduleId);}} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>;
  const enabled=items.filter(row=>row.enabled),disabled=items.filter(row=>!row.enabled);
+ const empty=!items.length&&!error&&!busy&&next===null;
  return <div className="homer-schedules">
-  <div className="schedule-list-body"><p className="schedule-note">当前定时安排</p>{error&&<p role="status" className="schedule-note">{error} <button type="button" disabled={busy} onClick={refresh}>重试</button></p>}
-  {!items.length&&!error&&<p role="status" className="schedule-note">{busy?'正在读取…':'暂无定时任务'}</p>}
-  {!!enabled.length&&<><h2 className="schedule-section">定时安排 · 已加载 {enabled.length}</h2>{enabled.map(card)}</>}
-  {!!disabled.length&&<details className="schedule-stopped"><summary>已停用 · 已加载 {disabled.length}</summary>{disabled.map(card)}</details>}
-  {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>listRead.current(next)}>加载更多</button>}</div>
-  <p className="schedule-footer">创建、修改与取消，继续在对话中告诉荷马。</p>
+  <div className="schedule-list-body">
+   {error&&<p role="status" className="schedule-note">{error} <button type="button" disabled={busy} onClick={refresh}>重试</button></p>}
+   {!items.length&&busy&&<p role="status" className="schedule-note">正在读取…</p>}
+   {enabled.map(card)}{disabled.map(card)}
+   {next!==null&&<button type="button" className="schedule-more" disabled={busy} onClick={()=>listRead.current(next)}>加载更多</button>}
+   {empty&&<section className="schedule-empty" aria-labelledby="schedule-empty-title">
+    <span className="schedule-empty-icon"><Clock3 size={24} aria-hidden/></span>
+    <h2 id="schedule-empty-title">还没有定时任务</h2>
+    <p>在对话中告诉荷马何时做什么，可以安排一次，也可以定期重复。</p>
+    <p className="schedule-example">例如「{scheduleExample}」</p>
+    <button type="button" className="schedule-example-button" onClick={()=>setExampleError(onExample(scheduleExample))}><MessageCircle size={16} aria-hidden/>用示例开始</button>
+    {exampleError&&<p role="status">{exampleError}</p>}
+   </section>}
+  </div>
+  {!empty&&<p className="schedule-footer">创建、修改与取消，继续在对话中告诉荷马。</p>}
   <Dialog open={selected!==null} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="homer-schedule-detail" finalFocus={()=>origin.current?.isConnected?origin.current:document.querySelector<HTMLElement>('.canvas-tab[aria-selected=true]')}><DialogTitle><Clock3 size={20} aria-hidden/><span>{detail?.title??'定时任务'}</span></DialogTitle>
    {!detail?<p role="status">{current?'该定时任务暂不可用或未能读取。':'正在读取…'}</p>:<SpecSheet title="" className="schedule-detail-sheet" visibleCount={99} rows={[
     {label:'时间规则',value:detail.cadence},{label:'显示时区',value:'cron' in detail.trigger?detail.trigger.timeZone:current?.result?.displayTimeZone??''},{label:'当前状态',value:detail.status},{label:detail.timeLabel,value:detail.timeText},...(detail.note?[{label:'说明',value:detail.note}]:[]),{label:'任务内容',value:detail.text}

@@ -974,7 +974,21 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
       setDraftNotice('请先返回普通输入，再引用事项。');return false;
     }
     setTaskReference(value);setDraftNotice('');focusInput();return true;
-  },selectSchedule:value=>{if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){setDraftNotice('请先返回普通输入，再引用定时任务。');return false;}setScheduleContext(value);setDraftNotice('');focusInput();return true;},add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote,quoteNotice:setQuoteNotice});return()=>bindPreview(null);});
+  },selectSchedule:value=>{if(restoring||blocked||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){setDraftNotice('请先返回普通输入，再引用定时任务。');return false;}setScheduleContext(value);setDraftNotice('');focusInput();return true;},insertScheduleExample:(example,revealInput)=>{
+    if(restoring||blocked||submitting.current||editDraft||answerRef.current||quoteEditorRef.current||screenshotRef.current){
+      return '请先返回普通输入，再使用示例。';
+    }
+    const {text}=composerRuntime.getState();
+    const separator=!text.trim()||text.endsWith('\n\n')?'':text.endsWith('\n')?'\n':'\n\n';
+    const next=text.includes(example)?text:text+separator+example;
+    if(next.length>16000)return '草稿过长，缩短后可加入示例。';
+    flushSync(()=>{
+      if(next!==text)aui.composer().setText(next);
+      setDraftNotice('');
+      revealInput?.();
+    });
+    focusInput(true);
+  },add:addReference,canQuote:canQuoteMessage,appendQuote,openQuote,quoteNotice:setQuoteNotice});return()=>bindPreview(null);});
   const [quoteNotice,setQuoteNotice]=useState('');
   const intentReference=answerEditing?undefined:resourceReference;
   const accountRequired=!mobileView&&!!window.homerDesktopAccount&&state.upgrade.phase==='management'&&state.upgrade.code==='desktop_account_required';
@@ -2015,7 +2029,11 @@ function HomerApp() {
           <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} bindFeedback={start=>{feedbackDraft.current=start;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onLocationApproval={id=>{if(narrowPreview)closeCanvas();void readActivePage('interactions',activePages.current.interactions.cursor,id).then(found=>{if(found===true)setInteractionFocus(id);else setPageNotice('原请求已处理或失效。');});}} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onExample={example=>{
+        const composer=previewComposer.current;
+        if(!composer)return '暂时无法输入，请稍后重试。';
+        return composer.insertScheduleExample(example,narrowPreview?()=>{canvasTrigger.current=null;closeCanvas();}:undefined);
+      }} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onLocationApproval={id=>{if(narrowPreview)closeCanvas();void readActivePage('interactions',activePages.current.interactions.cursor,id).then(found=>{if(found===true)setInteractionFocus(id);else setPageNotice('原请求已处理或失效。');});}} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
   </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
 }

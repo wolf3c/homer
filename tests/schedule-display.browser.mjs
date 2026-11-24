@@ -15,7 +15,7 @@ try{
  chrome=await openBrowser(dest,{mockKeychain:true});
  for(const width of [1440,390,320]){
   const context=await chrome.browser.newContext({viewport:{width,height:960}}),page=await context.newPage();page.on('pageerror',error=>errors.push(String(error)));
-  let reads=0,detailReads=0,deny=false,paged=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail;
+  let reads=0,detailReads=0,deny=false,paged=false,empty=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail;
   await page.route('**/api/schedules/read',async route=>{
    const input=route.request().postDataJSON();reads++;
    if(input.view==='detail')detailReads++;
@@ -26,7 +26,7 @@ try{
     if(holdDetail){onHeldDetail();await holdDetail;}
     return route.fulfill({json:{...common,item}});
    }
-   const items=paged?(input.offset?[currentRows[1]]:[currentRows[0],currentRows[2]]):currentRows;
+   const items=empty?[]:paged?(input.offset?[currentRows[1]]:[currentRows[0],currentRows[2]]):currentRows;
    await route.fulfill({json:{...common,items,nextOffset:paged&&!input.offset?2:null}});
   });
   fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
@@ -35,7 +35,15 @@ try{
   if(width<=800)await page.getByRole('button',{name:'收起预览',exact:true}).click();
   await page.getByRole('button',{name:'定时任务',exact:true}).click();const detailButton=page.getByRole('button',{name:'查看定时任务详情：整理 AI 行业简报',exact:true});await detailButton.waitFor();
   assert.equal(await page.locator('.canvas-tab').count(),2);
-  await page.getByRole('tab',{name:artifact.title,exact:true}).click();await page.locator('.canvas-markdown').waitFor();assert.ok((await page.locator('.canvas-markdown').innerText()).includes('原文件内容保持可预览'));await page.getByRole('tab',{name:'定时任务',exact:true}).click();await detailButton.waitFor();assert.equal(await page.locator('.messages [data-slot=schedule-card]').count(),0);assert.equal(await page.locator('[data-slot=schedule-card]:visible').count(),2);
+  await page.getByRole('tab',{name:artifact.title,exact:true}).click();await page.locator('.canvas-markdown').waitFor();assert.ok((await page.locator('.canvas-markdown').innerText()).includes('原文件内容保持可预览'));await page.getByRole('tab',{name:'定时任务',exact:true}).click();await detailButton.waitFor();assert.equal(await page.locator('.messages [data-slot=schedule-card]').count(),0);assert.equal(await page.locator('[data-slot=schedule-card]:visible').count(),3);
+  assert.deepEqual(await page.locator('.schedule-status').allTextContents(),['已启用','已启用','已取消后续投递']);
+  assert.equal(await page.locator('.schedule-inactive').count(),1);
+  assert.doesNotMatch(await page.locator('.homer-schedules').innerText(),/当前定时安排|已加载/);
+  assert.equal(await page.locator('.homer-schedule-card').evaluateAll(cards=>cards.every(card=>{
+   const box=card.getBoundingClientRect(),list=card.parentElement.getBoundingClientRect();
+   const clock=card.querySelector('.schedule-clock').getBoundingClientRect(),status=card.querySelector('.schedule-status').getBoundingClientRect();
+   return Math.abs(box.left-list.left-(list.right-box.right))<2&&Math.abs(clock.top-status.top)<1&&box.right-status.right<20;
+  })),true);
   await page.screenshot({animations:'disabled',path:join(dest,'center-'+width+'.png')});
   await detailButton.focus();await page.keyboard.press('Enter');const dialog=page.locator('.homer-schedule-detail');await dialog.waitFor();await dialog.locator('[data-slot=spec-sheet]').waitFor();
   await dialog.getByRole('button',{name:'关闭',exact:true}).click({trial:true});
@@ -79,12 +87,32 @@ try{
   fixture.unavailable();await dialog.waitFor({state:'hidden'});await refreshedButton.waitFor({state:'hidden'});
   releaseDetail();holdDetail=undefined;fixture.update({});await refreshedButton.waitFor();
   assert.equal(await dialog.count(),0,'a late detail cannot restore the dialog after reconnect');
-  await page.locator('.schedule-stopped summary').click();await page.getByRole('button',{name:'查看定时任务详情：已取消的合成安排',exact:true}).waitFor();
-  deny=true;fixture.update({isRunning:false});await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor();assert.equal(await page.getByText('暂无定时任务',{exact:true}).count(),0);
+  await page.getByRole('button',{name:'查看定时任务详情：已取消的合成安排',exact:true}).waitFor();
+  deny=true;fixture.update({isRunning:false});await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor();assert.equal(await page.getByText('还没有定时任务',{exact:true}).count(),0);
   await page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true}).click();await page.getByText('该定时任务暂不可用或未能读取。',{exact:true}).waitFor();assert.equal(await page.locator('.homer-schedule-detail [data-slot=spec-sheet]').count(),0);await page.keyboard.press('Escape');
   deny=false;await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByText('定时任务未能读取，当前内容尚未确认。',{exact:false}).waitFor({state:'hidden'});
+  paged=false;empty=true;fixture.update({});
+  const example='每周五下午 5 点，提醒我写周报。';
+  const useExample=page.getByRole('button',{name:'用示例开始',exact:true});
+  await useExample.waitFor();
+  await page.screenshot({animations:'disabled',path:join(dest,'empty-'+width+'.png')});
+  await useExample.click();
+  await page.waitForFunction(()=>document.querySelector('[contenteditable=true]')?.contains(document.activeElement));
+  if(width<=800)await page.locator('#canvas-panel').waitFor({state:'hidden'});
+  await page.waitForFunction(value=>document.querySelector('[contenteditable=true]')?.textContent===value,example);
+  assert.equal(await page.getByRole('dialog').count(),0);
+  await editor.fill('已有草稿');
+  if(width<=800)await page.getByRole('button',{name:'定时任务',exact:true}).click();
+  await useExample.click();
+  await page.waitForFunction(value=>document.querySelector('[contenteditable=true]')?.innerText.replace(/\n+/g,'\n')==='已有草稿\n'+value,example);
+  const composed=await editor.innerText();
+  await page.screenshot({animations:'disabled',path:join(dest,'example-in-composer-'+width+'.png')});
+  if(width<=800)await page.getByRole('button',{name:'定时任务',exact:true}).click();
+  await useExample.click();
+  assert.equal(await editor.innerText(),composed);
+  assert.equal(fixture.received.messages.length,1,'the example must only change the draft');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  checks.push({width,reads,detailReads,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true});await context.close();
+  checks.push({width,reads,detailReads,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
  }
  assert.deepEqual(errors,[]);
 }catch(error){failure=error;}finally{if(chrome)exit=await chrome.finish();await fixture.close();writeFileSync(join(dest,'browser-result.json'),JSON.stringify({checks,errors,exit,failure:failure?String(failure):null},null,2));}
