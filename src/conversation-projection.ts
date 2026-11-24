@@ -5,7 +5,7 @@ import type {ChannelMessageSource} from './channel-plugin.js';
 
 export type DisplayQueueInput=QueuedInput & {user:ConversationMessage;editable:boolean;statusText:string};
 export type TaskMessageSource={key:string;target:import('./activity-facts.js').ActivityTarget;title:string;icon:import('./task-status.js').TaskSemanticIcon;origin:{kind:'activity';processId:string;itemId:string}|{kind:'message';processId?:string;messageId:string;senderEpoch?:number};phaseLabel:string;owner:'main'|'worker'|'ended'|'unknown';originalRequestMessageId?:string};
-export type DisplayMessage=ConversationMessage & {process?:ProcessNode;finalAnswers?:{id:string;text:string;completed:boolean}[];sourceLabel?:string;sourceMessageId?:string;source?:ConversationMessage;inputState?:string;taskSources?:TaskMessageSource[];taskSourceUnresolved?:true;channelSource?:ChannelMessageSource;interaction?:{id:string;kind:"authorization"|"question";title:string;description?:string;scope?:string;answers:{question?:string;text:string}[];unavailable?:true}};
+export type DisplayMessage=ConversationMessage & {process?:ProcessNode;finalAnswers?:{id:string;text:string;completed:boolean}[];sourceLabel?:string;scheduledSource?:{title:string;scheduleId?:string};sourceMessageId?:string;source?:ConversationMessage;inputState?:string;taskSources?:TaskMessageSource[];taskSourceUnresolved?:true;channelSource?:ChannelMessageSource;interaction?:{id:string;kind:"authorization"|"question";title:string;description?:string;scope?:string;answers:{question?:string;text:string}[];unavailable?:true}};
 
 export type ConversationBoundary={visibleIds:ReadonlySet<string>;requestsWithNodes:ReadonlySet<string>;outcomes:ReadonlySet<string>;legacyReplies:ReadonlySet<string>;nodeRequests:ReadonlyMap<string,string>;continuedNodes:ReadonlySet<string>};
 
@@ -55,7 +55,7 @@ export function projectConversation(history:readonly ConversationMessage[],nodes
    }:{})};
    messages.push({...message,requestId,text:finals.length?finals.map(item=>item.text).join('\n\n'):(hostFinal||node.sourceKind!=='user'&&!node.final?message.text:''),status:node.status==='unknown'?'interrupted':node.status==='failed'?'failed':node.status==='interrupted'?'interrupted':node.state==='working'?'running':'completed',process:displayNode,...(finals.length?{finalAnswers:finals}:{}),
     ...(continuation&&source?{sourceMessageId:source.id}:{}),
-    sourceLabel:node.sourceKind==='worker'?'处理协作结果':node.sourceKind==='scheduled'?'定时消息':!source?'处理来源未关联':continuation?'继续处理：'+(source!.text.slice(0,80)||'附件请求'):undefined,toolActivities:[]});continue;
+    sourceLabel:node.sourceKind==='worker'?'处理协作结果':node.sourceKind==='scheduled'?'定时任务':!source?'处理来源未关联':continuation?'继续处理：'+(source!.text.slice(0,80)||'附件请求'):undefined,toolActivities:[]});continue;
   }
   // Keep a historical host reply at its original identity when no segment has
   // a final; it may be the only public answer for that request.

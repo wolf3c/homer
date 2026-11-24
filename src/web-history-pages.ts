@@ -2,7 +2,8 @@ import {DatabaseSync} from 'node:sqlite';
 import type {ConversationHistory} from './web-history.js';
 import {mainInputProcessingSql,type MainProcessHistory,type ProcessNode} from './main-process.js';
 import type {MainInputs} from './recursive-main-inputs.js';
-import {projectConversation,type ConversationBoundary} from './conversation-projection.js';
+import {isScheduleId,scheduleTitle} from './schedule-display.js';
+import {projectConversation,type DisplayMessage,type ConversationBoundary} from './conversation-projection.js';
 import type {ChannelPlugin} from './channel-plugin.js';
 export type HistoryPageRequest={limit?:number;before?:string;after?:string;around?:string};
 type Identity={id:string;threadId:string;messageId:string;replyId:string|null;requestId:string|null;sourceKind:string;position:number|null};
@@ -28,7 +29,7 @@ function historyPredicates(){
 export class WebHistoryPages{
  readonly initialization:{version:1;nodes:number;ms:number;batches:number};
  private get db(){return this.history.db;}
- constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs,private channels?:Pick<ChannelPlugin,'readMessageSources'>){
+ constructor(private history:ConversationHistory,private processes:MainProcessHistory,private inputs:MainInputs,private channels?:Pick<ChannelPlugin,'readMessageSources'>,private canReadScheduleSource?:(ref:string)=>boolean){
   const start=performance.now(),db=this.db;
   // DDL for TEMP read indexes is deliberately outside business change observers.
   // One savepoint prevents a partially installed trigger set on initialization failure.
@@ -181,7 +182,11 @@ export class WebHistoryPages{
   const history=this.history.byIds(threadId,[...related]),inbox=this.inputs.byRequestIds(requests);
   const display=projectConversation(history,nodes,inbox,boundary);
   const sources=this.channels?.readMessageSources(inbox.filter(item=>item.source==='channel_plugin').map(item=>item.input.requestId),false);
-  if(!details||sources?.size)display.messages=display.messages.map(message=>{
+  const scheduled=this.scheduleSources(threadId,nodes);
+  if(!details||sources?.size||scheduled.size)display.messages=display.messages.map(message=>{
+   const scheduledSource=message.process?.sourceKind==='scheduled'&&message.process.sourceMessageIds.length===1
+    ?scheduled.get(message.process.sourceMessageIds[0]!):undefined;
+   if(scheduledSource)message={...message,scheduledSource};
    const channelSource=message.role==='user'&&message.requestId?sources?.get(message.requestId):undefined;
    if(channelSource)return {...message,channelSource};
    if(!details&&message.process?.details==='unloaded'&&message.process.final)
@@ -192,6 +197,24 @@ export class WebHistoryPages{
   return {protocol:3 as const,threadId,revision:this.revision,...display,units:selectedIds,
    before:first&&(request.after||more)?this.cursor(threadId,first.id):null,
    after:last&&(request.before||inclusive||request.after&&more)?this.cursor(threadId,last.id):null};
+ }
+ private scheduleSources(threadId:string,nodes:readonly ProcessNode[]){
+  const sources=new Map<string,NonNullable<DisplayMessage['scheduledSource']>>();
+  const ids=[...new Set(nodes.flatMap(node=>node.sourceKind==='scheduled'&&node.sourceMessageIds.length===1?node.sourceMessageIds:[]))];
+  if(!ids.length||!this.canReadScheduleSource)return sources;
+  const rows=this.db.prepare(`SELECT m.id,m.payloadJson FROM agent_messages m JOIN operations o ON o.id=m.operationKey
+    WHERE m.id IN (${marks(ids)}) AND m.kind='scheduled_message' AND m.senderAgentId='host'
+    AND m.recipientAgentId=(SELECT value FROM meta WHERE key='mainAgentId')
+    AND o.actorAgentId='host' AND o.scopeId='scheduled-deliveries' AND o.kind='schedule_delivery' AND o.state='confirmed'
+    AND json_extract(CASE WHEN json_valid(o.responseJson) THEN o.responseJson END,'$.messageId')=m.id`).all(...ids);
+  for(const row of rows){
+   let payload:{threadId?:unknown;text?:unknown;scheduleId?:unknown;sourceRef?:unknown}|null;
+   try{payload=JSON.parse(String(row.payloadJson));}catch{continue;}
+   if(payload?.threadId!==threadId||typeof payload.sourceRef!=='string'||!this.canReadScheduleSource(payload.sourceRef))continue;
+   const {scheduleId,text}=payload;
+   sources.set(String(row.id),{title:scheduleTitle(typeof text==='string'?text:''),...(isScheduleId(scheduleId)?{scheduleId}:{})});
+  }
+  return sources;
  }
  workerTargets(){
   const rows=this.db.prepare('SELECT DISTINCT w.nodeId,w.taskId FROM web_dirty_tasks d CROSS JOIN web_process_workers w ON w.taskId=d.taskId').all() as {nodeId:string;taskId:string}[];

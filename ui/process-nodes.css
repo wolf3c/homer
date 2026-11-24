@@ -1,5 +1,5 @@
 .process-record-note{font-size:12px;line-height:1.6;color:var(--muted);margin:4px 0 8px}
-.message-task-title{margin:0 0 4px;font-size:12px;line-height:18px;font-weight:400;color:var(--muted);overflow-wrap:anywhere}
+.message-task-title,.message-schedule-title{margin:0 0 4px;font-size:12px;line-height:18px;font-weight:400;color:var(--muted);overflow-wrap:anywhere}
 
 /* Keep the original anchor and its scroll position without reserving a row. */
 .assistant-message:not(:has(> :not(.message-timestamp))){margin:0;padding:0}

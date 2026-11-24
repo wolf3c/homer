@@ -31,13 +31,11 @@ function coalesceReads(run:(signal:AbortSignal,offset:number)=>Promise<void>){
 }
 const scheduleExample='每周五下午 5 点，提醒我写周报。';
 
-export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onExample}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void;onExample:(text:string)=>string|undefined}){
+export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onExample,onDetails}:{threadId:string;readEpoch:string;refreshKey:unknown;onReference:(value:ScheduleContext)=>void;onExample:(text:string)=>string|undefined;onDetails:(id:string,trigger:HTMLElement)=>void}){
  const [items,setItems]=useState<ScheduleSummary[]>([]),[next,setNext]=useState<number|null>(null),[busy,setBusy]=useState(true),[error,setError]=useState('');
  const [exampleError,setExampleError]=useState<string>();
- const [selected,setSelected]=useState<string|null>(null);
- const [detailState,setDetail]=useState<{id:string;result?:Extract<ScheduleReadResult,{item:unknown}>}|null>(null);
- const origin=useRef<HTMLElement|null>(null),listRead=useRef<(offset?:number)=>void>(()=>{}),detailRead=useRef<()=>void>(()=>{});
- const refresh=()=>{listRead.current();detailRead.current();};
+ const listRead=useRef<(offset?:number)=>void>(()=>{});
+ const refresh=()=>listRead.current();
  useEffect(()=>{
   const loader=coalesceReads(async(signal,offset)=>{
    setBusy(true);setError('');
@@ -55,23 +53,8 @@ export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onE
   document.addEventListener('visibilitychange',foreground);window.addEventListener('pageshow',foreground);
   return()=>{loader.close();document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
  },[threadId,readEpoch]);
- useEffect(()=>{
-  setDetail(null);if(!selected)return;
-  const loader=coalesceReads(async signal=>{
-   try{
-    const result=await read({readEpoch,view:'detail',scheduleId:selected},threadId,signal);
-    if(signal.aborted)return;
-    if(!('item' in result)||result.item.scheduleId!==selected)throw Error('schedule_read_failed');
-    setDetail({id:selected,result});
-   }catch{if(!signal.aborted)setDetail({id:selected});}
-  });
-  detailRead.current=loader.load;void loader.load();
-  return loader.close;
- },[selected,threadId,readEpoch]);
  useEffect(()=>{refresh();},[refreshKey,threadId,readEpoch]);
- const current=detailState?.id===selected?detailState:null;
- const detail=current?.result?.item;
- const card=(row:ScheduleSummary)=><ScheduleCard key={row.scheduleId} name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className={row.enabled?'homer-schedule-card':'homer-schedule-card schedule-inactive'} note={row.note} detailLabel={'查看定时任务详情：'+row.title} onDetails={()=>{origin.current=document.activeElement as HTMLElement;setSelected(row.scheduleId);}} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>;
+ const card=(row:ScheduleSummary)=><ScheduleCard key={row.scheduleId} name={row.title} cadence={row.cadence} statusLabel={row.status} nextRun={row.timeText} timeLabel={row.timeLabel} className={row.enabled?'homer-schedule-card':'homer-schedule-card schedule-inactive'} note={row.note} detailLabel={'查看定时任务详情：'+row.title} onDetails={event=>onDetails(row.scheduleId,event.currentTarget)} endAction={<button type="button" className="schedule-talk" aria-label={'在对话中说：'+row.title} title={'在对话中说：'+row.title} onClick={event=>{event.stopPropagation();onReference({scheduleId:row.scheduleId,label:row.title});}}><MessageCircle size={16} aria-hidden/></button>}/>;
  const enabled=items.filter(row=>row.enabled),disabled=items.filter(row=>!row.enabled);
  const empty=!items.length&&!error&&!busy&&next===null;
  return <div className="homer-schedules">
@@ -90,10 +73,33 @@ export function ScheduledMessages({threadId,readEpoch,refreshKey,onReference,onE
    </section>}
   </div>
   {!empty&&<p className="schedule-footer">创建、修改与取消，继续在对话中告诉荷马。</p>}
-  <Dialog open={selected!==null} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="homer-schedule-detail" finalFocus={()=>origin.current?.isConnected?origin.current:document.querySelector<HTMLElement>('.canvas-tab[aria-selected=true]')}><DialogTitle><Clock3 size={20} aria-hidden/><span>{detail?.title??'定时任务'}</span></DialogTitle>
+ </div>;
+}
+
+export function ScheduleDetail({threadId,readEpoch,refreshKey,scheduleId,onClose,finalFocus}:{threadId:string;readEpoch:string;scheduleId?:string;refreshKey:unknown;onClose:()=>void;finalFocus:()=>HTMLElement|null}){
+ const [state,setState]=useState<{id:string;epoch:string;result?:Extract<ScheduleReadResult,{item:unknown}>}|null>(null);
+ const detailRead=useRef<()=>void>(()=>{});
+ useEffect(()=>{
+  setState(null);if(!scheduleId)return;
+  const loader=coalesceReads(async signal=>{
+   try{
+    const result=await read({readEpoch,view:'detail',scheduleId},threadId,signal);
+    if(signal.aborted)return;
+    if(!('item' in result)||result.item.scheduleId!==scheduleId)throw Error('schedule_read_failed');
+    setState({id:scheduleId,epoch:readEpoch,result});
+   }catch{if(!signal.aborted)setState({id:scheduleId,epoch:readEpoch});}
+  });
+  detailRead.current=loader.load;void loader.load();
+  const foreground=()=>{if(document.visibilityState==='visible')void loader.load();};
+  document.addEventListener('visibilitychange',foreground);window.addEventListener('pageshow',foreground);
+  return()=>{loader.close();document.removeEventListener('visibilitychange',foreground);window.removeEventListener('pageshow',foreground);};
+ },[scheduleId,threadId,readEpoch]);
+ useEffect(()=>{detailRead.current();},[refreshKey]);
+ const current=state?.id===scheduleId&&state?.epoch===readEpoch?state:null;
+ const detail=current?.result?.item;
+ return <Dialog open={!!scheduleId} onOpenChange={open=>{if(!open)onClose();}}><DialogContent className="homer-schedule-detail" finalFocus={finalFocus}><DialogTitle><Clock3 size={20} aria-hidden/><span>{detail?.title??'定时任务'}</span></DialogTitle>
    {!detail?<p role="status">{current?'该定时任务暂不可用或未能读取。':'正在读取…'}</p>:<SpecSheet title="" className="schedule-detail-sheet" visibleCount={99} rows={[
     {label:'时间规则',value:detail.cadence},{label:'显示时区',value:'cron' in detail.trigger?detail.trigger.timeZone:current?.result?.displayTimeZone??''},{label:'当前状态',value:detail.status},{label:detail.timeLabel,value:detail.timeText},...(detail.note?[{label:'说明',value:detail.note}]:[]),{label:'任务内容',value:detail.text}
    ]}/>}
-  </DialogContent></Dialog>
- </div>;
+ </DialogContent></Dialog>;
 }

@@ -758,7 +758,9 @@ export class Homer {
   private stateObservers = new Set<(reason?:StateChangeReason)=>void>();
   private pageReader?:WebHistoryPages;
   readonly webReadEpoch=randomUUID();
-  webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels);}
+  webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels,ref=>{
+    try{this.validateScheduleSource(JSON.parse(ref));return true;}catch{return false;}
+  });}
   onStateChange(observer:(reason?:StateChangeReason)=>void){this.stateObservers.add(observer);return ()=>{this.stateObservers.delete(observer);};}
   private invalidateState(reason?:StateChangeReason){for(const observer of this.stateObservers??[])try{observer(reason);}catch{/* Notification is never business execution. */}}
   isWorkerExecuting(run:OverviewRun):boolean {

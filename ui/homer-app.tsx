@@ -54,7 +54,7 @@ import { ComposerInputFocusContext, HomerComposerInput, useComposerInputFocus } 
 import { ComposerIcon } from './composer-icons';
 import {HomerAttachmentByIndex} from './homer-attachments';
 import ScreenshotDialog from './screenshot-dialog';
-import {ScheduledMessages,ScheduleChip} from './scheduled-messages';
+import {ScheduledMessages,ScheduleChip,ScheduleDetail} from './scheduled-messages';
 import {ContextOrder,contextKey} from './composer-context-order';
 import {HomerMessageQueue} from './homer-message-queue';
 import type {LegacyQueueEditSession} from './queue-draft-recovery';
@@ -252,6 +252,7 @@ function UserMessage() {
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
   </MessagePrimitive.Root></>;
 }
+const ScheduleNavigationContext=createContext<((id:string,trigger:HTMLElement)=>void)|undefined>(undefined);
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());
 function messageTaskTitles(message:WebState['messages'][number]|undefined){
   const process=message?.process;
@@ -293,8 +294,13 @@ function AssistantMessage() {
   // user bubble. Only persisted messages own a display position.
   const original=useContext(ProcessMessagesContext).get(String(metadata.messageId));
   const parts=useProcessParts();
+  const openSchedule=useContext(ScheduleNavigationContext);
   if(!isVisibleConversationMessage(original))return null;
   const process=original?.process;
+  const scheduled=process?.sourceKind==='scheduled';
+  const scheduledSource=original?.scheduledSource;
+  const scheduleTitle=scheduledSource?.title??'定时任务';
+  const scheduleId=scheduledSource?.scheduleId;
   const internal=process?.sourceKind==='worker';
   const hasBody=parts.hasBody;
   const messageFiles=files.filter(file=>file.messageId===metadata.messageId&&!file.destination);
@@ -309,7 +315,9 @@ function AssistantMessage() {
     <MessageTimestamp messageId={String(metadata.messageId)}/>
   </div>;
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={'message-'+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={process?.sourceKind==='user'&&(!original||messageSourceParts(original)!==undefined)?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
-    {!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
+    {scheduled?<p className="message-schedule-title">{scheduleId&&openSchedule
+      ?<button type="button" className="schedule-source" title={scheduleTitle} aria-haspopup="dialog" onClick={event=>openSchedule(scheduleId,event.currentTarget)}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></button>
+      :<span className="schedule-source" title={scheduleTitle}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></span>}</p>:!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
     {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
     <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} node={process}>
     {hasBubble&&<>
@@ -1223,6 +1231,13 @@ function HomerApp() {
   const previewComposer=useRef<PreviewComposer|null>(null);
   const narrowPreview=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
   const [state, setState] = useState<WebState>(empty);
+  const [scheduleSelection,setScheduleSelection]=useState<{id:string;readEpoch:string}>();
+  const scheduleTrigger=useRef<HTMLElement|null>(null);
+  const openScheduleDetail=(id:string,trigger:HTMLElement)=>{
+    if(!state.history)return;
+    scheduleTrigger.current=trigger;
+    setScheduleSelection({id,readEpoch:state.history.readEpoch});
+  };
   const browser=useBrowserPages(state.threadId);
   const [previewTabs,setPreviewTabs]=useState<{threadId:string;tabs:Array<PreviewTab&{trigger?:HTMLElement}>;activeId:string|null}>({threadId:state.threadId,tabs:[],activeId:null});
   if(previewTabs.threadId!==state.threadId){
@@ -1456,6 +1471,7 @@ function HomerApp() {
   }
 
   const [connected, setConnected] = useState(false);
+  useEffect(()=>{if(!connected)setScheduleSelection(undefined);},[connected]);
   const [notificationTarget,setNotificationTarget]=useState<DesktopNotice>();
   const latestNotificationTarget=useRef<DesktopNotice|undefined>(undefined);
   const [interactionFocus,setInteractionFocus]=useState<string>();
@@ -1961,7 +1977,7 @@ function HomerApp() {
   const indicator=useMainProcessingIndicator(processing,processingInline,viewport,messageList);
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
-  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><TaskReferenceNavigationContext.Provider value={taskId=>setTaskLocation({taskId,threadId:state.threadId,readEpoch:state.history?.readEpoch})}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
+  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><TaskReferenceNavigationContext.Provider value={taskId=>setTaskLocation({taskId,threadId:state.threadId,readEpoch:state.history?.readEpoch})}><ScheduleNavigationContext.Provider value={connected?openScheduleDetail:undefined}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
@@ -2029,12 +2045,13 @@ function HomerApp() {
           <MainComposer splitPreview={!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview} captureShortcutRecording={captureShortcutRecording} onAccount={!mobileView&&window.homerDesktopAccount?()=>accountSettings.current?.openAccount():undefined} annotationDraft={annotationDraft} bindPreview={value=>{previewComposer.current=value;}} bindFeedback={start=>{feedbackDraft.current=start;}} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onExample={example=>{
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onDetails={openScheduleDetail} onExample={example=>{
         const composer=previewComposer.current;
         if(!composer)return '暂时无法输入，请稍后重试。';
         return composer.insertScheduleExample(example,narrowPreview?()=>{canvasTrigger.current=null;closeCanvas();}:undefined);
       }} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onLocationApproval={id=>{if(narrowPreview)closeCanvas();void readActivePage('interactions',activePages.current.interactions.cursor,id).then(found=>{if(found===true)setInteractionFocus(id);else setPageNotice('原请求已处理或失效。');});}} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
-  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
+    {connected&&state.history&&<ScheduleDetail threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} scheduleId={scheduleSelection?.readEpoch===state.history.readEpoch?scheduleSelection?.id:undefined} onClose={()=>setScheduleSelection(undefined)} finalFocus={()=>scheduleTrigger.current?.isConnected?scheduleTrigger.current:document.querySelector<HTMLElement>('.canvas-tab[aria-selected=true], .header-actions button[aria-label="定时任务"]')}/>}
+  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></ScheduleNavigationContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
 }
 createRoot(document.getElementById("homer-root")!).render(<HomerApp />);

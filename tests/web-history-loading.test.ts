@@ -339,3 +339,36 @@ test('completed question projection contains every original pair without paging 
   }
  }finally{f.close();}
 });
+
+test('scheduled history projects only the verified delivery title and schedule target',()=>{
+ const f=historyFixture(1);
+ try{
+  const threadId='synthetic-history',scheduleId='schedule-00000000-0000-4000-8000-000000000001';
+  const record=(id:string,text:string,sourceRef:string)=>{
+   const source=f.store.transaction(()=>f.inputs.enqueueScheduled({deliveryId:id,scheduleId,scheduledAt:1,text,sourceRef}));
+   f.processes.start({id,threadId,sourceKind:'scheduled',sourceMessageIds:[source],messageId:id},id+'-turn');
+   f.history.record(id,threadId,'合成结果');
+   return source;
+  };
+  const verified=record('verified','投递时的标题。私有正文','allowed');
+  const noId=record('legacy-no-id','旧投递标题。私有正文','allowed');
+  const wrongThread=record('wrong-thread','另一会话标题','allowed');
+  const unconfirmed=record('unconfirmed','未确认标题','allowed');
+  record('denied','来源已撤销的标题','revoked');
+  const db=f.store.db;
+  db.prepare("UPDATE agent_messages SET payloadJson=json_remove(payloadJson,'$.scheduleId') WHERE id=?").run(noId);
+  db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.threadId','other') WHERE id=?").run(wrongThread);
+  db.prepare("UPDATE operations SET responseJson='{}' WHERE id=(SELECT operationKey FROM agent_messages WHERE id=?)").run(unconfirmed);
+  f.processes.start({id:'missing-source',threadId,sourceKind:'scheduled',sourceMessageIds:['missing'],messageId:'missing-source'},'missing-turn');
+  f.history.record('missing-source',threadId,'旧合成结果');
+  const reader=new WebHistoryPages(f.history,f.processes,f.inputs,undefined,(ref:string)=>ref==='allowed');
+  const page=reader.read(threadId);
+  const byId=new Map(page.messages.map(message=>[message.id,message]));
+  assert.deepEqual(byId.get('verified')!.scheduledSource,{scheduleId,title:'投递时的标题'});
+  assert.deepEqual(byId.get('legacy-no-id')!.scheduledSource,{title:'旧投递标题'});
+  for(const id of ['wrong-thread','unconfirmed','denied','missing-source','node-0'])assert.equal(byId.get(id)!.scheduledSource,undefined,id);
+  assert.equal(byId.get('verified')!.process!.sourceMessageIds[0],verified);
+  assert.doesNotMatch(JSON.stringify(page),/私有正文|来源已撤销的标题/);
+  assert.deepEqual(reader.read(threadId,{around:'verified',limit:1}).messages[0]!.scheduledSource,{scheduleId,title:'投递时的标题'});
+ }finally{f.close();}
+});

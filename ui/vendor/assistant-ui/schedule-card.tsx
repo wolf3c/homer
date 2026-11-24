@@ -1,7 +1,7 @@
 // Locally adapted official ScheduleCard; pinned source and adaptations in README.md.
 "use client";
 
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, MouseEventHandler, ReactNode } from "react";
 import { ClockIcon } from "lucide-react";
 import { cn } from "../task-status/utils";
 import { field, mono, paper } from "./surfaces";
@@ -35,7 +35,7 @@ export function ScheduleCard({
   timeLabel: string;
   endAction?: ReactNode;
   note?: string;
-  onDetails?: () => void;
+  onDetails?: MouseEventHandler<HTMLButtonElement>;
   detailLabel?: string;
 }) {
   return (

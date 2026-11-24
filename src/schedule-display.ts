@@ -4,6 +4,8 @@ import type {Schedules,Schedule,ScheduleTrigger} from './schedules.js';
 export type ScheduleReadRequest={readEpoch:string;view:'list';offset?:number;limit?:number}|{readEpoch:string;view:'detail';scheduleId:string};
 export type ScheduleSummary={scheduleId:string;revision:number;title:string;trigger:ScheduleTrigger;enabled:boolean;nextFireAt:number|null;status:string;timeLabel:string;timeText:string;cadence:string;note:string};
 export type ScheduleReadResult={threadId:string;readEpoch:string;displayTimeZone:string;items:ScheduleSummary[];nextOffset:number|null}|{threadId:string;readEpoch:string;displayTimeZone:string;item:ScheduleSummary&{text:string}};
+export const scheduleTitle=(text:string)=>text.split(/[。！？\n]/)[0]!.slice(0,100).trim()||'定时任务';
+export const isScheduleId=(id:unknown):id is string=>typeof id==='string'&&/^schedule-[a-f0-9-]{36}$/.test(id);
 const denied=new Set(['schedule_scope_denied','task_authority_source_denied','channel_binding_denied']);
 
 // This is a user-interface read, never a model tool call or scheduler operation.
@@ -12,7 +14,7 @@ export function readScheduleDisplay(db:Pick<DatabaseSync,'prepare'>,schedules:Pi
   const detail=input.view==='detail',list=input.view==='list';
   if(!detail&&!list||Object.keys(input).some(key=>!(detail?['view','readEpoch','scheduleId']:['view','readEpoch','offset','limit']).includes(key)))throw Error('schedule_query_invalid');
   const offset=list?input.offset??0:0,limit=list?input.limit??20:1;
-  if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||detail&&(typeof input.scheduleId!=='string'||!/^schedule-[a-f0-9-]{36}$/.test(input.scheduleId)))throw Error('schedule_query_invalid');
+  if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100||detail&&!isScheduleId(input.scheduleId))throw Error('schedule_query_invalid');
   const rows=db.prepare('SELECT id,sourceRef FROM schedules'+(detail?' WHERE id=?':'')+' ORDER BY enabled DESC,createdAt DESC,id').iterate(...(detail?[input.scheduleId]:[]));
   const selected:Schedule[]=[];let seen=0,more=false;
   for(const row of rows){
@@ -42,7 +44,7 @@ export function readScheduleDisplay(db:Pick<DatabaseSync,'prepare'>,schedules:Pi
     else if(row.nextFireAt<=now){status='到期待投递';timeLabel='原定投递';note='原定时间已到，尚未确认入箱，原因未确认。';}
     if(row.errorCode)note+=(note?' ':'')+'时间规则异常，请在对话中让荷马核对。';
     const delivered=deliveries.get(row.id);if(delivered!==undefined)note+=(note?' ':'')+`原定 ${date(delivered,row.errorCode?displayTimeZone:zone)} 的消息已进入 Homer 收件箱；工作结果另行核对。`;
-    return {scheduleId:row.id,revision:row.revision,title:row.text.split(/[。！？\n]/)[0]!.slice(0,100)||'定时任务',trigger:row.trigger,enabled:row.enabled,nextFireAt:row.nextFireAt,status,timeLabel,timeText,cadence,note,...(detail?{text:row.text}:{})};
+    return {scheduleId:row.id,revision:row.revision,title:scheduleTitle(row.text),trigger:row.trigger,enabled:row.enabled,nextFireAt:row.nextFireAt,status,timeLabel,timeText,cadence,note,...(detail?{text:row.text}:{})};
   });
   const common={threadId:scope.threadId,readEpoch:scope.readEpoch,displayTimeZone};
   return detail?{...common,item:items[0] as ScheduleSummary&{text:string}}:{...common,items,nextOffset:more?offset+limit:null};

@@ -117,6 +117,18 @@
 
 /* Publication position is derived from the existing delivery identity. */
 .message-source-label{font-size:13px;line-height:1.6;color:var(--muted);margin:0 0 10px;overflow-wrap:anywhere}
+.schedule-source{display:flex;align-items:center;gap:7px;width:fit-content;max-width:100%;min-width:0;line-height:inherit}
+.schedule-source>svg{flex:none}
+.schedule-source>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.schedule-source{position:relative;padding:0;border-radius:3px;background:transparent;color:var(--link);text-align:left}
+button.schedule-source>span{text-decoration:underline;text-underline-offset:3px}
+/* Extend the 18px title upward and through its 4px gap without moving the bubble. */
+@media(any-pointer:coarse){
+  button.schedule-source{min-width:44px}
+  button.schedule-source::after{content:"";position:absolute;inset:-22px 0 -4px}
+  /* Before a bubble appears, reserve the space above the title inside its own row. */
+  .assistant-message:has(>.message-schedule-title>button):not(:has(.assistant-message-bubble)){padding-top:22px}
+}
 
 /* The queue is a separate readable region, not part of the formal runtime. */
 .queue-draft-recovery{width:min(760px,100%);margin:24px auto;padding:16px;box-sizing:border-box}
