@@ -93,10 +93,64 @@
 .text-annotation-marker:focus-visible{outline:1px solid var(--focus);outline-offset:1px}
 
 .canvas-panel [data-preview-text]{padding-left:28px}
+/* Canvas preflight hides list markers, including the Markdown document's own. */
+.canvas-panel .canvas-markdown :is(ol,ul){list-style:revert}
+.canvas-panel .canvas-markdown .task-list-item{list-style-type:none}
 .canvas-source-location{display:flex;align-items:center;flex-wrap:wrap;gap:4px;color:var(--ink);font-size:12px}
 .canvas-source-location button{padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--soft);color:inherit}
-.canvas-panel [data-preview-source-target]{background:color-mix(in srgb,var(--focus) 18%,transparent);color:inherit;box-shadow:-2px 0 var(--focus)}
-.canvas-panel mark[data-preview-source-target]:empty::before{content:"\200b"}
+.canvas-panel{
+  --source-range-fill:#fff3d6;
+  --source-range-edge:#92703e;
+}
+.canvas-panel :is(.preview-source-text,mark[data-preview-source-target]){
+  -webkit-box-decoration-break:clone;
+  box-decoration-break:clone;
+  background:var(--source-range-fill);
+  box-shadow:inset 0 -1px var(--source-range-edge);
+  border-radius:3px;
+  color:inherit;
+}
+.canvas-panel mark[data-preview-source-target]:empty::before{
+  content:"";
+  display:inline-block;
+  width:1ch;
+  height:.85em;
+}
+.canvas-panel tr[data-preview-source-target]>*{
+  background:var(--source-range-fill);
+  box-shadow:inset 0 1px var(--source-range-edge),inset 0 -1px var(--source-range-edge);
+}
+.canvas-panel div[data-preview-source-target]>pre{background:#faf0da}
+.canvas-panel :is(
+  div[data-preview-source-target]>pre,
+  div[data-preview-source-target]:not(:has(>pre)),
+  [data-preview-math][data-preview-source-target] :is(.katex-display,.katex-error),
+  hr[data-preview-source-target]
+){
+  outline:1px solid var(--source-range-edge);
+  outline-offset:-1px;
+}
+.canvas-panel [data-preview-text]:has([data-preview-source-target])::selection{
+  background:#d7e6fa;
+  color:#233650;
+}
+@media(max-width:600px),(pointer:coarse){
+  .canvas-source-location button{min-height:44px}
+}
+@media(max-width:380px){
+  .preview-toolbar:has(.canvas-source-location) .preview-toolbar-identity{flex-basis:100%}
+}
+@media(forced-colors:active){
+  .canvas-panel{--source-range-edge:CanvasText}
+  .canvas-panel :is(.preview-source-text,mark[data-preview-source-target]){
+    outline:1px solid CanvasText;
+    outline-offset:-1px;
+  }
+  .canvas-panel tr[data-preview-source-target]{
+    outline:1px dashed Highlight;
+    outline-offset:-3px;
+  }
+}
 
 /* Compact composer context. */
 .composer:has(.composer-context){padding-top:5px}

@@ -32,7 +32,7 @@ import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
 import type{BrowserPage}from'../src/browser-preview';
 import type {ImageAnnotationControl} from './image-annotation';
-import type {Root,RootContent} from 'hast';
+import type {Element as HastElement,ElementContent,Root,RootContent} from 'hast';
 import type {PreviewImportGuard} from './preview-reference';
 const ImageAnnotation=lazy(()=>import('./image-annotation'));
 const MAX_PATCH_BYTES=256*1024,MAX_PATCH_LINES=2000,PATCH_PREFIX_BYTES=128*1024;
@@ -70,7 +70,8 @@ export function canvasWebUrl(value:string):string {
   return url.href;
 }
 type SourceLines={start:number;end:number};
-const markdownSourceBlocks=/^(?:p|h[1-6]|pre|tr|hr)$/;
+const markdownSourceText=/^(?:p|h[1-6])$/;
+const markdownSourceBlocks=/^(?:pre|tr|hr)$/;
 const listInlineElements=/^(?:a|br|code|del|em|img|input|span|strong|sup)$/;
 const textPreviewMime=(mime:string)=>mime.startsWith('text/')||/^application\/(json|javascript)/.test(mime);
 function rehypeSourceLines({start,end}:SourceLines){
@@ -80,11 +81,16 @@ function rehypeSourceLines({start,end}:SourceLines){
     const displayMath=(node:RootContent)=>node.type==='element'&&node.tagName==='span'&&'data-preview-math'in node.properties&&
       node.children.some(child=>child.type==='element'&&child.tagName==='pre');
     const inline=(node:RootContent)=>node.type==='text'||node.type==='element'&&listInlineElements.test(node.tagName)&&!displayMath(node);
+    const paintText=(children:ElementContent[]):HastElement=>({
+      type:'element',tagName:'span',properties:{className:['preview-source-text']},children,
+    });
     function mark(node:RootContent){
       if(node.type!=='element')return;
       const hit=overlaps(node);
-      if(hit&&(markdownSourceBlocks.test(node.tagName)||displayMath(node))){
+      const textBlock=markdownSourceText.test(node.tagName);
+      if(hit&&(textBlock||markdownSourceBlocks.test(node.tagName)||displayMath(node))){
         node.properties['data-preview-source-target']='';
+        if(textBlock)node.children=[paintText(node.children)];
         return;
       }
       node.children.forEach(mark);
@@ -98,11 +104,14 @@ function rehypeSourceLines({start,end}:SourceLines){
         while(index<children.length&&inline(children[index]!))index++;
         const run=children.slice(from,index);
         if(!run.some(overlaps))continue;
+        const text=paintText(run);
         if(from===0&&index===children.length){
           node.properties['data-preview-source-target']='';
+          node.children=[text];
           return;
         }
-        children.splice(from,index-from,{type:'element',tagName:'span',properties:{'data-preview-source-target':''},children:run});
+        text.properties['data-preview-source-target']='';
+        children.splice(from,index-from,text);
         index=from+1;
       }
     }
