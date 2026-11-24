@@ -1,6 +1,6 @@
 import {useCallback,useEffect,useImperativeHandle,useLayoutEffect,useRef,useState,type KeyboardEvent,type Ref} from 'react';
 import homerLogo from '../assets/branding/odysseus-20261030/homer-odysseus-64.png';
-import type {NativeUsageWindow} from '../src/native-account';
+import type {NativeUsageSnapshot} from '../src/native-account';
 import type {WebState} from '../src/web-contract';
 import {DesktopChatApps} from './desktop-chat-apps';
 import {SettingsAbout,type AboutLink,type StartFeedback} from './settings-about';
@@ -407,30 +407,32 @@ function DesktopChatGPTModels({connected,unconfirmed,busy,different,apply}:{conn
 
 function DesktopCodexUsage(){
  const bridge=window.homerDesktopAccount;
- const [windows,setWindows]=useState<NativeUsageWindow[]|null>();
+ const [usage,setUsage]=useState<NativeUsageSnapshot|null>();
  useEffect(()=>{
   if(!bridge?.nativeUsage)return;
   let request=0;
   const read=async()=>{
    const id=++request;
-   setWindows(undefined);
-   try{const result=await bridge.nativeUsage();if(id===request)setWindows(result);}
-   catch{if(id===request)setWindows(null);}
+   setUsage(undefined);
+   try{const result=await bridge.nativeUsage();if(id===request)setUsage(result);}
+   catch{if(id===request)setUsage(null);}
   };
   const dispose=bridge.onChange(reason=>{
    if(reason==='native-account-changed')void read();
-   if(reason==='native-account-disconnected'){request++;setWindows(null);}
+   if(reason==='native-account-disconnected'){request++;setUsage(null);}
   });
   void read();
   return()=>{request++;dispose();};
  },[bridge]);
  if(!bridge?.nativeUsage)return null;
+ const credits=usage?.credits;
  return <div className="desktop-codex-usage" role="status" aria-label="Codex 套餐用量">
-  {windows?.length?windows.map(({windowDurationMins,remainingPercent,resetsAt},index)=><p key={index}>
+  {usage?.windows.length?usage.windows.map(({windowDurationMins,remainingPercent,resetsAt},index)=><p key={index}>
    {windowDurationMins===300?'5 小时额度':windowDurationMins===10080?'周额度':windowDurationMins?`${windowDurationMins} 分钟额度`:'额度周期'}
    {' · 剩余 '}<strong>{remainingPercent}%</strong>{' · '}
    {resetsAt?new Date(resetsAt*1000).toLocaleString(undefined,{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 重置':'重置时间未知'}
-  </p>):<p>{windows===undefined?'正在读取额度…':windows===null?'暂时无法读取额度':'暂无额度数据'}</p>}
+  </p>):<p>{usage===undefined?'正在读取额度…':usage===null?'暂时无法读取额度':'暂无额度数据'}</p>}
+  {usage&&<p>{'积分 · '}{credits?.unlimited===true?'不限量':credits?.balance!=null?<>剩余 <strong>{credits.balance}</strong></>:credits?.hasCredits===false&&credits.unlimited===false?'无可用积分':'余额未知'}</p>}
  </div>;
 }
 

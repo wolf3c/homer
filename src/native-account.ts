@@ -2,13 +2,14 @@ type NativeRpc = (method: string, params: any, signal?:AbortSignal) => Promise<a
 type Phase='idle'|'waiting'|'unconfirmed'|'cancelled'|'failed'|'timed_out'|'cancel_unconfirmed'|'logout_unconfirmed';
 type Completion={loginId?:unknown;success?:unknown;error?:unknown};
 export type NativeAccountState={account:'none'|'chatgpt'|'other'|'unknown';connected:boolean;phase:Phase;loginId?:string;authUrl?:string;expiresAt?:number;planType?:string};
-export type NativeUsageWindow={remainingPercent:number;windowDurationMins:number|null;resetsAt:number|null};
+type NativeUsageWindow={remainingPercent:number;windowDurationMins:number|null;resetsAt:number|null};
+export type NativeUsageSnapshot={windows:NativeUsageWindow[];credits:{hasCredits:boolean|null;unlimited:boolean|null;balance:string|null}|null};
 type Attempt={id?:string;authUrl?:string;expiresAt:number;completed?:boolean;early?:Completion};
 // Native Codex owns OAuth, callback, credential files and refresh. This is only
 // the bounded UI operation lifecycle. Nothing is persisted or sent to a model.
 export class NativeAccount{
  private attempt?:Attempt;private phase:Phase='idle';private timer?:NodeJS.Timeout;
- private usageRead?:Promise<NativeUsageWindow[]>;
+ private usageRead?:Promise<NativeUsageSnapshot>;
  private usageAbort?:AbortController;
  private queue:Promise<unknown>=Promise.resolve();private closed=false;private lastId?:string;
  constructor(private rpc:NativeRpc,private options:{timeoutMs?:number;onIdle?:()=>void}={}){}
@@ -46,10 +47,10 @@ export class NativeAccount{
    const codex=response?.rateLimitsByLimitId?.codex??(legacy?.limitId==null||legacy.limitId==='codex'?legacy:undefined);
    if(!codex){
     if(!legacy||typeof legacy!=='object'||Array.isArray(legacy))throw unavailable();
-    return [];
+    return {windows:[],credits:null};
    }
    if(typeof codex!=='object'||Array.isArray(codex))throw unavailable();
-   return [codex.primary,codex.secondary].flatMap((window):NativeUsageWindow[]=>{
+   const windows=[codex.primary,codex.secondary].flatMap((window):NativeUsageWindow[]=>{
     if(!Number.isInteger(window?.usedPercent))return [];
     return [{
      remainingPercent:Math.max(0,Math.min(100,100-window.usedPercent)),
@@ -57,6 +58,12 @@ export class NativeAccount{
      resetsAt:Number.isSafeInteger(window.resetsAt)&&window.resetsAt>0&&window.resetsAt<=8.64e12?window.resetsAt:null,
     }];
    });
+   const credits=codex.credits;
+   return {windows,credits:credits&&typeof credits==='object'&&!Array.isArray(credits)?{
+    hasCredits:typeof credits.hasCredits==='boolean'?credits.hasCredits:null,
+    unlimited:typeof credits.unlimited==='boolean'?credits.unlimited:null,
+    balance:typeof credits.balance==='string'&&/^-?\d+(?:\.\d+)?$/.test(credits.balance)?credits.balance:null,
+   }:null};
   })().catch(()=>{throw unavailable();}).finally(()=>{
    if(this.usageAbort===controller){this.usageAbort=undefined;this.usageRead=undefined;}
   });

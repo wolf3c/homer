@@ -12,7 +12,7 @@ else if(m.method==='skills/list')result={data:[]};
 else if(m.method==='account/read')result={account:account(),requiresOpenaiAuth:true};
 else if(m.method==='account/rateLimits/read'&&account()){
  if(holdUsage){send({method:'account/updated',params:{authMode:'chatgpt',planType:'plus'}});return;}
- result={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt:null}}};
+ result={rateLimits:{primary:{usedPercent:37,windowDurationMins:10080,resetsAt:null},credits:{hasCredits:true,unlimited:false,balance:'25.50'}}};
 }
 else if(m.method==='synthetic/hold-usage')holdUsage=true;
 else if(m.method==='account/login/start'){login='synthetic-login';result={type:'chatgpt',loginId:login,authUrl:'http://127.0.0.1:4807/synthetic-account-authorize'};}

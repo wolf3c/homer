@@ -61,7 +61,7 @@ test('quota shares the native control child and reports native account invalidat
   await app.manageNativeAccount({action:'account_login',approve:true});
   const control=(app as any).nativeControl as CodexEngine;
   await control.request('synthetic/complete',{success:true});
-  assert.deepEqual(await app.manageNativeAccount({action:'account_usage'}),[{remainingPercent:63,windowDurationMins:10080,resetsAt:null}]);
+  assert.deepEqual(await app.manageNativeAccount({action:'account_usage'}),{windows:[{remainingPercent:63,windowDurationMins:10080,resetsAt:null}],credits:{hasCredits:true,unlimited:false,balance:'25.50'}});
   await control.request('synthetic/hold-usage',{});
   await assert.rejects(app.manageNativeAccount({action:'account_usage'}),/native_account_usage_unavailable/);
   assert.equal(control['pending'].size,0);

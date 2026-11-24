@@ -2,6 +2,8 @@
 
 2026-11-23 事项引用随用户消息、队列和历史保留，发送后可定位原事项。顶部角标和行尾圆环共用宿主确认的运行事项集合。宿主定向和隔离浏览器验证通过，实际安装包与真机待验。[事项列表](main-worker-chat-architecture.md#当前与归档)
 
+2026-11-24 [ChatGPT 套餐](account-and-model-connection.md#chatgpt-套餐额度2026-11-23)已在源码复用同一次额度读取展示积分。定向合成回归和隔离宽窄屏验证通过；真实账号与安装版待验。
+
 2026-11-20 Homer 审核 Worker 正式回报时会读到当前事项的完整目标和工作笔记。隔离宿主测试已核对排队后更新的长笔记、跨版本回报和多事项交错回报。[工作表与回报](main-worker-chat-architecture.md#字段与存放位置)
 
 2026-11-20 事项更新与 Worker 管理分开。Homer 更新目标，独立发消息或中断 Worker；固定 Codex 本地回环验证了运行中调整当前轮、轮末拒收后不重发、确认空闲后沿原线程续谈。[事项版本与 Worker 会话](main-worker-chat-architecture.md#worker-会话工具)

@@ -18,7 +18,7 @@ import {prepareWorkerProjectRoot} from './worker-project-root.js';
 import {INTERACTION_LIMITS} from './interaction-limits.js';
 import {attachmentRevealTarget,attachmentSourcePath} from './artifact-reveal.js';
 import {seedFirstLaunchSkills,shouldSeedFirstLaunchSkills} from './first-launch.js';
-import {NativeAccount,type NativeAccountState,type NativeUsageWindow} from './native-account.js';
+import {NativeAccount,type NativeAccountState,type NativeUsageSnapshot} from './native-account.js';
 import {validateChatGPTSelection,type ChatGPTModelOverrides,type NativeModel} from './model-config.js';
 import {createMembershipTools,isMembershipTool} from './membership-web-tools.js';
 import {readMembershipAudio,runMembershipAudio,verifyMembershipAudioAttachment} from './membership-audio.js';
@@ -725,7 +725,7 @@ export class Homer {
       if(this.nativeControl!==control)throw Error('engine_disconnected');
       return control.request(method,params,signal);
   }
-  async manageNativeAccount(input:{action:'account_usage'}):Promise<NativeUsageWindow[]>;
+  async manageNativeAccount(input:{action:'account_usage'}):Promise<NativeUsageSnapshot>;
   async manageNativeAccount(input:{action:'model_list'}):Promise<NativeModel[]>;
   async manageNativeAccount(input:unknown):Promise<NativeAccountState>;
   async manageNativeAccount(input:unknown){

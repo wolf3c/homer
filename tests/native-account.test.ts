@@ -47,16 +47,16 @@ test('model discovery rejects repeated pagination and unknown account instead of
  try{assert.equal(typeof manager.models,'function');await assert.rejects(manager.models(),/native_models_unconfirmed/);account=null;await assert.rejects(manager.models(),/native_account_not_connected/);}finally{await manager.close();}
 });
 
-test('usage reads general Codex windows and exposes only display fields',async()=>{
+test('usage reads windows and credits from the same Codex bucket in one request',async()=>{
  const calls:string[]=[];
  const manager=new NativeAccount(async(method,params)=>{
   calls.push(method);
   if(method==='account/read')return {account:{type:'chatgpt'},workspaceRouting:{chatgptAccountId:'workspace-private'}};
   assert.deepEqual(params,{excludeResetCreditDetails:true});
-  return {accountId:'workspace-private',rateLimitsByLimitId:{codex:{primary:null,secondary:{usedPercent:37,windowDurationMins:10080,resetsAt:1800000000},credits:{unlimited:true}}},rateLimits:{primary:{usedPercent:25,windowDurationMins:300}}};
+  return {accountId:'workspace-private',rateLimitsByLimitId:{codex:{primary:null,secondary:{usedPercent:100,windowDurationMins:10080,resetsAt:1800000000},credits:{hasCredits:false,unlimited:false,balance:'-1.250',privateField:'private'}}},rateLimits:{primary:{usedPercent:25,windowDurationMins:300},credits:{hasCredits:true,unlimited:true,balance:'123'}},rateLimitResetCredits:{balance:'999'}};
  });
  try{
-  assert.deepEqual(await Promise.all([manager.usage(),manager.usage()]),Array(2).fill([{remainingPercent:63,windowDurationMins:10080,resetsAt:1800000000}]));
+  assert.deepEqual(await Promise.all([manager.usage(),manager.usage()]),Array(2).fill({windows:[{remainingPercent:0,windowDurationMins:10080,resetsAt:1800000000}],credits:{hasCredits:false,unlimited:false,balance:'-1.250'}}));
   assert.deepEqual(calls,['account/read','account/rateLimits/read']);
  }finally{await manager.close();}
 });
@@ -74,7 +74,7 @@ test('usage discards an in-flight snapshot after the native account changes',asy
   const rejected=assert.rejects(pending,/native_account_usage_unavailable/);
   await requested;
   manager.invalidateUsage();
-  respond({rateLimits:{primary:{usedPercent:25}}});
+  respond({rateLimits:{primary:{usedPercent:25},credits:{hasCredits:true,unlimited:false,balance:'25'}}});
   await rejected;
  }finally{await manager.close();}
 });
@@ -86,13 +86,28 @@ test('usage separates a valid empty snapshot from API-key auth and a mismatched 
   reads++;return response;
  });
  try{
-  assert.deepEqual(await manager.usage(),[]);
-  response={rateLimits:{limitId:'model-only',primary:{usedPercent:80}}};
-  assert.deepEqual(await manager.usage(),[]);
+  assert.deepEqual(await manager.usage(),{windows:[],credits:null});
+  response={rateLimits:{limitId:'model-only',primary:{usedPercent:80},credits:{hasCredits:true,unlimited:false,balance:'42'}}};
+  assert.deepEqual(await manager.usage(),{windows:[],credits:null});
   response={accountId:'different',rateLimits:{primary:{usedPercent:25}}};
   await assert.rejects(manager.usage(),/native_account_usage_unavailable/);
   account={type:'apiKey'};
   await assert.rejects(manager.usage(),/native_account_usage_unavailable/);
   assert.equal(reads,3);
+ }finally{await manager.close();}
+});
+
+test('usage preserves legacy credit strings without windows and ignores invalid or foreign balances',async()=>{
+ const credits={hasCredits:true,unlimited:false,balance:'0'};
+ let response:unknown={rateLimits:{credits}};
+ const manager=new NativeAccount(async method=>method==='account/read'?{account:{type:'chatgpt'}}:response);
+ try{
+  assert.deepEqual(await manager.usage(),{windows:[],credits});
+  response={rateLimits:{credits},rateLimitsByLimitId:{codex:{},model:{credits}}};
+  assert.deepEqual(await manager.usage(),{windows:[],credits:null});
+  for(const balance of [undefined,null,0,'',' ',' 0 ','0\n','0x1','Infinity','1e3','<b>25</b>']){
+   response={rateLimits:{limitId:'codex',credits:{...credits,balance}}};
+   assert.deepEqual(await manager.usage(),{windows:[],credits:{...credits,balance:null}});
+  }
  }finally{await manager.close();}
 });

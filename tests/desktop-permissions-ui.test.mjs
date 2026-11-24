@@ -885,20 +885,47 @@ test('chat apps recover a lost WeChat start ACK after a prior applied result wit
  const before=reads;await act(async()=>{await new Promise(resolve=>setTimeout(resolve,550));});assert.ok(reads>before);assert.equal(starts,1);
 })));
 
-test('Codex usage stays scoped to the active account and renders only returned periods',async()=>withDom(async d=>{
- const listeners=new Set(),old=pending();
- const weekly={remainingPercent:63,windowDurationMins:10080,resetsAt:null};
- const current={supported:true,source:'codex',native:{account:'chatgpt',connected:true}};
+test('Codex usage and credits clear together and reject late responses after account changes',async()=>withDom(async d=>{
+ const listeners=new Set(),old=pending(),next=pending();
+ const weekly={remainingPercent:0,windowDurationMins:10080,resetsAt:null};
+ const credits=balance=>({hasCredits:false,unlimited:false,balance});
+ let current={supported:true,source:'codex',native:{account:'chatgpt',connected:true}};
  let reads=0;
- window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings(),nativeUsage:async()=>++reads===1?old.promise:[weekly]};
+ const responses=[{windows:[weekly],credits:credits('0')},old.promise,next.promise];
+ window.homerDesktopAccount={state:async()=>current,onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings(),nativeUsage:async()=>responses[reads++]};
  await d.render(React.createElement(get().DesktopAccount));
  const usage=()=>d.find(n=>n.getAttribute('aria-label')==='Codex 套餐用量').textContent;
- assert.match(usage(),/正在读取额度/);
+ assert.match(usage(),/周额度 · 剩余 0% · 重置时间未知积分 · 剩余 0/);
  await act(async()=>{for(const fn of listeners)fn('native-account-changed');});
- assert.match(usage(),/周额度 · 剩余 63% · 重置时间未知/);
- await act(async()=>old.resolve([{remainingPercent:75,windowDurationMins:300,resetsAt:null}]));
- assert.doesNotMatch(usage(),/5 小时/);
+ assert.equal(usage(),'正在读取额度…');
+ await act(async()=>{for(const fn of listeners)fn('native-account-changed');next.resolve({windows:[],credits:credits('-1.25')});});
+ assert.match(usage(),/暂无额度数据积分 · 剩余 -1\.25/);
+ await act(async()=>old.resolve({windows:[{remainingPercent:75,windowDurationMins:300,resetsAt:null}],credits:credits('999')}));
+ assert.doesNotMatch(usage(),/5 小时|999/);
  await act(async()=>{for(const fn of listeners)fn('native-account-disconnected');});
  assert.equal(usage(),'暂时无法读取额度');
- assert.equal(reads,2);
+ assert.equal(reads,3);
+ await act(async()=>{current={...current,native:{account:'none',connected:false}};for(const fn of listeners)fn('native-account-changed');});
+ assert.equal(d.find(n=>n.getAttribute('aria-label')==='Codex 套餐用量'),undefined);
+}));
+
+test('Codex credits distinguish unlimited, no credits, unknown and a failed snapshot',async()=>withDom(async d=>{
+ const listeners=new Set();
+ let credits={hasCredits:false,unlimited:true,balance:'10'},fail=false;
+ window.homerDesktopAccount={state:async()=>({supported:true,source:'codex',native:{account:'chatgpt',connected:true}}),onChange:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},nativeModels:async()=>nativeSettings(),nativeUsage:async()=>{
+  if(fail)throw Error('synthetic timeout');
+  return {windows:[],credits};
+ }};
+ await d.render(React.createElement(get().DesktopAccount));
+ const usage=()=>d.find(n=>n.getAttribute('aria-label')==='Codex 套餐用量').textContent;
+ const refresh=()=>act(async()=>{for(const fn of listeners)fn('native-account-changed');});
+ assert.equal(usage(),'暂无额度数据积分 · 不限量');
+ credits={hasCredits:false,unlimited:false,balance:null};await refresh();
+ assert.equal(usage(),'暂无额度数据积分 · 无可用积分');
+ credits={hasCredits:true,unlimited:false,balance:null};await refresh();
+ assert.equal(usage(),'暂无额度数据积分 · 余额未知');
+ credits=null;await refresh();
+ assert.equal(usage(),'暂无额度数据积分 · 余额未知');
+ fail=true;await refresh();
+ assert.equal(usage(),'暂时无法读取额度');
 }));
