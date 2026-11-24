@@ -5,7 +5,7 @@ import {useAnnotationDraft,type AnnotationDraft} from './annotation-draft';
 import {referenceKey,referencesOf} from '../src/preview-reference';
 import {Dialog} from '@base-ui/react/dialog';
 import {Tabs} from '@base-ui/react/tabs';
-import {PanelRight,XIcon} from 'lucide-react';
+import {FileIcon,PanelRight,XIcon} from 'lucide-react';
 import {createPortal} from 'react-dom';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
 import {useMediaQuery} from '@mantine/hooks';
@@ -54,17 +54,32 @@ export type PreviewTab=CanvasArtifact|MessageFileTab|{kind:'schedules';id:'sched
 type LocalFileInfo={kind:'local';filename:string;size:number;overLimit:boolean;reveal:boolean;platform:string};
 const messageFileErrors:Record<string,string>={
   artifact_missing:'找不到本地文件。恢复原路径后可以重试。',
-  artifact_path_denied:'本地文件访问受限。',
+  artifact_path_denied:'本地文件访问受限。如有权限，可在系统文件管理器中自行查找。',
   file_type_or_size_denied:'只能预览不超过 50 MiB 的普通文件。',
   artifact_changed:'文件在读取时发生变化，请重试。',
   message_file_path_unsupported:'当前系统不支持此本地文件路径。',
   message_file_scope_denied:'此消息或链接已不可读。',
   media_scope_denied:'此文件的交付版本不可用。',
+  media_asset_not_found:'此文件的交付版本不可用。',
   media_file_missing:'此文件的交付版本不可用。',
+  media_file_denied:'此文件的交付版本不可用。',
+  media_integrity_failed:'此文件的交付版本不可用。',
   preview_reveal_unavailable:'系统定位暂不可用。',
   preview_unavailable:'桌面预览暂不可用。',
   web_desktop_auth_required:'此本地文件只能在荷马桌面中读取。',
 };
+const unavailableFileCodes=new Set(['artifact_path_denied','message_file_scope_denied','message_file_path_unsupported',
+  'file_type_or_size_denied','media_scope_denied','media_asset_not_found','media_file_missing','media_file_denied','media_integrity_failed','preview_source_mismatch','web_desktop_auth_required']);
+class FileReadFailure extends Error{
+  constructor(message:string,readonly retryable:boolean){super(message);}
+}
+const readFailure=(code:string|undefined,message:string)=>new FileReadFailure(
+  code&&Object.hasOwn(messageFileErrors,code)?messageFileErrors[code]!:message,!code||!unavailableFileCodes.has(code),
+);
+async function fileResponseError(response:Response){
+  const result=await response.json().catch(()=>null);
+  return typeof result?.error==='string'?result.error as string:undefined;
+}
 export function canvasWebUrl(value:string):string {
   const url=new URL(value);
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('请输入不含账号密码的 http(s) 网页地址。');
@@ -224,7 +239,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   const [htmlActions,setHtmlActions]=useState<HTMLDivElement|null>(null);
   const body=useRef<HTMLDivElement>(null),webFrame=useRef<HTMLIFrameElement>(null);
   const bridge=useRef({onReference});bridge.current={onReference};
-  const [readError,setReadError]=useState(''),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
+  const [readError,setReadError]=useState<FileReadFailure>(),[retry,setRetry]=useState(0),[notice,setNotice]=useState('');
   const [file,setFile]=useState<{url:string;mime:string;text:string;name:string;blob:Blob;sha256:string|null;sourceLines?:SourceLines;attachment?:CanvasArtifact}|null>(null),[loading,setLoading]=useState(false);
   const [sourceView,setSourceView]=useState<boolean>();
   const artifact=tabArtifact??file?.attachment;
@@ -232,21 +247,23 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   const fixedAttachment=desktopMore&&file?.sha256&&artifact&&!artifact.resource;
   const [mediaError,setMediaError]=useState('');
   const [localInfo,setLocalInfo]=useState<LocalFileInfo>();
-  const [locating,setLocating]=useState(false);
+  const [acting,setActing]=useState(false);
+  const actionPending=useRef(false);
   const downloadNotice=mobileDownloadNotice(file?.blob.size);
   const mobileTransferLimit='此交付版本超过手机传输上限，请在电脑端下载。';
   function requestLocal(action:''|'/info',signal?:AbortSignal){
     return connectionFetch('/api/preview/message-file'+action,{signal,method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({threadId,messageId:local!.messageId,destination:local!.destination})});
   }
-  async function locate(){
-    if(!local||locating)return;
-    const epoch=generation.current;
-    setLocating(true);
-    try{
-      await runPreviewMore({action:'reveal',threadId,file:{messageId:local.messageId,destination:local.destination}},
-        ()=>readerCurrent()&&epoch===generation.current,setNotice);
-    }finally{if(readerCurrent())setLocating(false);}
+  async function loadLocalInfo(signal:AbortSignal){
+    const response=await requestLocal('/info',signal);
+    if(!response.ok)throw readFailure(await fileResponseError(response),'文件信息暂不可用。');
+    return await response.json() as LocalFileInfo|{kind:'attachment'};
+  }
+  function invalidateFile(error:FileReadFailure){
+    if(file)URL.revokeObjectURL(file.url);
+    setFile(null);setLocalInfo(undefined);setNotice('');setReadError(error);
+    if(body.current?.contains(document.activeElement))body.current.focus();
   }
 
   const mediaElement=useRef<HTMLMediaElement|null>(null);
@@ -269,32 +286,27 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   }),[attachmentPath,source,canOpenLinks]);
   const imageFile=useMemo(()=>file&&source&&(source.kind==='attachment'||source.kind==='message-file'&&source.sha256)?new File([file.blob],file.name,{type:file.mime}):undefined,[file,source]);
   useLayoutEffect(()=>{
-    generation.current++;setFile(null);setSourceView(undefined);setLocalInfo(undefined);setReadError('');setMediaError('');setNotice('');setRuntime('');setReady(false);setSelection('idle');
+    generation.current++;setFile(null);setSourceView(undefined);setLocalInfo(undefined);setReadError(undefined);setMediaError('');actionPending.current=false;setActing(false);setNotice('');setRuntime('');setReady(false);setSelection('idle');
     if(!artifact&&!local||webSource){setLoading(false);return;}
     const controller=new AbortController();let objectUrl='';setLoading(true);
     void (async()=>{try{
-      const loadInfo=async()=>{
-        const response=await requestLocal('/info',controller.signal);
-        if(!response.ok){
-          const {error}=await response.json().catch(()=>({error:undefined}));
-          throw Error(Object.hasOwn(messageFileErrors,error)?messageFileErrors[error]:'文件信息暂不可用。');
-        }
-        const info=await response.json() as LocalFileInfo|{kind:'attachment'};
-        if(info.kind==='local'&&!controller.signal.aborted&&readerCurrent())setLocalInfo(info);
-        return info.kind==='local';
-      };
       if(mobileView&&artifact?.size!==undefined&&Math.ceil(artifact.size/3)*4>=MOBILE_PACKET_BYTES)
-        throw Error(mobileTransferLimit);
+        throw new FileReadFailure(mobileTransferLimit,false);
       const response=local?await requestLocal('',controller.signal):await connectionFetch(attachmentPath+(artifact?.resource?'/resource/'+encodeURIComponent(artifact.resource):''),{signal:controller.signal});
       if(!response.ok){
-        const error=await response.json().then(result=>result?.error,()=>undefined);
-        if(local&&(error==='file_type_or_size_denied'||error==='file_preview_unsupported')&&await loadInfo())return;
-        if(local)throw Error(Object.hasOwn(messageFileErrors,error)?messageFileErrors[error]:'本地文件读取失败，请重试。');
-        if(mobileView&&error==='mobile_packet_size_limit')throw Error(mobileTransferLimit);
-        throw Error('成果读取失败（'+response.status+'），'+(error==='file_type_or_size_denied'?'文件类型或大小不符合当前读取限制（文件上限 50 MiB），请使用原文件。':'请重新连接后重试。'));
+        const error=await fileResponseError(response);
+        if(local&&(error==='file_type_or_size_denied'||error==='file_preview_unsupported')){
+          const info=await loadLocalInfo(controller.signal);
+          if(info.kind==='local'){
+            if(!controller.signal.aborted&&readerCurrent())setLocalInfo(info);
+            return;
+          }
+        }
+        if(mobileView&&error==='mobile_packet_size_limit')throw new FileReadFailure(mobileTransferLimit,false);
+        throw readFailure(error,local?'本地文件读取失败，请重试。':'成果读取失败（'+response.status+'），请重新连接后重试。');
       }
       let sha256=response.headers.get('X-Homer-Artifact-Hash');
-      if(tabArtifact&&!tabArtifact.resource&&sha256!==tabArtifact.sha256)throw Error('成果读取失败：附件版本已变化，请重新打开。');
+      if(tabArtifact&&!tabArtifact.resource&&sha256!==tabArtifact.sha256)throw new FileReadFailure('此文件的交付版本不可用，请重新打开。',false);
       if(artifact?.resource)sha256=null;
       const blob=await response.blob(),mime=(response.headers.get('Content-Type')??blob.type).split(';')[0]!.trim().toLowerCase();
       if(local&&['image/png','image/jpeg','image/webp','image/gif'].includes(mime)&&blob.size<=8*1024*1024){
@@ -315,7 +327,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
           attachment={messageId,assetId,revision,sha256,title:name,id:JSON.stringify([messageId,assetId,revision])};
       }catch{}
       objectUrl=URL.createObjectURL(blob);setFile({url:objectUrl,mime,text,name,blob,sha256,sourceLines,attachment});
-    }catch(error){if(!controller.signal.aborted&&readerCurrent())setReadError(error instanceof Error?error.message:'成果读取失败。');}
+    }catch(error){if(!controller.signal.aborted&&readerCurrent())setReadError(error instanceof FileReadFailure?error:new FileReadFailure('成果读取失败，请重试。',true));}
     finally{if(!controller.signal.aborted&&readerCurrent())setLoading(false);}})();
     return()=>{
       controller.abort();
@@ -420,7 +432,6 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   },[file]);
   const patchRaw=file&&<>{!downloadNotice&&!fixedAttachment&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},()=>{if(readerCurrent())setNotice('下载未完成，请重新连接后重试。');});}}>下载原文件</a>}<pre>{file.text}</pre></>;
   const mediaKind=file?.mime.startsWith('audio/')?'audio':file?.mime.startsWith('video/')?'video':null;
-  const unknownMedia=!!file&&(!file.mime||file.mime==='application/octet-stream')&&/\.(mp3|wav|m4a|ogg|flac|mp4|webm|mov|mkv)$/i.test(file.name);
   const isHtml=file?.mime==='text/html',isText=!!file&&!mediaKind&&(textPreviewMime(file.mime)||!!file.text);
   const isMarkdown=file?.mime==='text/markdown'||!!file&&(!local||isText)&&/\.md$/i.test(file.name);
   const sourceLines=isText&&!isPatch&&!annotationFocus?file?.sourceLines:undefined;
@@ -447,15 +458,76 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   const hasFrame=!!webSource||file?.mime==='application/pdf';
   const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   const nativeHtml=isHtml&&!showSource&&window.homerBrowserPreview&&source;
+  const fileFallback=!loading&&!readError&&(!!localInfo&&!file||!!file&&
+    (!!mediaError||!(isPatch||isHtml||isMarkdown||isText||mediaKind||file.mime.startsWith('image/')||file.mime==='application/pdf')));
+  useEffect(()=>{
+    if(!fileFallback||!local||artifact||localInfo||!desktopMore)return;
+    const controller=new AbortController(),epoch=generation.current;
+    const current=()=>!controller.signal.aborted&&readerCurrent()&&epoch===generation.current;
+    void loadLocalInfo(controller.signal).then(info=>{
+      if(current()&&info.kind==='local')setLocalInfo(info);
+    },error=>{
+      if(current())invalidateFile(error instanceof FileReadFailure?error:new FileReadFailure('文件信息暂不可用。',true));
+    });
+    return ()=>controller.abort();
+  },[fileFallback,local?.id,localInfo,artifact,file,desktopMore]);
+  const fixedSource=file?.sha256&&artifact&&!artifact.resource?{
+    kind:'attachment' as const,messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,title:file.name,sha256:file.sha256,
+  }:undefined;
   let moreItems:PreviewMoreItem[]=[];
   if(desktopMore&&!nativeHtml){
-    if(file?.sha256&&artifact&&!artifact.resource)
-      moreItems=attachmentMoreItems({threadId,attachment:{kind:'attachment',messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,title:file.name,sha256:file.sha256}});
+    if(fixedSource)moreItems=attachmentMoreItems({threadId,attachment:fixedSource});
     else if(local&&!artifact&&(file||localInfo))
-      moreItems=localMoreItems({threadId,file:{messageId:local.messageId,destination:local.destination}},file?.name??localInfo!.filename,window.homerBrowserPreview?.platform);
+      moreItems=localMoreItems({threadId,file:{messageId:local.messageId,destination:local.destination}},
+        localInfo?.filename??file!.name,window.homerBrowserPreview?.platform,fileFallback?!!localInfo?.reveal:undefined);
   }
+  async function runFallback(item?:PreviewMoreItem){
+    if(actionPending.current||!readerCurrent())return;
+    actionPending.current=true;setActing(true);setNotice('');
+    const epoch=generation.current;
+    const current=()=>readerCurrent()&&epoch===generation.current;
+    try{
+      if(item){
+        await runPreviewMore(item.input,current,(message,code)=>{
+          if(code==='file_type_or_size_denied')invalidateFile(new FileReadFailure(message,false));
+          else if(code&&(unavailableFileCodes.has(code)||code==='artifact_missing'))invalidateFile(readFailure(code,message));
+          else setNotice(message);
+        });
+      }else if(fixedSource){
+        const path='/api/media/'+[fixedSource.messageId,fixedSource.assetId,fixedSource.revision].map(encodeURIComponent).join('/');
+        const response=await connectionFetch(path);
+        if(!current())return;
+        if(!response.ok){
+          const code=await fileResponseError(response);
+          if(current()){
+            if((code&&unavailableFileCodes.has(code))||[401,403,404,410].includes(response.status))
+              invalidateFile(new FileReadFailure('此文件的交付版本不可用。',false));
+            else setNotice('文件保存未完成，请重新连接后重试。');
+          }
+          return;
+        }
+        if(response.headers.get('X-Homer-Artifact-Hash')!==fixedSource.sha256){
+          invalidateFile(new FileReadFailure('此文件的交付版本不可用，请重新打开。',false));
+          return;
+        }
+        await saveBlob(await response.blob(),fixedSource.title,current);
+        if(current())setNotice(mobileShare?'已向手机发送分享请求。':'已请求下载当前版本。');
+      }
+    }catch(error){
+      if(current())setNotice(error instanceof Error&&error.message==='mobile_file_size_limit'
+        ?MOBILE_DOWNLOAD_LIMIT_NOTICE:mobileShare?'未能发送分享请求，请重试。':'下载未完成，请重新连接后重试。');
+    }finally{
+      if(current()){actionPending.current=false;setActing(false);}
+    }
+  }
+  const mobileShare=mobileView&&!!window.ReactNativeWebView;
+  const fallbackName=localInfo?.filename??file?.name??local?.title??tabArtifact?.title;
+  const fallbackSize=localInfo?.size??file?.blob.size;
+  const fallbackHint=localInfo?.overLimit?'文件超过 50 MiB 的预览上限。':mediaError||
+    (local&&!artifact&&!moreItems.length&&(localInfo||!desktopMore)?'请在电脑的文件管理器中查看此文件。':'');
+  const onImageError=()=>{if(readerCurrent())setMediaError('此图片无法在当前预览中显示。');};
   return <CanvasSplitDocument>
-    {actions&&file&&!downloadNotice&&!fixedAttachment&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
+    {actions&&file&&!fileFallback&&!downloadNotice&&!fixedAttachment&&createPortal(<FileDownload data={file.url} mimeType={file.mime} filename={file.name} onClick={event=>{
       event.preventDefault();
       void saveBlob(file.blob,file.name).then(()=>{if(readerCurrent())setNotice('');},error=>{
         if(readerCurrent())setNotice(error instanceof Error&&error.message==='mobile_file_size_limit'
@@ -470,23 +542,31 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
         openLink.current?.(source,undefined,async()=>readerCurrent()&&generation.current===epoch);
       }}>查看页面</button>}
     </div>,actions)}
-    {actions&&createPortal(isHtml&&!showSource&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
+    {actions&&!fileFallback&&createPortal(isHtml&&!showSource&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
     </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
-    {actions&&moreItems.length>0&&createPortal(<PreviewMoreMenu items={moreItems} onAction={input=>{
+    {actions&&!fileFallback&&moreItems.length>0&&createPortal(<PreviewMoreMenu items={moreItems} onAction={input=>{
       const epoch=generation.current;
       void runPreviewMore(input,()=>readerCurrent()&&generation.current===epoch,setNotice);
     }}/>,actions)}
     <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml&&!showSource?'html-preview-body':isPatch?'patch-preview-body':undefined}>
-    {(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
+    {!fileFallback&&(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
     {local&&isImage&&file&&file.blob.size>8*1024*1024&&<p role="status" className="canvas-note">图片超过草稿附件的 8 MiB 上限，可预览。</p>}
     {referencesEnabled&&source&&!webSource&&isText&&!isHtml&&!isPatch&&!(isMarkdown&&showSource)&&<PreviewSelectionToolbar key={JSON.stringify([artifact?.id,file?.sha256])} body={body} source={source} annotations={textReference?.kind==='text'?textReference.annotations??[]:[]} representation={file?.mime==='text/markdown'||/\.md$/i.test(file?.name??'')?'markdown':'plain'} onReference={onReference} onRemove={id=>annotationDraft.remove(referenceKey({kind:'text',source}),id)} onNotice={setNotice} focusAnnotation={focusId} focusRequest={annotationFocus?.nonce} historyNote={annotationFocus?.history?.kind==='text'?annotationFocus.history.annotations?.find(note=>note.id===focusId):undefined}/>}
     {webSource?<><p className="canvas-note">{ready?'网页已接入批注器，可使用页面内工具栏选择元素。':'网站可能禁止嵌入；未接入批注器的网页只能预览。'}</p><WebPreview origin={webSource.url} loading={false} onReload={()=>{setReady(false);if(webFrame.current)webFrame.current.src=webSource.url;}} onOpenExternal={()=>window.open(webSource.url,'_blank','noopener,noreferrer')}><iframe ref={webFrame} key={webSource.url} title="网页预览" onLoad={()=>setFrameRevision(value=>value+1)} src={webSource.url} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer"/></WebPreview></>:
-    loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError?<div className="canvas-read-error"><p role="alert">{readError}</p><button type="button" onClick={event=>{if(local&&!event.isTrusted)return;stopHtmlAnnotation();setFile(null);setRetry(value=>value+1);}}>重试读取</button></div>:localInfo&&!file?<div className="canvas-read-error">
-      <p>{localInfo.filename} · {localInfo.size<1048576?<FileSize bytes={localInfo.size}/>:((localInfo.size/1048576).toFixed(1)+' MiB')}</p>
-      <p>{localInfo.overLimit?'文件超过预览上限（50 MiB）。':'此格式暂不支持内置预览。'}</p>
-      {desktopMore&&localInfo.reveal&&<button type="button" disabled={locating} onClick={event=>{if(event.isTrusted)void locate();}}>{localInfo.platform==='win32'?'在文件资源管理器中显示':'在 Finder 中显示'}</button>}
+    loading?<p role="status">{local?'正在读取本地文件…':'正在读取成果…'}</p>:readError||fileFallback?<div className="canvas-file-fallback">
+      <span className="canvas-file-glyph"><FileIcon size={24} aria-hidden/></span>
+      <h2>{fallbackName||'文件'}</h2>
+      {fallbackSize!==undefined&&<p className="canvas-note">{artifact&&!artifact.resource?'交付附件':local?'本地文件':'文件'} · {fallbackSize<1048576?<FileSize bytes={fallbackSize}/>:((fallbackSize/1048576).toFixed(1)+' MiB')}</p>}
+      {readError?<p role="alert">{readError.message}</p>:<>{fallbackHint&&<p role={mediaError?'alert':undefined}>{fallbackHint}</p>}{downloadNotice&&<p>{downloadNotice}</p>}</>}
+      <div className="canvas-file-actions">
+        {readError?readError.retryable&&<button type="button" onClick={event=>{if(local&&!event.isTrusted)return;setRetry(value=>value+1);}}>重试读取</button>:
+          moreItems.length?moreItems.map(item=><button type="button" key={item.input.action} aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback(item);}}>
+            {item.input.action==='reveal'?'在文件夹中显示':item.input.action==='download'?'下载文件':item.label}
+          </button>):fixedSource&&!downloadNotice&&<button type="button" aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback();}}>{mobileShare?'保存或分享':'下载文件'}</button>}
+      </div>
+      {fileFallback&&notice&&<p className="canvas-note" role="status">{notice}</p>}
     </div>:file?<>
       {showSource?rawText:isPatch?patchFallback?<><p role="status" className="canvas-note">{patchFallback}</p>{patchRaw}</>:
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
@@ -497,16 +577,15 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
       mediaKind?<div className="canvas-media">
         <p className="canvas-note">{file.name}</p>
         {mediaKind==='audio'?<audio ref={node=>{if(node)mediaElement.current=node;}} controls preload="none" src={file.url} aria-label={'音频预览：'+file.name} onError={event=>{
-          if(readerCurrent()&&mediaElement.current===event.currentTarget&&event.currentTarget.getAttribute('src')===file.url)setMediaError('此文件无法在当前浏览器播放，可下载后打开。');
+          if(readerCurrent()&&mediaElement.current===event.currentTarget&&event.currentTarget.getAttribute('src')===file.url)setMediaError('此音频无法在当前预览中播放。');
         }}/>:<video ref={node=>{if(node)mediaElement.current=node;}} controls playsInline preload="none" src={file.url} aria-label={'视频预览：'+file.name} onError={event=>{
-          if(readerCurrent()&&mediaElement.current===event.currentTarget&&event.currentTarget.getAttribute('src')===file.url)setMediaError('此文件无法在当前浏览器播放，可下载后打开。');
+          if(readerCurrent()&&mediaElement.current===event.currentTarget&&event.currentTarget.getAttribute('src')===file.url)setMediaError('此视频无法在当前预览中播放。');
         }}/>}
-        {mediaError&&<p role="alert">{mediaError}</p>}
-        {!downloadNotice&&!fixedAttachment&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}
+        {!downloadNotice&&!fixedAttachment&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setNotice('下载未完成，请重新连接后重试。'));}}>下载文件</a>}
       </div>:
       isMarkdown?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={markdownLinePlugin?[markdownLinePlugin,rehypeKatex]:[rehypeKatex]} urlTransform={(url,key)=>key==='href'&&source&&canOpenLinks&&isMessageFileLink(url)?url:defaultUrlTransform(url)} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?rawText:
-      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation initialEnabled={false} readOnly={!!historicImage} key={noteKey} url={file.url} title={source.title} actions={historicImage?undefined:imageActions} control={imageControl}
+      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation onLoadError={onImageError} initialEnabled={false} readOnly={!!historicImage} key={noteKey} url={file.url} title={source.title} actions={historicImage?undefined:imageActions} control={imageControl}
         notes={historicImage?.annotations??(imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[])}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},annotationDraft.imageFile(noteKey,imageFile),isCurrent)}
         onRemove={id=>{
@@ -514,8 +593,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
             return onReference({kind:'image',source,width:imageReference.width,height:imageReference.height,annotations:[]});
           }
           annotationDraft.remove(noteKey,id);
-        }} focusAnnotation={historicImage?undefined:focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
-      file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:unknownMedia?<div className="canvas-media"><p className="canvas-note">{file.name}</p><p>{downloadNotice?'未识别为可播放的媒体类型。':'未识别为可播放的媒体类型，可下载后打开。'}</p>{!downloadNotice&&!fixedAttachment&&<a href={file.url} download={file.name} onClick={event=>{event.preventDefault();void saveBlob(file.blob,file.name).catch(()=>setMediaError('下载未完成，请重新连接后重试。'));}}>下载文件</a>}</div>:<p>此格式暂不支持在线预览。</p>}
+        }} focusAnnotation={historicImage?undefined:focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview onStatusChange={status=>{if(status==='error')onImageError();}} src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
+      file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:null}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}
     </CanvasSplitBody></CanvasSplitDocument>;

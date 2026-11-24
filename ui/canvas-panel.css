@@ -205,3 +205,16 @@
 
 /* HTML uses its native browser strip once its actual content type is known. */
 .canvas-tab-panel:has(.browser-preview)>.preview-toolbar,.canvas-panel:has(.browser-preview)>.preview-toolbar{display:none}
+
+.canvas-file-fallback{width:min(100%,548px);margin:0 auto;padding:clamp(26px,8vh,72px) clamp(8px,3vw,34px) 24px;color:var(--ink)}
+.canvas-file-fallback h2{margin:16px 0 4px;font-size:clamp(20px,3vw,24px);line-height:1.35;overflow-wrap:anywhere}
+.canvas-file-fallback p{margin:12px 0 0}
+.canvas-file-fallback .canvas-note{margin-top:4px}
+.canvas-file-glyph{display:grid;place-items:center;width:48px;height:48px;border-radius:10px;background:var(--soft)}
+.canvas-file-actions{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 12px}
+.canvas-file-actions:empty{display:none}
+.canvas-panel .canvas-file-actions button{min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:14px;cursor:pointer}
+.canvas-panel .canvas-file-actions button:hover{background:var(--soft)}
+.canvas-panel .canvas-file-actions button:first-child{background:var(--control);border-color:var(--control);color:var(--surface)}
+.canvas-panel .canvas-file-actions button[aria-disabled=true]{opacity:.65;cursor:wait}
+.canvas-panel:has(.canvas-file-fallback) .preview-toolbar{display:none}

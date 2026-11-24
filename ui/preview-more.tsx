@@ -1,17 +1,17 @@
 import{Menu}from'@base-ui/react/menu';
 import{Ellipsis}from'lucide-react';
 import{useEffect,useRef,useState}from'react';
-import{previewFileCanOpen,type PreviewMoreAction}from'../src/browser-preview';
+import{previewFileCanOpen,previewFileCanReveal,type PreviewMoreAction}from'../src/browser-preview';
 import{saveBlob}from'./file-download';
 
 export type PreviewMoreItem={label:string;input:PreviewMoreAction};
 type LocalInput=Extract<PreviewMoreAction,{file:unknown}>;
 type AttachmentInput=Extract<PreviewMoreAction,{attachment:unknown}>;
 
-export function localMoreItems(input:Omit<LocalInput,'action'>,filename:string,platform?:string):PreviewMoreItem[]{
+export function localMoreItems(input:Omit<LocalInput,'action'>,filename:string,platform?:string,reveal=previewFileCanReveal(platform)):PreviewMoreItem[]{
  const items:PreviewMoreItem[]=[];
- if(platform==='darwin'||platform==='win32')items.push({
-  label:platform==='darwin'?'在 Finder 中显示':'在文件资源管理器中显示',input:{...input,action:'reveal'},
+ if(reveal)items.push({
+  label:platform==='darwin'?'在 Finder 中显示':platform==='win32'?'在文件资源管理器中显示':'在文件夹中显示',input:{...input,action:'reveal'},
  });
  if(previewFileCanOpen(filename))items.push({label:'用默认应用打开',input:{...input,action:'open'}});
  return items;
@@ -24,8 +24,10 @@ export function attachmentMoreItems(input:Omit<AttachmentInput,'action'>):Previe
 
 const actionErrors:Record<string,string>={
  artifact_missing:'找不到本地原件。',
+ file_type_or_size_denied:'本地路径已无法打开为普通文件。',
  artifact_path_denied:'本地文件访问受限。',
  message_file_scope_denied:'此消息或链接已不可读。',
+ media_file_missing:'此文件的交付版本不可用。',
  media_scope_denied:'此文件的交付版本不可用。',
  preview_source_mismatch:'此文件的交付版本不可用，请重新打开。',
  preview_page_unavailable:'网页已关闭。',
@@ -33,7 +35,7 @@ const actionErrors:Record<string,string>={
  preview_file_open_unsupported:'此文件类型暂不支持用默认应用打开。',
  preview_system_open_failed:'系统未能打开目标，请核对默认应用或浏览器设置。',
 };
-export async function runPreviewMore(input:PreviewMoreAction,isCurrent:()=>boolean,onNotice:(text:string)=>void){
+export async function runPreviewMore(input:PreviewMoreAction,isCurrent:()=>boolean,onNotice:(text:string,error?:string)=>void){
  const bridge=window.homerBrowserPreview;
  if(!isCurrent()||!bridge?.more)return;
  try{
@@ -48,7 +50,7 @@ export async function runPreviewMore(input:PreviewMoreAction,isCurrent:()=>boole
   if(!isCurrent())return;
   const message=error instanceof Error?error.message:'';
   const code=Object.keys(actionErrors).find(key=>message.endsWith(key));
-  onNotice(code?actionErrors[code]!:input.action==='download'?'下载未完成，请重新打开附件后重试。':'系统操作未确认，请核对后重试。');
+  onNotice(code?actionErrors[code]!:input.action==='download'?'下载未完成，请重新打开附件后重试。':'系统操作未确认，请核对后重试。',code);
  }
 }
 

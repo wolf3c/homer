@@ -61,12 +61,12 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
     fetchMessageFile:(threadId,{messageId,destination})=>messageFile('',{threadId,messageId,destination}),
     fetchAttachment:(s,resource)=>fetch(process.env.TEST_ORIGIN+'/api/media/'+[s.messageId,s.assetId,s.revision].map(encodeURIComponent).join('/')+(resource?'/resource/'+encodeURIComponent(resource):''),{headers:access})});
   await window.loadURL(process.env.TEST_ORIGIN);window.on('closed',()=>{globalThis.preview.close();app.quit();});})().catch(e=>{console.error(e.stack);app.exit(1)});`);
-  f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/preview_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
+  f.app.bindBrowserPreview((actor,action,input)=>electron.evaluate((_,a)=>globalThis.preview.execute(a.actor,a.action,a.input),{actor,action,input}).catch(error=>{throw Error(error.message.match(/(?:preview|artifact|media|message_file)_[a-z_]+/)?.[0]??'preview_result_unconfirmed');}));
   const quoteText='合成原文用于核对跨栏批注。'.repeat(10);
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
    if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
-   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit Linked HTML'?`[打开附件方案](${pathToFileURL(join(f.app.config.workspace,'preview-linked.html')).href})`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
+   const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit ZIP'?`[打开交付压缩包](${pathToFileURL(join(f.app.config.workspace,'delivered.zip')).href})`:text==='Emit Linked HTML'?`[打开附件方案](${pathToFileURL(join(f.app.config.workspace,'preview-linked.html')).href})`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
   });await f.app.start();await f.app.message('打开合成网页并批注','preview-fixture-source');
@@ -233,6 +233,63 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    assert.equal((await dispatches()).files.length,2);
    await closeTab('disguised.md');
    record('trusted keyboard and pointer actions revalidate and dispatch the current original, including native local HTML');
+   const zip=join(scratch,'资料.zip');
+   await writeFile(zip,Buffer.from([80,75,3,4,0]));
+   f.app.history.record('desktop-zip-fixture',f.app.store.meta('mainThread'),`[打开本地压缩包](${pathToFileURL(zip).href})`);
+   await host.getByRole('link',{name:'打开本地压缩包',exact:true}).click();
+   const reveal=host.getByRole('button',{name:'在文件夹中显示',exact:true});
+   await reveal.waitFor();
+   assert.equal(await more.count(),0);
+   assert.equal(await host.locator('#canvas-panel .preview-toolbar').isVisible(),false);
+   assert.equal(await host.getByRole('button',{name:'用默认应用打开'}).count(),0);
+   await reveal.press('Enter');
+   await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+   assert.deepEqual((await dispatches()).reveal,[snapshot,await realpath(zip)]);
+   await host.screenshot({path:join(out,'file-fallback-1280.png')});
+   await electron.evaluate(()=>globalThis.testWindow.setContentSize(390,760));
+   await until(()=>host.evaluate(()=>innerWidth===390));
+   assert.ok((await reveal.boundingBox()).height>=44);
+   await host.screenshot({path:join(out,'file-fallback-390.png')});
+   await electron.evaluate(()=>globalThis.testWindow.setContentSize(1280,900));
+   await rm(zip);
+   await reveal.click();
+   await host.getByRole('alert').filter({hasText:'找不到本地文件'}).waitFor();
+   assert.equal(await reveal.count(),0);
+   assert.equal((await dispatches()).reveal.length,2);
+   await writeFile(zip,Buffer.from([80,75,3,4,0]));
+   await host.getByRole('button',{name:'重试读取',exact:true}).click();
+   await reveal.waitFor();
+   await rm(zip);
+   await mkdir(zip);
+   await reveal.click();
+   await host.getByRole('alert').filter({hasText:'普通文件'}).waitFor();
+   assert.equal(await reveal.count(),0);
+   assert.equal((await dispatches()).reveal.length,2);
+   await closeTab('资料.zip');
+   record('local ZIP fallback exposes one trusted reveal action and clears it after deletion');
+
+   const deliveredZip=join(f.app.config.workspace,'delivered.zip');
+   const deliveredBytes=Buffer.from([80,75,3,4,1,2,3]);
+   await writeFile(deliveredZip,deliveredBytes);
+   await f.app.message('Emit ZIP','more-zip-fixture');
+   await host.getByRole('link',{name:'打开交付压缩包',exact:true}).click();
+   const downloadZip=host.getByRole('button',{name:'下载文件',exact:true});
+   await downloadZip.waitFor();
+   assert.equal(await more.count(),0);
+   assert.equal(await host.locator('#canvas-panel [data-slot="file-download"]').count(),0);
+   await writeFile(deliveredZip,'changed original');
+   await electron.evaluate((_,path)=>globalThis.testWindow.webContents.session.once('will-download',(_event,download)=>download.setSavePath(path)),join(scratch,'downloaded.zip'));
+   await downloadZip.click();
+   await until(async()=>deliveredBytes.equals(await readFile(join(scratch,'downloaded.zip')).catch(()=>Buffer.alloc(0))));
+   const zipReply=f.app.store.db.prepare("SELECT replyId FROM conversation_inputs WHERE requestId='more-zip-fixture'").get().replyId;
+   f.app.history.revokeMessage(f.app.store.meta('mainThread'),zipReply);
+   await downloadZip.click();
+   await host.getByRole('alert').filter({hasText:'交付版本不可用'}).waitFor();
+   assert.equal(await downloadZip.count(),0);
+   await host.getByRole('button',{name:'关闭文件：delivered.zip',exact:true}).click();
+   record('attachment ZIP offers one download and never substitutes changed original bytes or a revoked snapshot');
+
+
 
    const original=join(f.app.config.workspace,'preview-linked.html');
    const delivered='<meta charset="utf-8"><title>附件方案</title><a href="child.html">打开相邻 HTML</a>';
@@ -620,11 +677,12 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   const archiveRead=host.waitForResponse(response=>new URL(response.url()).pathname==='/api/preview/message-file');
   await host.getByRole('link',{name:'打开测试安装包',exact:true}).click();
   assert.deepEqual(await (await archiveRead).json(),{error:'file_type_or_size_denied'});
-  await host.getByText('test-build.zip · 412.0 MiB',{exact:true}).waitFor();
+  await host.getByRole('heading',{name:'test-build.zip',exact:true}).waitFor();
+  await host.getByText('本地文件 · 412.0 MiB',{exact:true}).waitFor();
+  await host.getByText('文件超过 50 MiB 的预览上限。',{exact:true}).waitFor();
   assert.deepEqual(await electron.evaluate(()=>globalThis.revealRequests),[]);
-  const revealLabel=process.platform==='win32'?'在文件资源管理器中显示':process.platform==='darwin'?'在 Finder 中显示':undefined;
-  if(revealLabel){
-   await host.getByRole('button',{name:revealLabel,exact:true}).click();
+  if(['darwin','win32','linux'].includes(process.platform)){
+   await host.getByRole('button',{name:'在文件夹中显示',exact:true}).click();
    await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
    assert.deepEqual(await electron.evaluate(()=>globalThis.revealRequests),[archivePath]);
   }

@@ -47,9 +47,11 @@ try{for(const width of [1440,704,390,320]){
   const read=f.bridge.media.read.bind(f.bridge.media);let release,fail=true;
   f.bridge.media.read=async selector=>{const file=await read(selector);if(fail){fail=false;return {...file,sha256:'0'.repeat(64)};}return file;};
   if(width<=800)await page.evaluate(()=>document.querySelector('.canvas-collapse').click());
-  await open(names[2]);await page.until(()=>document.querySelector('.canvas-read-error')?.textContent.includes('附件版本已变化'));
+  await open(names[2]);await page.until(()=>document.querySelector('.canvas-file-fallback [role=alert]')?.textContent.includes('交付版本不可用'));
   assert.equal(await page.evaluate(()=>!!document.querySelector('.canvas-markdown')),false,'a mismatched digest cannot display stale attachment content');
-  await page.evaluate(()=>document.querySelector('.canvas-read-error button').click());await page.until(()=>document.querySelector('.canvas-markdown')?.textContent.includes('UI changes'));
+  assert.equal(await page.evaluate(()=>document.querySelector('.canvas-file-fallback button')),null);
+  await page.evaluate(()=>document.querySelector('.canvas-collapse').click());
+  await open(names[2]);await page.until(()=>document.querySelector('.canvas-markdown')?.textContent.includes('UI changes'));
   await page.evaluate(()=>{const original=window.fetch;window.__supersededReadAborted=false;window.fetch=async(...args)=>{try{return await original(...args);}catch(error){if(error.name==='AbortError'&&String(args[0]).startsWith('/api/media/'))window.__supersededReadAborted=true;throw error;}};});
   let delayedId;
   f.bridge.media.read=async id=>{if(!delayedId){delayedId=id;await new Promise(done=>{release=done;});}return read(id);};

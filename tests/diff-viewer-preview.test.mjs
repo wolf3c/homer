@@ -16,7 +16,7 @@ async function reader(mode='real'){
   b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export default ""'}));
   b.onResolve({filter:/^parse-diff$/},()=>({path:'parse-diff',namespace:'parser'}));
   b.onLoad({filter:/.*/,namespace:'parser'},()=>({contents:'export default patch=>globalThis.__patchParser(patch);'}));
-  if(mode==='download')b.onLoad({filter:/\/file-download\.ts$/},()=>({contents:'export const saveBlob=(...args)=>globalThis.__patchDownload(...args);'}));
+  if(mode==='download')b.onLoad({filter:/\/file-download\.ts$/},()=>({contents:'export const MOBILE_DOWNLOAD_LIMIT_NOTICE="", mobileDownloadNotice=()=>"", saveBlob=(...args)=>globalThis.__patchDownload(...args);'}));
   if(mode==='lazy-error')b.onLoad({filter:/\/diff-viewer\.tsx$/},()=>({contents:'throw Error("synthetic_chunk_failure"); export const DiffViewer=()=>null;'}));
  }}]});
  const mod={exports:{}};Function('require','module','exports',result.outputFiles[0].text)(require,mod,mod.exports);return mod.exports;

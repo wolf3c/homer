@@ -44,11 +44,15 @@ test('desktop requests omit ambient cookies and reject foreign origins',async()=
  assert.throws(()=>module.exports.connectionFetch('https://foreign.example/api/history/state'),/web_connection_origin_denied/);assert.equal(calls.length,1);
 });
 test('mobile file sharing uses downloaded bytes without cookies, and refuses oversized bridge messages',async()=>{
- const module={exports:{}},messages=[];
- class Reader{readAsDataURL(blob){void blob.arrayBuffer().then(bytes=>{this.result='data:application/octet-stream;base64,'+Buffer.from(bytes).toString('base64');this.onload();});}}
+ const module={exports:{}},messages=[];let beforeLoad=()=>{};
+ class Reader{readAsDataURL(blob){void blob.arrayBuffer().then(bytes=>{beforeLoad();this.result='data:application/octet-stream;base64,'+Buffer.from(bytes).toString('base64');this.onload();});}}
  Function('document','window','FileReader','module','exports',build('ui/file-download.ts'))({querySelector:()=>({getAttribute:()=>'true'})},{ReactNativeWebView:{postMessage:value=>messages.push(JSON.parse(value))}},Reader,module,module.exports);
  await module.exports.saveBlob(new Blob(['合成文件']),'合成.txt');assert.deepEqual(messages.filter(value=>value.type==='share-file'),[{type:'share-file',filename:'合成.txt',base64:Buffer.from('合成文件').toString('base64')}]);
  await assert.rejects(module.exports.saveBlob(new Blob([new Uint8Array(8*1024*1024+1)]),'large.bin'),/mobile_file_size_limit/);assert.equal(messages.filter(value=>value.type==='share-file').length,1);
+ let current=true;beforeLoad=()=>{current=false;};
+ await module.exports.saveBlob(new Blob(['旧标签']),'旧标签.txt',()=>current);
+ assert.equal(messages.filter(value=>value.type==='share-file').length,1);
+
 });
 test('bundled page announces readiness after its connection listener is installed',()=>{
  const module={exports:{}},messages=[],window=new EventTarget(),document=new EventTarget();

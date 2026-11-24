@@ -63,7 +63,7 @@ import {MAIN_INTERACTION_TOOLS} from "./worker-interaction-tools.js";
 import { WorkerInteractionMcp, hostMcpTools } from "./worker-interaction-mcp.js";
 import {DesktopCua,CUA_TOOLS,isCuaTool} from './desktop-cua.js';
 import{BROWSER_PREVIEW_TOOLS,isBrowserPreviewTool}from'./browser-preview-tools.js';
-import type{BrowserTransport}from'./browser-preview.js';
+import{previewFileCanReveal,type BrowserTransport}from'./browser-preview.js';
 import{parsePreviewSource}from'./preview-reference.js';
 import { nativeResponse, type InteractionDecision } from "./worker-interaction-protocol.js";
 import type { NativeRequest } from "./worker-native-requests.js";
@@ -2537,7 +2537,7 @@ export class Homer {
     });
     const platform=process.platform;
     if(operation){
-      if(!this.browserTransport||operation===true&&platform!=='darwin'&&platform!=='win32')
+      if(!this.browserTransport||operation===true&&!previewFileCanReveal(platform))
         throw Error(operation===true?'preview_reveal_unavailable':'preview_system_action_unavailable');
       const input=object(value);
       const native=input.page===undefined?{}:{page:input.page,file:{messageId:input.messageId,destination:input.destination}};
@@ -2548,7 +2548,7 @@ export class Homer {
       return {requested:true as const};
     }
     return {kind:'local' as const,filename:basename(info.path),size:info.size,overLimit:info.size>MEDIA_POLICY.fileBytes,
-      reveal:!!this.browserTransport&&(platform==='darwin'||platform==='win32'),platform};
+      reveal:!!this.browserTransport&&previewFileCanReveal(platform),platform};
   }
   private withMessageFilePath<T>(path:string,operation:(target:string,suffix?:RegExpMatchArray)=>T):T{
     const read=(target:string,suffix?:RegExpMatchArray)=>{

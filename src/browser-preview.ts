@@ -15,6 +15,10 @@ export type PreviewMoreAction={threadId:string}&(
 export type PreviewMoreResult={requested:true}|{download:{filename:string;mime:string;bytes:ArrayBuffer}};
 export type MessageFileOperation=boolean|'open';
 
+export function previewFileCanReveal(platform?:string){
+ return platform==='darwin'||platform==='win32'||platform==='linux';
+}
+
 export function previewFileCanOpen(filename:string){
  return /\.(?:txt|md|markdown|csv|tsv|json|pdf|html?|png|jpe?g|gif|webp|bmp|tiff?|mp3|wav|m4a|ogg|mp4|m4v|mov|webm)$/i.test(filename);
 }

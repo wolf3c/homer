@@ -95,7 +95,7 @@ try{
    await removedActionsAbsent();
    check(await evaluate(()=>document.querySelector('iframe[title="PDF 成果"]').src.startsWith('blob:')),'PDF uses authorized object URL '+width);
    await evaluate(()=>new Promise(done=>setTimeout(done,500)));await p.screenshot('canvas-pdf-'+width+'.png');
-   await select('result-synthetic-opaque');await p.until(()=>document.querySelector('#canvas-panel')?.textContent.includes('此格式暂不支持在线预览'));
+   await select('result-synthetic-opaque');await p.until(()=>!!document.querySelector('#canvas-panel .canvas-file-fallback h2'));
    await removedActionsAbsent();checks.push('unsupported format remains accurately visible '+width);
    failNext='result-synthetic-retry';await select(failNext);await p.until(()=>!!document.querySelector('#canvas-panel [role="alert"]'));
    check(await evaluate(()=>!document.querySelector('#canvas-panel [data-preview-text]')),'read failure does not retain a previous preview '+width);

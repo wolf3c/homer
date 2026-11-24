@@ -25,7 +25,7 @@ try{
   const record=label=>{checks.push({width,label});console.log(width,label);};
   const click=async selector=>actualClick(p,await ev(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().toJSON()`));
   const tab=index=>`[...document.querySelectorAll('[role=tab]')].find(t=>t.title.endsWith(${JSON.stringify(' · '+files[index].id)}))`;
-  const open=async index=>{await ev(`document.querySelector('.file-list-open[aria-label='+CSS.escape(${JSON.stringify('预览 '+files[index].title)})+']').click()`);await until(()=>!!document.querySelector('#canvas-panel'));await until(index===0?()=>!!document.querySelector('[data-preview-text]'):index===1?()=>!!document.querySelector('.html-annotation-toggle'):()=>document.querySelector('#canvas-panel')?.textContent.includes('此格式暂不支持'));};
+  const open=async index=>{await ev(`document.querySelector('.file-list-open[aria-label='+CSS.escape(${JSON.stringify('预览 '+files[index].title)})+']').click()`);await until(()=>!!document.querySelector('#canvas-panel'));await until(index===0?()=>!!document.querySelector('[data-preview-text]'):index===1?()=>!!document.querySelector('.html-annotation-toggle'):()=>!!document.querySelector('#canvas-panel .canvas-file-fallback h2'));};
   const collapse=async()=>{await click('.canvas-collapse');await until(()=>!document.querySelector('#canvas-panel'));};
   const reopen=async()=>{await click('.conversation-header [aria-controls="canvas-panel"]');await until(()=>!!document.querySelector('#canvas-panel'));};
   const key=async(key,code,n,modifiers=0)=>{for(const type of ['keyDown','keyUp'])await p.command('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:n,modifiers});};
