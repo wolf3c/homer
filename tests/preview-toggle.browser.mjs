@@ -31,7 +31,7 @@ const focusOutline=button=>button.evaluate(node=>{
 });
 try{
  browser=await openBrowser(destination,{mockKeychain:true});
- for(const width of [1440,801,800,390,320]){
+ for(const width of [1440,768,700,699,390,320]){
   const context=await browser.browser.newContext({viewport:{width,height:800}});
   try{
    const page=await context.newPage(),errors=[];
@@ -62,7 +62,7 @@ try{
    await page.keyboard.press('Space');await panel.waitFor({state:'hidden'});
    await page.waitForFunction(()=>document.activeElement?.matches('.conversation-header [aria-controls=canvas-panel]'));
    for(const artifact of artifacts){
-    if(width<=800&&await panel.isVisible())await close.click();
+    if(width<700&&await panel.isVisible())await close.click();
     await page.getByRole('button',{name:'预览 '+artifact.title,exact:true}).click();
     await content.waitFor();
    }
@@ -77,7 +77,7 @@ try{
      railRight:rail.getBoundingClientRect().right,buttonLeft:rect.left,scrolling:rail.scrollWidth>rail.clientWidth,
      modal:panel.getAttribute('aria-modal')==='true',overflow:document.documentElement.scrollWidth>innerWidth};
    });
-   assert.equal(layout.modal,width<=800);assert.equal(layout.overflow,false);
+   assert.equal(layout.modal,width<700);assert.equal(layout.overflow,false);
    assert.ok(layout.buttonLeft>=layout.railRight);
    assert.equal(layout.scrolling,true);
    const rail=panel.getByRole('tablist');

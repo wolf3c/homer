@@ -8,7 +8,6 @@ import {Tabs} from '@base-ui/react/tabs';
 import {FileIcon,PanelRight,XIcon} from 'lucide-react';
 import {createPortal} from 'react-dom';
 import type {Annotation} from './vendor/agentation-3.1.2/index.mjs';
-import {useMediaQuery} from '@mantine/hooks';
 import {previewAnnotations,type PreviewSource} from '../src/preview-reference';
 import type {PreviewRequest,WebPreviewSource} from './preview-reference';
 import {Component,lazy,Suspense,useEffect,useLayoutEffect,useMemo,useRef,useState,type RefObject,type ReactNode} from 'react';
@@ -156,13 +155,17 @@ const markdownComponents:Components={
 };
 type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;taskContent?:(tab:Extract<PreviewTab,{kind:'task'}>)=>ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
 
-export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,...readerProps}:CanvasPanelProps) {
+export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,narrow,...readerProps}:CanvasPanelProps&{narrow:boolean}) {
   const {artifact,webSource,onClose}=readerProps;
   const selected=activeId??artifact?.id??null;
   const host=useRef<HTMLDivElement>(null),panel=useRef<HTMLDivElement>(null),collapseButton=useRef<HTMLButtonElement>(null),rail=useRef<HTMLDivElement>(null);
   const [actions,setActions]=useState<HTMLDivElement|null>(null);
   const imageControl=useRef<ImageAnnotationControl|null>(null),focusAfterClose=useRef(false),visibleTab=useRef<Element|null>(null),pointerFocus=useRef(false);
-  const narrow=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
+  useLayoutEffect(()=>{
+    if(narrow&&document.hasFocus()&&!panel.current?.contains(document.activeElement)){
+      (rail.current?.querySelector<HTMLElement>('[role=tab][aria-selected=true]')??collapseButton.current)?.focus({preventScroll:true});
+    }
+  },[narrow]);
   function ensureVisible(target:Element|null){
     const list=rail.current,item=target?.closest('.canvas-tab-item');if(!list||!item||!list.contains(item))return;
     const r=list.getBoundingClientRect(),t=item.getBoundingClientRect();
@@ -187,7 +190,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId=
   const activeTitle=webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'预览';
   const nativeBrowser=!!browser;
   const statusBar=!nativeBrowser&&<PreviewToolbar title={activeTitle} detail={webSource?new URL(webSource.url).host:undefined}><div ref={setActions} className="canvas-tab-actions"/></PreviewToolbar>;
-  return <div ref={host} className="canvas-host"><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
+  return <div ref={host} className="canvas-host" data-narrow-preview={narrow||undefined}><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
     if(details.reason==='escape-key'&&imageControl.current?.escape()){details.cancel();return;}
     if(details.reason==='escape-key'&&panel.current?.querySelector('.preview-selection-positioner')){details.cancel();details.allowPropagation();return;}
     if(!open)onClose();

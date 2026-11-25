@@ -20,7 +20,7 @@ import {CanvasPanel} from ${JSON.stringify(local('ui/canvas-panel.tsx'))};
 import ${JSON.stringify(local('ui/homer-styles.css'))};
 window.__references=[];window.__tokens=[];window.__results=[];
 addEventListener('message',event=>{if(event.data?.type==='synthetic-token')window.__tokens.push(event.data.token);if(event.data?.type==='synthetic-result')window.__results.push(event.data);});
-function Harness(){const [open,setOpen]=useState(true),trigger=useRef(null);return <><button id="open-preview" ref={trigger} onClick={()=>setOpen(true)}>打开合成网页</button>{open&&<CanvasPanel artifact={null} webSource={{kind:'web',messageId:'synthetic-message',sourceId:'synthetic-source',url:new URL('/synthetic-page',location.href).href,title:'合成网页'}} onClose={()=>setOpen(false)} returnFocusTo={trigger.current} onReference={async reference=>{window.__references.push(reference);}} referencesEnabled/>}</>;}
+function Harness(){const [open,setOpen]=useState(true),trigger=useRef(null);return <><button id="open-preview" ref={trigger} onClick={()=>setOpen(true)}>打开合成网页</button>{open&&<CanvasPanel narrow={innerWidth<700} artifact={null} webSource={{kind:'web',messageId:'synthetic-message',sourceId:'synthetic-source',url:new URL('/synthetic-page',location.href).href,title:'合成网页'}} onClose={()=>setOpen(false)} returnFocusTo={trigger.current} onReference={async reference=>{window.__references.push(reference);}} referencesEnabled/>}</>;}
 createRoot(document.getElementById('root')).render(<Harness/>);`);
 await build({root:harness,configFile:false,logLevel:'warn',build:{outDir:output,emptyOutDir:true,rolldownOptions:{onwarn(warning,forward){if(warning.code!=='MODULE_LEVEL_DIRECTIVE')forward(warning);}}}});
 const cooperating='<!doctype html><h1>Synthetic webpage</h1><script>'+`

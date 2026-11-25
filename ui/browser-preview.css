@@ -31,3 +31,9 @@
  .browser-preview .preview-toolbar:has(.preview-toolbar-site) .preview-toolbar-navigation{grid-column:1/-1}
  .browser-preview .preview-toolbar-site .preview-toolbar-identity{flex:1}
 }
+
+@container (max-width:260px){
+ .browser-preview .preview-toolbar:has(.preview-toolbar-site){display:flex;flex-wrap:wrap}
+ .browser-preview .preview-toolbar-site{flex-basis:100%}
+ .browser-preview .preview-toolbar-navigation{flex-basis:100%}
+}

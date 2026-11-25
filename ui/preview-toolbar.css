@@ -23,3 +23,9 @@ button.preview-annotation-button.aui-button-icon>.preview-annotation-label{displ
 .preview-more-item[data-highlighted]{background:var(--soft,#efede7)}
 .preview-more-item:focus-visible{outline:1px solid var(--focus,#65625c);outline-offset:-1px}
 @media(max-width:600px){.preview-more-item{min-height:44px}.browser-preview .preview-toolbar-navigation{flex-basis:100%}}
+
+@container canvas-panel (max-width:260px){
+ .preview-toolbar{flex-wrap:wrap;gap:4px;padding-inline:8px}
+ .preview-toolbar>.preview-toolbar-identity,.preview-toolbar>.preview-toolbar-site{flex-basis:100%}
+ .preview-toolbar-navigation{max-width:100%;flex-wrap:wrap}
+}

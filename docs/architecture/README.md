@@ -2,6 +2,8 @@
 
 2026-11-24 Preview 的[源码语法着色](preview-architecture.md#源码预览语法着色方案)已复用现有 `highlight.js` 和主题，叠加[目标行定位](preview-architecture.md#文件链接的源码行定位)。隔离 macOS Electron 宽窄窗及宿主权限、快照回归通过。本机 0.1.24（build 312）早于两项能力，安装版待验。
 
+2026-11-25 [工作状态与 Preview 三栏](preview-architecture.md#工作状态与-preview-三栏)已接入固定 300 CSS px 与 700 CSS px 下限，隔离 Chrome 及 macOS Electron 验证通过，安装版和移动真机待验。
+
 2026-11-24 [从工作状态打开事项对话](task-conversation-design.md)。Preview 标签已接入源码，支持可核实归属的历史、独立草稿及共用主队列。精确候选通过 101 项离线和 76 项宽窄屏检查；安装版及真机待验。
 
 2026-11-23 事项引用随用户消息、队列和历史保留，发送后可定位原事项。顶部角标和行尾圆环共用宿主确认的运行事项集合。宿主定向和隔离浏览器验证通过，实际安装包与真机待验。[事项列表](main-worker-chat-architecture.md#当前与归档)

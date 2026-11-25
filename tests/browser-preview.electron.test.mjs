@@ -869,46 +869,27 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   });
   const selectionTool=host.locator('[data-slot=selection-toolbar-quote]');
   const statusTrigger=host.locator('#task-status-trigger');
-  const statusPopup=host.getByRole('dialog',{name:'工作状态卡片'});
-  async function verifyStatus(target,touch=false,screenshot){
+  const statusAside=host.getByRole('complementary',{name:'工作状态卡片'});
+  async function verifyStatus(target,screenshot){
    const before=await nativeState(target.url());
    assert.equal(before.visible,true);
-   await statusTrigger.focus();
-   await host.keyboard.press('Enter');
-   await statusPopup.waitFor();
-   const archive=statusPopup.getByRole('button',{name:'已归档',exact:true});
+   await statusAside.waitFor();
+   assert.equal((await statusAside.boundingBox()).width,300);
+   const archive=statusAside.getByRole('button',{name:'已归档',exact:true});
    await archive.focus();
    await host.keyboard.press('Enter');
    assert.equal(await archive.getAttribute('aria-expanded'),'true');
-   await host.waitForFunction(()=>{
-    const popup=document.querySelector('#task-status-panel')?.getBoundingClientRect();
-    const left=document.querySelector('.conversation-panel').getBoundingClientRect();
-    return popup&&popup.left>=left.left&&popup.right<=left.right;
-   });
    assert.deepEqual(await nativeState(target.url()),before);
    if(screenshot&&process.platform==='darwin'){
     const id=await electron.evaluate(()=>testWindow.getMediaSourceId().split(':')[1]);
     execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,screenshot)],{timeout:10000});
    }
-   if(touch){
-    const cdp=await host.context().newCDPSession(host);
-    await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
-    try{
-     await host.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-     const box=await archive.boundingBox();
-     assert.ok(box);
-     await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+box.width/2,y:box.y+box.height/2}]});
-     await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
-     await host.waitForFunction(()=>document.querySelector('#task-status-panel .status-archive-toggle')?.getAttribute('aria-expanded')==='false');
-    }finally{
-     await cdp.send('Emulation.setTouchEmulationEnabled',{enabled:false});
-     await cdp.detach();
-    }
-   }
-   await host.keyboard.press('Escape');
-   await statusPopup.waitFor({state:'hidden'});
-   await host.waitForFunction(()=>document.activeElement?.id==='task-status-trigger');
+   await host.keyboard.press('Enter');
+   assert.equal(await archive.getAttribute('aria-expanded'),'false');
+   await statusTrigger.focus();await host.keyboard.press('Enter');
+   await statusAside.waitFor({state:'hidden'});
    assert.deepEqual(await nativeState(target.url()),before);
+   await host.keyboard.press('Enter');await statusAside.waitFor();
   }
   async function verifyQuote(target,save){
    const before=await nativeState(target.url());
@@ -970,8 +951,8 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   await host.mouse.down();
   await host.mouse.move(separatorX-400,separatorY,{steps:8});
   await host.mouse.up();
-  await host.waitForFunction(()=>document.querySelector('.conversation-panel').getBoundingClientRect().width<400);
-  await verifyStatus(html,process.platform==='darwin');
+  await host.waitForFunction(()=>document.querySelector('.conversation-panel').getBoundingClientRect().width<650);
+  await verifyStatus(html);
   await html.evaluate(()=>{window.quoteProbe=42;});
   await verifyQuote(html,true);
   assert.equal(await html.evaluate(()=>window.quoteProbe),42);
@@ -986,23 +967,46 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    testWindow.webContents.setZoomFactor(1);
    testWindow.setContentSize(960,900);
   });
-  await host.waitForFunction(()=>innerWidth===960&&document.querySelector('.conversation-panel').getBoundingClientRect().width<243);
-  await verifyStatus(html,false,'product-task-status-narrow.png');
-  await statusTrigger.click();
-  await statusPopup.waitFor();
-  await electron.evaluate(()=>testWindow.setContentSize(840,900));
-  await host.waitForFunction(()=>innerWidth===840&&!document.getElementById('task-status-panel')?.hasAttribute('data-preview-local-quote'));
-  await until(async()=>!(await nativeState(html.url())).visible);
-  await statusPopup.getByRole('button',{name:'已归档',exact:true}).click();
-  await electron.evaluate(()=>testWindow.setContentSize(960,900));
-  await host.waitForFunction(()=>document.getElementById('task-status-panel')?.hasAttribute('data-preview-local-quote'));
-  await until(async()=>(await nativeState(html.url())).visible);
-  await host.keyboard.press('Escape');
-  await statusPopup.waitFor({state:'hidden'});
-  record('work status stays left of the native view, with keyboard focus, touch, and narrow fallback');
-  await electron.evaluate(()=>testWindow.setContentSize(760,900));
-  await host.locator('#canvas-panel[aria-modal="true"]').waitFor();
-  assert.equal((await nativeState(html.url())).visible,true);
+  await host.waitForFunction(()=>innerWidth===960);
+  await verifyStatus(html,'product-task-status-three-columns.png');
+  const beforeResize=await nativeState(html.url());
+  await html.locator('#ready').evaluate(el=>el.addEventListener('click',()=>{window.narrowClick=true;}));
+  for(const width of [700,699,700]){
+   await electron.evaluate((_,width)=>testWindow.setContentSize(width,900),width);
+   await host.waitForFunction(width=>innerWidth===width&&
+     document.querySelector('#canvas-panel')?.getAttribute('role')===(width<700?'dialog':'complementary'),width);
+   if(width===700){
+    await statusAside.waitFor();
+    assert.equal((await statusAside.boundingBox()).width,300);
+    await until(async()=>{
+     const viewport=await host.locator('.browser-preview-viewport').boundingBox();
+     const bounds=await electron.evaluate((_,url)=>testWindow.contentView.children.find(child=>child.webContents?.getURL()===url)?.getBounds(),html.url());
+     return viewport&&viewport.x>=499&&viewport.width>=179&&bounds&&
+      Math.abs(bounds.x-viewport.x)<=1&&Math.abs(bounds.width-viewport.width)<=1;
+    });
+    assert.equal(await host.locator('.browser-preview .preview-toolbar').evaluate(toolbar=>{
+     const rect=toolbar.getBoundingClientRect();
+     return [...toolbar.querySelectorAll('button:not([hidden])')].filter(button=>button.getClientRects().length).every(button=>{
+      const box=button.getBoundingClientRect();
+      return box.left>=rect.left&&box.right<=rect.right&&box.bottom<=rect.bottom;
+     });
+    }),true);
+    assert.equal(await host.locator('.composer-context .annotation-chip-remove').first().evaluate(button=>{
+     const tile=button.closest('.composer-reference-strip').getBoundingClientRect();
+     return button.getBoundingClientRect().right<=tile.right;
+    }),true);
+    await html.evaluate(()=>{window.narrowClick=false;});
+    await html.locator('#ready').click();
+    assert.equal(await html.evaluate(()=>window.narrowClick),true);
+    if(process.platform==='darwin'){
+     const id=await electron.evaluate(()=>testWindow.getMediaSourceId().split(':')[1]);
+     execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'product-three-columns-700.png')],{timeout:10000});
+    }
+   }else await statusAside.waitFor({state:'hidden'});
+   assert.deepEqual(await nativeState(html.url()),beforeResize);
+   assert.equal(await html.evaluate(()=>window.quoteProbe),42);
+  }
+  record('fixed work status and same native view persist through 699 / 700, with matching bounds');
   record('conversation quote stays in its panel while the same web and HTML views remain visible');
 
   assert.deepEqual(errors,[]);

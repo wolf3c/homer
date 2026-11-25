@@ -295,41 +295,16 @@ function TaskList({connected,refreshKey,running,onReference,onOpen,location,onLo
   </div></>}
  </div>;
 }
-export function TaskStatusPopover({state,connected,refreshKey,asideContainer,splitPreview,onBeforeLayoutChange,onReference,onOpen,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;splitPreview?:boolean;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
- const [wide,setWide]=useState(false),[pinned,setPinned]=useState(true),[popupOpen,setPopupOpen]=useState(false);
- const [availableWidth,setAvailableWidth]=useState(0);
- const collisionPadding=12;
- const conversationPanel=splitPreview?asideContainer?.closest<HTMLElement>('.conversation-panel'):undefined;
- // This is the smallest card width checked for readable rows and operable controls.
- const localBoundary=availableWidth>=215?conversationPanel:undefined;
- useLayoutEffect(()=>{
-  if(!conversationPanel){setAvailableWidth(0);return;}
-  const measure=()=>setAvailableWidth(Math.floor(conversationPanel.getBoundingClientRect().width-2*collisionPadding));
-  measure();
-  const observer=new ResizeObserver(measure);observer.observe(conversationPanel);
-  return()=>observer.disconnect();
- },[conversationPanel]);
- const open=wide?pinned:popupOpen;
+export function TaskStatusPopover({state,connected,refreshKey,asideContainer,wide,pinned,onPinnedChange,previewModal,onBeforeLayoutChange,onReference,onOpen,location,onLocated}:Omit<ListProps,'running'|'onReference'> & {state:WebState;asideContainer:HTMLElement|null;wide:boolean;pinned:boolean;onPinnedChange:(open:boolean)=>void;previewModal:boolean;onBeforeLayoutChange:()=>void;onReference?:(value:TaskReference)=>boolean}){
+ const [popupOpen,setPopupOpen]=useState(false);
+ const open=wide?pinned:popupOpen&&!previewModal;
  const focusComposer=useRef(false);
- const beforeLayout=useRef(onBeforeLayoutChange);beforeLayout.current=onBeforeLayoutChange;
- useLayoutEffect(()=>{
-  const workspace=asideContainer?.parentElement;if(!workspace)return;
-  let previous:boolean|undefined;
-  const measure=()=>{
-   // 320px summary + at least 800px for the existing conversation and gutters.
-   const next=workspace.clientWidth>=1120;if(next===previous)return;
-   if(previous!==undefined)beforeLayout.current();previous=next;
-   const restoreFocus=document.getElementById('task-status-panel')?.contains(document.activeElement);
-   setPopupOpen(false);setWide(next);
-   if(restoreFocus)requestAnimationFrame(()=>document.getElementById('task-status-trigger')?.focus({preventScroll:true}));
-  };
-  measure();const observer=new ResizeObserver(measure);observer.observe(workspace);return()=>observer.disconnect();
- },[asideContainer]);
+ useLayoutEffect(()=>{if(wide||previewModal)setPopupOpen(false);},[wide,previewModal]);
  useLayoutEffect(()=>{setPopupOpen(false);},[state.threadId,state.history?.readEpoch]);
  const scopedLocation=location?.threadId===state.threadId&&location.readEpoch===state.history?.readEpoch?location:undefined;
  const clearLocation=()=>{if(scopedLocation)onLocated?.();};
- const togglePinned=()=>{onBeforeLayoutChange();if(pinned)clearLocation();setPinned(!pinned);};
- useLayoutEffect(()=>{if(scopedLocation){if(wide)setPinned(true);else setPopupOpen(true);}},[scopedLocation,wide]);
+ const togglePinned=()=>{onBeforeLayoutChange();if(pinned)clearLocation();onPinnedChange(!pinned);};
+ useLayoutEffect(()=>{if(scopedLocation){if(wide)onPinnedChange(true);else if(!previewModal)setPopupOpen(true);}},[scopedLocation,wide,previewModal,onPinnedChange]);
  const running=useMemo(()=>state.runningTaskIds&&new Set(state.runningTaskIds),[state.runningTaskIds]);
  const count=connected?running?.size:undefined;
  const title=count===undefined?(running?'工作状态，运行数量待核实':'工作状态'):count?'工作状态，'+count+' 项事项运行中':'工作状态，无运行中事项';
@@ -338,7 +313,7 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,spl
   running={running} onOpen={onOpen&&((task,trigger)=>{if(!wide)setPopupOpen(false);onOpen(task,wide?trigger:document.getElementById('task-status-trigger')??trigger);})} location={scopedLocation} onLocated={onLocated} onReference={onReference&&((ref)=>{
    if(onReference(ref)&&!wide){focusComposer.current=true;setPopupOpen(false);}
   })}/>;
- return <><div className="homer-task-status"><Popover open={!wide&&popupOpen} onOpenChange={value=>{if(!wide){if(!value)clearLocation();setPopupOpen(value);}}}><PopoverTrigger asChild>
+ return <><div className="homer-task-status"><Popover open={!wide&&open} onOpenChange={value=>{if(!wide){if(!value)clearLocation();setPopupOpen(value);}}}><PopoverTrigger asChild>
   <button id="task-status-trigger" type="button" className={ghostButton+' status-entry'} aria-label={title} title={title} aria-expanded={open} aria-controls="task-status-panel" aria-haspopup={wide?undefined:'dialog'} onClick={wide?togglePinned:undefined}>
    <span className="status-entry-icon" aria-hidden="true">
     <ListTodoIcon size={18}/>
@@ -346,9 +321,8 @@ export function TaskStatusPopover({state,connected,refreshKey,asideContainer,spl
    </span>
   </button>
   </PopoverTrigger>
-  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={collisionPadding}
-   collisionBoundary={localBoundary} sticky={localBoundary?'always':undefined} style={localBoundary?{maxWidth:availableWidth}:undefined} data-preview-local-quote={localBoundary?'':undefined}
-   aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(focusComposer.current){focusComposer.current=false;event.preventDefault();}}}>{content}</PopoverContent>}
+  {!wide&&<PopoverContent id="task-status-panel" className="homer-task-status status-popover w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-3 shadow-none motion-reduce:animate-none" align="end" side="bottom" sideOffset={12} collisionPadding={12}
+   aria-label="工作状态卡片" aria-describedby={undefined} onEscapeKeyDown={event=>event.stopPropagation()} onCloseAutoFocus={event=>{if(focusComposer.current||previewModal){focusComposer.current=false;event.preventDefault();}}}>{content}</PopoverContent>}
  </Popover></div>
  {wide&&pinned&&asideContainer&&createPortal(<aside id="task-status-panel" className="homer-task-status status-aside" aria-label="工作状态卡片">{content}</aside>,asideContainer)}</>;
 }

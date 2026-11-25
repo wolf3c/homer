@@ -11,7 +11,6 @@ import {captureSourceQuoteSelection,completeSourceQuote,locateSourceQuote,resolv
 import {Popover} from '@base-ui/react/popover';
 import {AnnotationCommentForm} from './annotation-comment-form';
 import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,withoutDraftImage,type AnnotationDraft,type AnnotationDraftState} from './annotation-draft';
-import {useMediaQuery} from '@mantine/hooks';
 import {previewIntentTooLong} from '../src/user-intent';
 import {Group,Panel,Separator} from 'react-resizable-panels';
 import {Clock3,ListTodoIcon,MessageCirclePlus,PanelRightIcon} from 'lucide-react';
@@ -1450,9 +1449,12 @@ function HomerApp() {
   const uploads:TaskUploads={active:transfers.current,revision:transferRevision,notify:()=>setTransferRevision(value=>value+1)};
   const [scopeReceipts,setScopeReceipts]=useState<ReadonlyMap<string,ScopedReceipt>>(()=>new Map());
   const taskViews=useRef(new Map<string,TaskConversationWindow>());
-  const narrowPreview=useMediaQuery('(max-width:800px)',matchMedia('(max-width:800px)').matches,{getInitialValueInEffect:false});
+  const [previewLayout,setPreviewLayout]=useState<HTMLDivElement|null>(null);
+  const [narrowPreview,setNarrowPreview]=useState(()=>window.innerWidth<700);
+  const [statusPinned,setStatusPinned]=useState(true);
   const splitNativePreview=!!window.homerBrowserPreview&&canvasOpen&&!narrowPreview;
   const [state, setState] = useState<WebState>(empty);
+  const statusDocked=!narrowPreview&&statusPinned&&!!state.features?.taskOverview;
   const [scheduleSelection,setScheduleSelection]=useState<{id:string;readEpoch:string}>();
   const scheduleTrigger=useRef<HTMLElement|null>(null);
   const openScheduleDetail=(id:string,trigger:HTMLElement)=>{
@@ -1556,6 +1558,29 @@ function HomerApp() {
     const [first,next]=positions;
     anchor.current=first?{...first,next,version:userScroll.current}:null;measureReader();
   }
+  const captureLayoutAnchor=useRef(captureAnchor);captureLayoutAnchor.current=captureAnchor;
+  useLayoutEffect(()=>{
+    if(!previewLayout)return;
+    let narrow=narrowPreview;
+    const measure=()=>{
+      const next=previewLayout.clientWidth<700;
+      if(next===narrow)return;
+      narrow=next;
+      captureLayoutAnchor.current();
+      const status=document.getElementById('task-status-panel');
+      const hadStatusFocus=status?.contains(document.activeElement);
+      setNarrowPreview(next);
+      if(hadStatusFocus)requestAnimationFrame(()=>{
+        if(document.querySelector('#canvas-panel[aria-modal="true"]'))return;
+        if(document.activeElement===document.body||!document.activeElement?.isConnected)
+          document.getElementById('task-status-trigger')?.focus({preventScroll:true});
+      });
+    };
+    measure();
+    const observer=new ResizeObserver(measure);
+    observer.observe(previewLayout);
+    return()=>observer.disconnect();
+  },[previewLayout]);
   function invalidatePosition(){virtualizer?.cancelScroll();navigation.current++;reader.current.pending=undefined;if(reader.current.frame!==undefined)cancelAnimationFrame(reader.current.frame);reader.current.frame=undefined;}
   // Stable metadata callback: all asynchronous quote/page/latest writes share this owner.
   const claimPosition=useCallback(()=>{
@@ -2225,17 +2250,17 @@ function HomerApp() {
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
   return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><TaskReferenceNavigationContext.Provider value={taskId=>setTaskLocation({taskId,threadId:state.threadId,readEpoch:state.history?.readEpoch})}><ScheduleNavigationContext.Provider value={connected?openScheduleDetail:undefined}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
-    <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined}>
+    <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined} data-narrow-preview={narrowPreview||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
         settingsActive={settingsOpen}
         returnFocus={() => (accountRequired
           ? viewport.current?.querySelector<HTMLButtonElement>('.desktop-account-onboarding .primary-button:enabled')
           : viewport.current?.closest('main')?.querySelector<HTMLElement>('.composer-input [contenteditable="true"]')) ?? viewport.current} />}
-      <Group className="preview-layout" orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={nativeTitlebar?'240px':'25%'}><div className="conversation-panel">
+      <Group className="preview-layout" elementRef={setPreviewLayout} orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={narrowPreview?'0px':statusDocked?'501px':nativeTitlebar?'241px':'201px'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} splitPreview={splitNativePreview} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?openTaskConversation:undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} wide={!narrowPreview} pinned={statusPinned} onPinnedChange={setStatusPinned} previewModal={narrowPreview&&canvasOpen} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?openTaskConversation:undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -2298,7 +2323,7 @@ function HomerApp() {
            })} key={state.threadId} answerTarget={answerTarget?.historyThreadId===state.threadId?answerTarget:undefined} onAnswerTarget={item=>setAnswerTarget(item?{...item,historyThreadId:state.threadId}:undefined)} interactionsVerified={connected&&!activePages.current.interactions.checking} attachmentOwner={attachmentOwner} composerRuntime={runtime.thread.composer} bindAttachments={read=>{attachmentContext.current=read;}} state={state} connected={connected} stopping={stopping} onSend={sendInput} onStop={()=>void stopCurrent()} editDraft={editDraft} onQueueBusy={setComposerBusy} queueContent={<HomerMessageQueue processing={processing?{docked:indicator.docked,anchor:indicator.setQueueAnchor}:undefined} state={state} connected={connected} operations={queueOperations} editorBusy={composerBusy||(!state.features?.queueDispatch&&activePages.current.queue.checking)}/>}/>
           <HomerSelectionToolbar key={'quote-'+state.threadId} viewport={viewport} splitPreview={splitNativePreview} />
         </ThreadPrimitive.Root></ComposerInputFocusContext.Provider>
-      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize="25%" maxSize={nativeTitlebar?'75%':undefined}><CanvasPanel annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} taskContent={tab=>{
+      </main><div className="status-aside-slot" ref={setStatusContainer}/></div></div></Panel>{canvasOpen&&<><Separator className="preview-separator"/><Panel id="preview" className="preview-side-panel" minSize={narrowPreview?'0px':'181px'}><CanvasPanel narrow={narrowPreview} annotationDraft={annotationDraft} key={state.threadId} threadId={state.threadId} tabs={previewTabs.tabs} activeId={previewTabs.activeId} taskContent={tab=>{
        if(!state.history)return null;
        const historyKey=JSON.stringify([state.history.readEpoch,tab.task.id]);
        let cache=taskViews.current.get(historyKey);

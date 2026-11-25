@@ -66,7 +66,7 @@ async function statusScroll(page,{destination,ok}){
  const wheel=async(locator,deltaY)=>{const box=await locator.boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.wheel(0,deltaY);await settle();};
  try{
   for(const viewport of [{width:1440,height:900},{width:1440,height:520},{width:390,height:780}]){
-   const label=`${viewport.width}x${viewport.height}`,narrow=viewport.width<1120;
+   const label=`${viewport.width}x${viewport.height}`,narrow=viewport.width<700;
    await page.setViewportSize(viewport);await page.reload();
    const trigger=page.locator('#task-status-trigger'),panel=page.locator('#task-status-panel'),view=page.locator('.thread-viewport');
    await trigger.waitFor();if(narrow)await trigger.click();await panel.waitFor();
@@ -122,7 +122,7 @@ export default async function pinnedStatus(page,{destination}={}){
  ok(await trigger.getAttribute('aria-expanded')==='false','明确关闭后通知与跨断点不重开');
  await trigger.click();await purchase().waitFor();
  ok(await panel.locator('[data-todo-id]').first().getAttribute('data-todo-id')===originalNode,'图标关闭重开保留同一来源');
- for(const width of [320,390,1024]){
+ for(const width of [320,390,699]){
   await page.setViewportSize({width,height:844});await panel.waitFor({state:'hidden'});
   ok(await page.getByRole('dialog',{name:'工作状态卡片'}).count()===0,width+'px 缩小时不自动弹层');
   await trigger.click();await page.getByRole('dialog',{name:'工作状态卡片'}).waitFor();
@@ -132,22 +132,30 @@ export default async function pinnedStatus(page,{destination}={}){
   await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
   ok(await trigger.evaluate(el=>document.activeElement===el),width+'px Esc 回到入口');
  }
- await page.setViewportSize({width:1120,height:1000});await panel.waitFor();
- ok(await page.locator('.conversation').evaluate(el=>el.clientWidth===800)&&await panel.evaluate(el=>el.getBoundingClientRect().width===320),'1120px 边界保留800px聊天与320px摘要');
- await page.setViewportSize({width:1119,height:1000});await panel.waitFor({state:'hidden'});
- ok(await page.getByRole('dialog',{name:'工作状态卡片'}).count()===0,'1119px 退为关闭的弹层入口');
- await page.setViewportSize({width:1440,height:1000});await panel.waitFor();
- await page.getByRole('button',{name:'预览',exact:true}).click();await page.locator('#canvas-panel').waitFor();
- await panel.waitFor({state:'hidden'});
- ok(await page.locator('#canvas-panel').isVisible(),'1440px 打开预览后不足宽度则状态退回入口');
- await trigger.click();await page.getByRole('dialog',{name:'工作状态卡片'}).waitFor();await shot('preview-1440-popover');
- await page.keyboard.press('Escape');await page.setViewportSize({width:2560,height:1100});
- await page.getByRole('complementary',{name:'工作状态卡片'}).waitFor();
- ok(await page.locator('#canvas-panel').isVisible()&&await page.locator('.conversation').evaluate(el=>el.clientWidth>=800),'2560px 预览与状态并列且聊天至少800px');
- await shot('preview-2560-pinned');
- const divider=await page.locator('.preview-separator').boundingBox();
- await page.mouse.move(divider.x+divider.width/2,divider.y+100);await page.mouse.down();await page.mouse.move(divider.x-220,divider.y+100,{steps:5});await page.mouse.up();await panel.waitFor({state:'hidden'});
- ok(await page.locator('#canvas-panel').isVisible()&&await trigger.getAttribute('aria-expanded')==='false','更宽屏拖窄实际聊天栏也退回弹层入口，不关闭预览');
+ await page.setViewportSize({width:700,height:800});await panel.waitFor();
+ ok(await panel.evaluate(el=>el.getBoundingClientRect().width===300),'700px 工作状态固定300px');
+ await page.getByRole('button',{name:'预览',exact:true}).click();
+ const canvas=page.locator('#canvas-panel'),separator=page.locator('.preview-separator');
+ for(const width of [700,768,1024,1440]){
+  await page.setViewportSize({width,height:800});
+  await page.waitForFunction(()=>document.querySelector('.conversation').clientWidth>=200&&document.querySelector('.canvas-panel').clientWidth>=179);
+  ok(await panel.isVisible()&&await canvas.getAttribute('role')==='complementary'&&await panel.evaluate(el=>el.getBoundingClientRect().width===300),width+'px 三栏保持并存');
+  ok(await page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),width+'px 三栏无横向溢出');
+  await shot('preview-'+width+'-three-columns');
+ }
+ await page.setViewportSize({width:700,height:800});
+ await separator.focus();await page.keyboard.press('End');
+ ok(await panel.isVisible()&&await canvas.evaluate(el=>el.getBoundingClientRect().width>=180),'键盘调宽将 Preview 保持在180px以上');
+ const divider=await separator.boundingBox();
+ await page.mouse.move(divider.x+divider.width/2,divider.y+100);await page.mouse.down();await page.mouse.move(divider.x-220,divider.y+100,{steps:5});await page.mouse.up();
+ ok(await panel.isVisible()&&await page.locator('.conversation').evaluate(el=>el.clientWidth>=200),'拖动分隔线始终保留侧栏与200px对话');
+ await canvas.evaluate(el=>el.dataset.preserved='yes');
+ await page.setViewportSize({width:699,height:800});
+ await page.getByRole('dialog',{name:/^预览：/}).waitFor();
+ ok(!(await panel.isVisible())&&await canvas.evaluate(el=>el.contains(document.activeElement)),'699px Preview接管焦点');
+ await page.setViewportSize({width:700,height:800});
+ await panel.waitFor();
+ ok(await canvas.getAttribute('data-preserved')==='yes'&&await canvas.getAttribute('role')==='complementary','跨断点保留同一Preview、恢复侧栏');
  await page.getByRole('button',{name:'收起预览',exact:true}).click();
  await page.setViewportSize({width:1440,height:1000});
  await page.emulateMedia({colorScheme:'dark',reducedMotion:'reduce'});await shot('desktop-1440-dark');
@@ -268,7 +276,7 @@ export async function pinnedOrdering(page,{destination}={}){
  for(const width of [1440,390,320]){
   tasks=active;
   await page.setViewportSize({width,height:900});await page.reload();await trigger.waitFor();
-  if(width<1120)await trigger.click();
+  if(width<700)await trigger.click();
   await rows.first().waitFor();
   assert.deepEqual(await rows.evaluateAll(elements=>elements.map(el=>el.dataset.todoId)),active.map(t=>t.id));
   const reading=await panel.locator('.status-list').evaluate(list=>{

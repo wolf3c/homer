@@ -9,7 +9,7 @@
 /* Keep pointer movement in the resizing document while crossing an opaque iframe. */
 .preview-layout:has(>.preview-separator[data-separator=active]) iframe{pointer-events:none}
 .preview-separator:focus-visible{outline:1px solid var(--focus)}
-.canvas-panel{box-sizing:border-box;position:relative;inset:auto;display:flex;flex-direction:column;flex:1;min-width:0;width:100%;max-width:none;height:100%;max-height:none;margin:0;padding:0;border:0;border-left:1px solid var(--line);background:var(--surface);overflow:hidden;color:var(--ink);font:inherit}
+.canvas-panel{container:canvas-panel / inline-size;box-sizing:border-box;position:relative;inset:auto;display:flex;flex-direction:column;flex:1;min-width:0;width:100%;max-width:none;height:100%;max-height:none;margin:0;padding:0;border:0;border-left:1px solid var(--line);background:var(--surface);overflow:hidden;color:var(--ink);font:inherit}
 .canvas-tabs,.canvas-tab-panel{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .canvas-tab-panel[hidden]{display:none}
 .canvas-tab-panel>[data-slot=canvas-split-document]{min-height:0}
@@ -23,7 +23,7 @@
 /* Electron 45 includes offscreen child regions despite the rail's overflow clip.
    The visible rail alone excludes native dragging for all of its controls. */
 .app-shell[data-native-titlebar] .canvas-tab-bar .canvas-tab-rail *{-webkit-app-region:initial}
-@media(max-width:800px){.app-shell[data-native-titlebar] .canvas-tab-bar{padding-left:max(6px,calc(env(titlebar-area-x,0px) + 4px))}}
+.app-shell[data-native-titlebar][data-narrow-preview] .canvas-tab-bar{padding-left:max(6px,calc(env(titlebar-area-x,0px) + 4px))}
 .canvas-preview-label{flex:1;min-width:0;padding:11px 7px;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .canvas-tab-item{display:flex;flex:none;align-items:center;max-width:min(14rem,100%);min-width:0;border:1px solid transparent;border-radius:7px}
 .canvas-tab-item:has([aria-selected=true]){border-color:var(--line);background:var(--soft)}
@@ -62,13 +62,11 @@
   .canvas-panel .canvas-tab-actions :is(.html-annotation-toggle,.image-annotation-toggle){height:44px;min-width:44px}
   .canvas-panel .canvas-tab-actions [data-slot=file-download]{display:grid;place-items:center;height:44px;min-width:44px}
 }
-@media(max-width:800px){
-  .canvas-web-narrow-note{display:block}
-  .canvas-panel{position:fixed;inset:0;z-index:100;width:100%;height:100dvh;border:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
-  .preview-side-panel{display:contents}
-  .preview-separator{display:none}
-  .canvas-backdrop{position:fixed;inset:0;z-index:99;background:var(--canvas)}
-}
+[data-narrow-preview] .canvas-web-narrow-note{display:block}
+[data-narrow-preview] .canvas-panel{position:fixed;inset:0;z-index:100;width:100%;height:100dvh;border:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+[data-narrow-preview] .preview-side-panel{display:contents}
+[data-narrow-preview] .preview-separator{display:none}
+.canvas-backdrop{position:fixed;inset:0;z-index:99;background:var(--canvas)}
 
 
 .preview-reference{position:relative;min-width:0;margin:8px 12px;font-size:13px;overflow-wrap:anywhere}
@@ -163,7 +161,7 @@
 .composer-reference-strip{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin;padding:3px 12px 5px;scroll-padding-inline:12px}
 .composer-reference-strip:focus-visible{outline:1px solid var(--focus);outline-offset:-1px;border-radius:7px}
 .composer-reference-strip>.annotation-chips{display:contents}
-.composer-context .annotation-chip{flex:0 0 auto;width:240px;max-width:calc(100vw - 72px);min-height:56px;border:1px solid #e6e3df;border-radius:7px;background:#f8f7f5;color:var(--ink);font-size:13px}
+.composer-context .annotation-chip{flex:0 0 auto;width:240px;max-width:100%;min-height:56px;border:1px solid #e6e3df;border-radius:7px;background:#f8f7f5;color:var(--ink);font-size:13px}
 .composer-context .annotation-chip:hover,.composer-context .context-attachment-item:hover{background:#f1efec}
 .composer-context .annotation-chip-open{flex:1;gap:8px;min-width:0;max-width:100%;padding:8px 2px 8px 10px}
 .composer-context .annotation-chip-open>svg{flex:none;color:var(--muted)}
@@ -175,7 +173,7 @@
 @media (pointer:coarse){.composer-context .annotation-chip-remove{min-width:44px;min-height:44px}.composer-context .annotation-chip-open{min-height:44px}}
 
 /* Retain the assistant-ui attachment tile and surface its name. */
-.composer-context .context-attachment-item{display:flex;align-items:center;gap:8px;flex:0 0 240px;max-width:calc(100vw - 72px);min-width:0}
+.composer-context .context-attachment-item{display:flex;align-items:center;gap:8px;flex:0 0 240px;max-width:100%;min-width:0}
 .composer-context .context-attachment-copy{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:12px;line-height:1.3}
 .composer-context .context-attachment-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .composer-context .context-attachment-copy span:first-child{font-size:13px;color:var(--ink);font-weight:550}
