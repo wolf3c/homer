@@ -9,9 +9,10 @@ import './task-conversation.css';
 
 type Anchor={id?:string;offset:number;scrollTop?:number;bottom:boolean};
 type ReadMode='refresh'|'before'|'around'|'latest';
+const earlierThreshold=300, earlierReadLimit=3;
 export type TaskConversationWindow={
  pages:HistoryPage[]; before:string|null; revision:number; details:boolean; detached?:boolean; task:OverviewTask;
- anchor?:Anchor;
+ anchor?:Anchor; continueBefore?:boolean;
 };
 type Props={
  cache:TaskConversationWindow; threadId:string; readEpoch:string; revision:number; connected:boolean;
@@ -27,14 +28,26 @@ function capture(view:HTMLElement):Anchor{
 }
 
 export function TaskConversation({cache,threadId,readEpoch,revision,connected,onTask,onOriginal,render}:Props){
- const view=useRef<HTMLDivElement>(null), request=useRef<AbortController|null>(null), detailsRequest=useRef<AbortController|null>(null);
+ const view=useRef<HTMLDivElement>(null), request=useRef<{controller:AbortController;mode:ReadMode}|null>(null), detailsRequest=useRef<AbortController|null>(null);
  const pendingAnchor=useRef<Anchor|null>(cache.anchor??{bottom:true,offset:0});
  const failedRead=useRef<{mode:ReadMode;target?:{id:string;quote?:MessageQuote}}|null>(null);
  const pendingTarget=useRef<{id:string;quote?:MessageQuote}|null>(null);
- const [frame,update]=useState(0),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[detailNotice,setDetailNotice]=useState('');
+ const [frame,update]=useState(0),[reading,setReading]=useState<ReadMode|null>(null),[notice,setNotice]=useState(''),[detailNotice,setDetailNotice]=useState('');
+ const busy=reading!==null;
  const [attempt,retry]=useState(0);
  const failedRevision=useRef<number|undefined>(undefined);
- const latest=useRef({onOriginal,onTask});latest.current={onOriginal,onTask};
+ const previousScrollTop=useRef(0),touchStartY=useRef<number|undefined>(undefined);
+ const historyAction=useRef<HTMLButtonElement|null>(null), restoreActionFocus=useRef(false);
+ const bindHistoryAction=useCallback((button:HTMLButtonElement|null)=>{
+  if(!button&&historyAction.current===document.activeElement)restoreActionFocus.current=true;
+  historyAction.current=button;
+ },[]);
+ useLayoutEffect(()=>{
+  if(!restoreActionFocus.current)return;
+  restoreActionFocus.current=false;
+  if(document.activeElement===document.body)(historyAction.current??view.current)?.focus({preventScroll:true});
+ });
+ const latest=useRef({onOriginal,onTask,revision});latest.current={onOriginal,onTask,revision};
  const bump=()=>update(value=>value+1);
  const taskId=cache.task.id;
  const read=useCallback(async (query:HistoryPageRequest, signal:AbortSignal)=>{
@@ -57,28 +70,63 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
   }).catch(()=>{if(!controller.signal.aborted)setDetailNotice('事项资料暂未刷新，当前显示上次记录。');});
  },[cache,taskId,connected]);
  useEffect(()=>{refreshTask();return()=>detailsRequest.current?.abort();},[refreshTask,revision]);
- useLayoutEffect(()=>()=>{request.current?.abort();detailsRequest.current?.abort();},[cache,readEpoch]);
+ useLayoutEffect(()=>()=>{request.current?.controller.abort();detailsRequest.current?.abort();},[cache,readEpoch]);
+ useLayoutEffect(()=>{if(!connected)cancelRead();},[connected]);
+ function cancelRead(){
+  if(!request.current)return;
+  request.current.controller.abort();request.current=null;setReading(null);
+ }
  function saveAnchor(){
   if(view.current)cache.anchor=capture(view.current);
  }
- function scan(mode:ReadMode,target?:{id:string;quote?:MessageQuote}){
-  if(!connected||request.current)return;
+ function nearTop(){
+  const container=view.current;
+  return !!container&&container.clientHeight>0&&container.scrollTop<=earlierThreshold;
+ }
+ function readEarlier(){
+  if(!cache.continueBefore&&!failedRead.current&&cache.before&&nearTop())scan('before',undefined,true);
+ }
+ function onScroll(){
+  const top=view.current?.scrollTop??0, movingUp=top<previousScrollTop.current;
+  previousScrollTop.current=top;
+  saveAnchor();
+  if(movingUp)readEarlier();
+ }
+ function scan(mode:ReadMode,target?:{id:string;quote?:MessageQuote},automatic=false){
+  if(!connected||mode==='before'&&!cache.before)return;
+  const active=request.current;
+  if(active){
+   if(active.mode!=='before'||(mode!=='around'&&mode!=='latest'))return;
+   active.controller.abort();
+  }
   failedRevision.current=undefined;
-  const controller=new AbortController();request.current=controller;failedRead.current=null;setBusy(true);setNotice('');
+  const controller=new AbortController();request.current={controller,mode};failedRead.current=null;setReading(mode);setNotice('');
   const signal=controller.signal;
   const readPage=(query:HistoryPageRequest)=>read(query,signal);
   void (async()=>{
-   let pages:HistoryPage[], before=cache.before;
+   let pages:HistoryPage[], before=cache.before, continueBefore=cache.continueBefore;
    if(mode==='around'&&target){
     const page=await readPage({around:target.id});
-    pages=[page];before=page.before;
+    pages=[page];before=page.before;continueBefore=false;
    }else if(mode==='before'){
-    if(!before)return;
-    const page=await readPage({before});
-    pages=[page,...cache.pages];before=page.before;
-    if(!page.messages.length&&before)setNotice('这段历史没有匹配消息，可继续查找。');
+    const older:HistoryPage[]=[], seen=new Set<string>();
+    for(let count=0;count<earlierReadLimit&&before;count++){
+     seen.add(before);
+     const page=await readPage({before});
+     if(signal.aborted)return;
+     if(page.revision<latest.current.revision){
+      if(cache.revision<latest.current.revision)return; // The newer snapshot will refresh the window.
+      throw Error('history_revision_changed');
+     }
+     before=page.before;
+     if(before&&seen.has(before))throw Error('history_cursor_invalid');
+     older.unshift(page);
+     if(page.messages.length||automatic&&!nearTop())break;
+    }
+    continueBefore=!!before&&older.length===earlierReadLimit&&!older[0].messages.length;
+    pages=[...older,...cache.pages];
    }else if(mode==='latest'||!cache.pages.length){
-    const page=await readPage({});pages=[page];before=page.before;
+    const page=await readPage({});pages=[page];before=page.before;continueBefore=false;
    }else{
     pages=[];
     for(const old of cache.pages){
@@ -105,17 +153,20 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
    }
    if(target){pendingTarget.current=target;cache.detached=true;}
    if(mode==='latest'){cache.detached=false;pendingAnchor.current={bottom:true,offset:0};}
-   cache.pages=pages;cache.before=before;cache.revision=mode==='before'?Math.min(...pages.map(page=>page.revision)):nextRevision;
+   cache.pages=pages;cache.before=before;cache.continueBefore=continueBefore;
+   cache.revision=mode==='before'?Math.min(...pages.map(page=>page.revision)):nextRevision;
    bump();
   })().catch(error=>{
    if(signal.aborted)return;
    if(mode==='around'&&target&&error.message==='history_message_outside_task'){latest.current.onOriginal(target.id,target.quote);return;}
-   failedRevision.current=revision;failedRead.current={mode,target};
-   setNotice(mode==='around'&&error.message==='history_message_not_found'?'原消息已不可读，引用摘录已保留。':'暂时无法读取事项消息，请重试。');
+   if(mode==='around'&&error.message==='history_message_not_found'){
+    setNotice('原消息已不可读，引用摘录已保留。');return;
+   }
+   failedRevision.current=revision;failedRead.current={mode,target};setNotice('暂时无法读取事项消息，请重试。');
   }).finally(()=>{
-   if(request.current!==controller)return;
+   if(request.current?.controller!==controller)return;
    request.current=null;
-   if(!signal.aborted)setBusy(false);
+   if(!signal.aborted)setReading(null);
   });
  }
  useEffect(()=>{
@@ -126,10 +177,14 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
  const owners=new Map(cache.pages.flatMap(page=>page.messages.map(message=>[message.id,page] as const)));
  const artifactMap=new Map(cache.pages.flatMap(page=>(page.artifacts??[]).filter(file=>owners.get(file.messageId)===page)).map(file=>[file.id,file]));
  const messages=[...ordered.values()];
+ useEffect(()=>{
+  if(!cache.details&&!cache.detached&&cache.pages.length>0&&!messages.length)readEarlier();
+ },[cache,read,connected,revision,frame,busy]);
  function focusSource(target:{id:string;quote?:MessageQuote}){
   const container=view.current,row=container&&messageRow(container,target.id);
   if(!row||!container)return;
   container.scrollTop+=row.getBoundingClientRect().top-container.getBoundingClientRect().top-container.clientHeight/3;
+  previousScrollTop.current=container.scrollTop;saveAnchor();
   row.focus({preventScroll:true});
   if(target.quote)void locateSourceQuote(target.quote,container).then(range=>{
    if(!range||!row.isConnected||document.activeElement!==row)return;
@@ -146,6 +201,7 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
    if(anchor.bottom)container.scrollTop=container.scrollHeight;
    else if(row)container.scrollTop+=row.getBoundingClientRect().top-container.getBoundingClientRect().top-anchor.offset;
    else if(anchor.scrollTop!==undefined)container.scrollTop=anchor.scrollTop;
+   previousScrollTop.current=container.scrollTop;saveAnchor();
   }
  }
  function locate(id:string,quote?:MessageQuote){
@@ -153,10 +209,21 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
   else scan('around',{id,quote});
  }
  const {task,details}=cache;
- return <section className="task-conversation" data-task-conversation={taskId}>
+ const loadingEarlier=reading==='before';
+ const inReader=(target:EventTarget)=>view.current?.contains(target as Node);
+ return <section className="task-conversation" data-task-conversation={taskId}
+  onWheelCapture={event=>{if(event.deltaY<0&&!event.ctrlKey&&inReader(event.target))readEarlier();}}
+  onTouchStartCapture={event=>{touchStartY.current=inReader(event.target)&&event.touches.length===1?event.touches[0].clientY:undefined;}}
+  onTouchMoveCapture={event=>{
+   const start=touchStartY.current;
+   if(start!==undefined&&event.touches.length===1&&event.touches[0].clientY-start>8){touchStartY.current=undefined;readEarlier();}
+  }}
+  onKeyDownCapture={event=>{
+   if(event.target===view.current&&(['ArrowUp','PageUp','Home'].includes(event.key)||event.key===' '&&event.shiftKey))readEarlier();
+  }}>
   <header className="task-conversation-toolbar"><span>{details?'事项详情':'事项对话'}</span>
    <button type="button" onClick={()=>{
-    if(!details){saveAnchor();request.current?.abort();request.current=null;setBusy(false);refreshTask();}
+    if(!details){saveAnchor();cancelRead();refreshTask();}
     else{pendingAnchor.current=cache.anchor??{bottom:true,offset:0};retry(n=>n+1);}
     failedRevision.current=undefined;cache.details=!details;bump();
    }}>{details?'返回对话':'事项详情'}</button>
@@ -178,12 +245,13 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
    })}</ul>:<p>暂无 Worker</p>}
   </div>:<>
    <div className="task-conversation-history">
-    {cache.before&&<button type="button" disabled={busy||!connected} onClick={()=>scan('before')}>查看更早消息</button>}
     <span>仅显示可确认归属的消息，部分早期记录可能只在主对话中。</span>
-    {cache.detached&&<button type="button" disabled={busy||!connected} onClick={()=>scan('latest')}>返回最新</button>}
+    {cache.continueBefore&&!failedRead.current&&<button type="button" ref={bindHistoryAction} aria-disabled={busy||!connected} onClick={()=>{if(!busy)scan('before');}}>继续查找</button>}
+    {cache.detached&&<button type="button" disabled={busy&&!loadingEarlier||!connected} onClick={()=>scan('latest')}>返回最新</button>}
    </div>
-   {notice&&<div className="task-history-notice" role="status">{notice} {notice.startsWith('暂时')&&<button type="button" disabled={busy} onClick={()=>{if(failedRead.current)scan(failedRead.current.mode,failedRead.current.target);}}>重试</button>}</div>}
-   {render({messages,artifacts:[...artifactMap.values()]},view,locate,task,refreshTask,saveAnchor,positionRows)}
+   {notice&&<div className="task-history-notice" role="status">{notice} {notice.startsWith('暂时')&&<button type="button" ref={bindHistoryAction} disabled={busy||!connected} onClick={()=>{if(failedRead.current)scan(failedRead.current.mode,failedRead.current.target);}}>重试</button>}</div>}
+   {loadingEarlier&&!!messages.length&&<p className="task-history-notice" role="status">正在读取更早消息…</p>}
+   {render({messages,artifacts:[...artifactMap.values()]},view,locate,task,refreshTask,onScroll,positionRows)}
    {!messages.length&&<p className="task-history-empty" role="status">{busy?'正在读取事项消息…':cache.before?'这段历史暂无匹配。':connected?'暂无可确认归属的消息。':'连接恢复后可读取事项消息。'}</p>}
   </>}
  </section>;

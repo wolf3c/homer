@@ -27,12 +27,26 @@ try{
    await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
    await page.command('Input.insertText',{text:value});
   };
-  let releaseSummary,releaseBrowser;
+  let releaseSummary,releaseBrowser,releaseEarlier;
   try{
    f.store.setMeta('mainAgentId','main:synthetic');
    const create=(name,requestId)=>f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:requestId},
     {operationId:'task-'+requestId,goal:name,title:name,notes:'合成工作笔记',workingDirectory:process.cwd()}).taskId;
    const a=create('合成事项 A','request-0'),b=create('合成事项 B','request-1');
+   const readPage=f.bridge.history.page;
+   const taskCursors=[],sparseCursors=[];
+   let holdEarlier=false,failEarlier=false,sparse=width===1440;
+   f.bridge.history.page=async input=>{
+    const {taskId,before}=input.request;
+    if(before&&taskId===a)taskCursors.push(before);
+    if(before&&taskId===b)sparseCursors.push(before);
+    if(before&&taskId&&holdEarlier){
+     holdEarlier=false;
+     await new Promise(resolve=>{releaseEarlier=resolve;});
+    }
+    if(before&&taskId===b&&failEarlier){failEarlier=false;throw Error('history_read_busy');}
+    return readPage(sparse&&taskId===b?{...input,request:{...input.request,limit:1}}:input);
+   };
    const actor={agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'};
    const firstTitle='汇总访谈资料并核对所有补货项目的原始记录和不同版本之间的变化';
    const worker=f.tasks.workerOpen(actor,{operationId:'synthetic-assignment',taskId:a,text:'检查合成访谈资料',workTitle:firstTitle,workingDirectory:process.cwd()});
@@ -43,7 +57,8 @@ try{
    f.tasks.workerOpen(actor,{operationId:'second-worker',taskId:a,text:'核对库存',workTitle:'核对库存差异'});
    f.tasks.workerOpen(actor,{operationId:'untitled-worker',taskId:a,text:'协助归档'});
    for(const index of [9,60,121,154]){
-    db.prepare('UPDATE conversation_messages SET quote=? WHERE id=?').run(JSON.stringify({taskReference:{taskId:a,version:1,title:'合成事项 A'}}),'user-'+index);
+    const quote=index===154?{messageId:'unavailable-source',text:'合成原文摘录'}:undefined;
+    db.prepare('UPDATE conversation_messages SET quote=? WHERE id=?').run(JSON.stringify({taskReference:{taskId:a,version:1,title:'合成事项 A'},quote}),'user-'+index);
     updateSyntheticPublicText(f,'node-'+index,'合成事项答复 '+index);
     db.prepare("UPDATE conversation_messages SET audience='internal' WHERE id=?").run('node-'+index);
    }
@@ -288,11 +303,51 @@ try{
    check(uploaded.length===1,'late upload restores to original task without replay');
    check(!(await page.evaluate(()=>document.querySelector('.preview-main-panel .composer-context')?.textContent.includes('事项上传.txt'))),'late task upload never enters main draft');
    check(await text(draft)==='事项 A 草稿','file close returns to source draft');
-   for(let attempt=0;attempt<3;attempt++){
-    await click('.task-conversation-history button');
-    await page.until(()=>!document.querySelector('.task-conversation-history button:disabled'),7000);
-    if(await page.evaluate(()=>!!document.querySelector('#task-message-node-9')))break;
+   const viewport='.task-conversation .thread-viewport';
+   const anchor=()=>page.evaluate(`(()=>{
+    const view=document.querySelector(${JSON.stringify(viewport)}),top=view.getBoundingClientRect().top;
+    const row=Array.from(view.querySelectorAll('[data-conversation-message]')).find(row=>row.getBoundingClientRect().bottom>top);
+    return {id:row.id,offset:row.getBoundingClientRect().top-top};
+   })()`);
+   const wheelUp=async()=>{
+    const box=await page.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(viewport)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
+    await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',...box,deltaX:0,deltaY:-100000});
+   };
+   await focus(viewport);
+   holdEarlier=true;
+   if(width===320){
+    const {x,y,distance}=await page.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(viewport)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/8,distance:r.height*3/4};})()`);
+    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+distance}]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+   }else await wheelUp();
+   await page.until(`document.querySelector(${JSON.stringify(viewport)}).scrollTop===0&&document.querySelector('.task-history-notice')?.textContent.includes('正在读取')`,7000);
+   for(let attempt=0;!releaseEarlier&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+   assert.ok(releaseEarlier);
+   const saved=await anchor();
+   releaseEarlier();releaseEarlier=undefined;
+   await exists('#task-message-node-121');
+   const offset=await page.evaluate(`document.getElementById(${JSON.stringify(saved.id)}).getBoundingClientRect().top-document.querySelector(${JSON.stringify(viewport)}).getBoundingClientRect().top`);
+   check(Math.abs(offset-saved.offset)<=2,'automatic prepend preserves the reader anchor');
+   await focused(viewport);
+   let cancelledCursor;
+   if(width===1440){
+    holdEarlier=true;
+    await wheelUp();
+    for(let attempt=0;!releaseEarlier&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+    assert.ok(releaseEarlier);
+    cancelledCursor=taskCursors.at(-1);
+    await page.evaluate(()=>document.querySelector('#task-message-user-154 a[href="#message-unavailable-source"]').click());
+    await page.until(()=>document.querySelector('.task-history-notice')?.textContent.includes('原消息已不可读'),7000);
+    releaseEarlier();releaseEarlier=undefined;
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    }
+   for(const id of [60,9]){
+    if(width===390)await key('Home',36);
+    else await wheelUp();
+    await exists('#task-message-node-'+id);
+   }
+   if(cancelledCursor)check(taskCursors.filter(cursor=>cursor===cancelledCursor).length===2,'source lookup abandons the pending page and upward navigation can retry its cursor');
    check(await page.evaluate(()=>!!document.querySelector('#task-message-node-9')),'older task history crosses scoped scans');
    const actualIds=await page.evaluate(()=>Array.from(document.querySelectorAll('.task-conversation [data-conversation-message]')).map(row=>row.dataset.conversationMessage));
    check(actualIds.length===new Set(actualIds).size,'older rows render once');
@@ -315,6 +370,37 @@ try{
    await click(`[data-todo-id="${b}"] .status-task-open`);
    await exists(draft);
    check(await text(draft)==='','other task starts independent');
+   if(sparse){
+    const buttonWithText=value=>`Array.from(document.querySelectorAll('.task-conversation button')).find(button=>button.textContent===${JSON.stringify(value)})`;
+    const continueSearch=buttonWithText('继续查找');
+    const activate=async button=>{await page.evaluate(`${button}.focus()`);await key('Enter',13);};
+    await page.until(`!!${continueSearch}`,7000);
+    check(sparseCursors.length===3&&new Set(sparseCursors).size===3,'an empty first screen scans three distinct cursors then pauses');
+    await wheelUp();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    check(sparseCursors.length===3,'the capped search awaits an explicit continuation');
+    holdEarlier=true;
+    await activate(continueSearch);
+    for(let attempt=0;!releaseEarlier&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+    assert.ok(releaseEarlier);
+    const continuedFrom=sparseCursors.at(-1);
+    await click('.task-conversation-toolbar button');
+    await exists('.task-conversation-info');
+    releaseEarlier();releaseEarlier=undefined;
+    await click('.task-conversation-toolbar button');
+    await page.until(`!!${continueSearch}`,7000);
+    check(sparseCursors.length===4,'leaving the reader stops the pending continuation');
+    sparse=false;failEarlier=true;
+    await activate(continueSearch);
+    const retry=buttonWithText('重试');
+    await page.until(`document.activeElement===${retry}`,7000);
+    check(sparseCursors.at(-1)===continuedFrom,'a cancelled response leaves the original cursor available');
+    await activate(retry);
+    await exists('#task-message-user-1');
+    await focused(viewport);
+    check(sparseCursors[5]===continuedFrom,'retry of the failed continuation uses the same cursor');
+    check(!await page.evaluate(`!!${continueSearch}`),'a completed sparse search clears the continuation control');
+   }
    await insert(draft,'事项 B 草稿');
    check(await text(draft)==='事项 B 草稿','narrow task editor accepts input');
    disposition='unknown';
@@ -356,7 +442,7 @@ try{
    console.log(JSON.stringify({width,focus,expectedFocus,errors:page.errors,lastRequests:page.requests.slice(-12)}));
    await page.screenshot('failure-'+width+'.png');
    throw error;
-  }finally{releaseSummary?.();releaseBrowser?.();await page.close();await f.close();}
+  }finally{releaseSummary?.();releaseBrowser?.();releaseEarlier?.();await page.close();await f.close();}
  }
  console.log(JSON.stringify({checks,widths:[1440,390,320]}));
 }finally{const result=await chrome.close();console.log(JSON.stringify({chrome:result}));assert.equal(result.code,0);assert.equal(result.watchdog,false);}

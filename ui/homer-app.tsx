@@ -1404,7 +1404,7 @@ function TaskReader({page,view,locate,original,task,state,connected,onSend,submi
   <BrowserPreviewContext.Provider value={localPreview}><PreviewActionsContext.Provider value={{
    canQuote:()=>composer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>composer.current?.openQuote(snapshot,trigger)??false,
    quoteNotice:message=>composer.current?.quoteNotice(message),appendQuote:quote=>composer.current?.appendQuote(quote)}}>
-   <div className="thread-viewport" ref={view} tabIndex={-1} aria-label="事项消息" onScroll={onScroll}
+   <div className="thread-viewport" ref={view} tabIndex={0} role="region" aria-label="事项消息" onScroll={onScroll}
     onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locate(decodeURIComponent(link.hash.slice(9)));}}}>
     <div className="messages"><MessageTimestamps messages={page.messages}>
      <TaskMessageRows original={original} onRows={onRows}/>
