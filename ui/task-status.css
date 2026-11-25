@@ -28,23 +28,23 @@
 .homer-task-status .status-task-title-truncated{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .homer-task-status .status-task-running{grid-column:2;grid-row:1;display:grid;place-items:center;color:hsl(var(--muted-foreground))}
 .homer-task-status .status-task-workers{grid-column:1;display:flex;align-items:center;gap:5px;margin-top:3px;color:hsl(var(--muted-foreground));font-size:.75rem;font-variant-numeric:tabular-nums}
-.homer-task-status .status-task-entry:is([data-reference],[data-archive]) {position:relative;--task-action-size:24px;--task-top-action-size:21px}
-.homer-task-status :is([data-reference],[data-archive]) .status-task-row {grid-template-columns:minmax(0,1fr) var(--task-action-size)}
+.homer-task-status .status-task-entry:is([data-reference],[data-top-action]) {position:relative;--task-action-size:24px;--task-top-action-size:21px}
+.homer-task-status :is([data-reference],[data-top-action]) .status-task-row {grid-template-columns:minmax(0,1fr) var(--task-action-size)}
 .homer-task-status [data-reference][data-workers] .status-task-row {grid-template-rows:auto var(--task-action-size)}
-.homer-task-status [data-archive] .status-task-row {grid-template-rows:var(--task-top-action-size);align-content:start}
-.homer-task-status [data-archive]:is([data-reference],[data-workers]) .status-task-row {grid-template-rows:var(--task-top-action-size) var(--task-action-size)}
-.homer-task-status :is([data-reference],[data-archive]) .status-task-workers {align-self:center;margin-top:0}
-.homer-task-status [data-archive] .status-task-title {align-self:center}
+.homer-task-status [data-top-action] .status-task-row {grid-template-rows:var(--task-top-action-size);align-content:start}
+.homer-task-status [data-top-action]:is([data-reference],[data-workers]) .status-task-row {grid-template-rows:var(--task-top-action-size) var(--task-action-size)}
+.homer-task-status :is([data-reference],[data-top-action]) .status-task-workers {align-self:center;margin-top:0}
+.homer-task-status [data-top-action] .status-task-title {align-self:center}
 .homer-task-status :is(.status-task-reference,.status-task-archive) {
  position:absolute;inset-inline-end:6px;
  display:grid;place-items:center;width:var(--task-action-size);height:var(--task-action-size);
  padding:0;border:0;border-radius:6px;background:transparent;color:hsl(var(--muted-foreground))
 }
 .homer-task-status .status-task-reference {inset-block-start:50%;transform:translateY(-50%)}
-.homer-task-status :is([data-workers],[data-archive]) .status-task-reference {inset-block-start:auto;inset-block-end:8px;transform:none}
+.homer-task-status :is([data-workers],[data-top-action]) .status-task-reference {inset-block-start:auto;inset-block-end:8px;transform:none}
 .homer-task-status .status-task-archive {inset-block-start:8px;height:var(--task-top-action-size)}
 .homer-task-status .status-task-archive[aria-disabled="true"] {cursor:progress}
-@media (pointer:coarse){.homer-task-status .status-task-entry:is([data-reference],[data-archive]){--task-action-size:44px;--task-top-action-size:44px}}
+@media (pointer:coarse){.homer-task-status .status-task-entry:is([data-reference],[data-top-action]){--task-action-size:44px;--task-top-action-size:44px}}
 @media (hover:hover) and (pointer:fine){
  .homer-task-status :is(.status-task-reference,.status-task-archive){opacity:0;pointer-events:none}
  .homer-task-status .status-task-entry:is(:hover,:focus-within) .status-task-reference,
@@ -62,8 +62,6 @@
 :is(.homer-task-status[data-slot="task-card"],.homer-task-status [data-slot="task-card"])>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
 
 .homer-task-status .status-worker-assignments {padding-inline-start:1rem;margin:.2rem 0 .35rem;font-size:.8rem;overflow-wrap:anywhere}
-
-.homer-task-status [data-archive] .status-task-row:has(.status-task-running) {grid-template-columns:minmax(0,1fr) 20px var(--task-action-size)}
 
 .status-task-open{padding:0;background:transparent;color:inherit;text-align:left;font:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;min-height:28px}
 .status-task-open:hover{text-decoration:underline;text-underline-offset:3px}

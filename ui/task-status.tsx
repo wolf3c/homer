@@ -31,7 +31,7 @@ function TaskStatusRow({label,workerCount,running,archived,onReference,onOpen,ar
  archive?:{reason:string|null;pending:boolean;activate:()=>void};
 }){
  const archiveReasonId=useId();
- return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-archive={archive?'available':undefined}>
+ return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-top-action={running||archive?'present':undefined}>
  <div data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}>
   {onOpen?<button type="button" className="status-task-title status-task-open" onClick={event=>onOpen(event.currentTarget)}>{label}</button>
     :<span className={archived?'status-task-title':'status-task-title status-task-title-truncated'}>{label}</span>}
@@ -70,7 +70,7 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onO
   <div className="flex flex-col gap-1">{tasks.map(task=>{
    const title=taskName(task).text;
    const executing=!archived&&connected&&(running?running.has(task.id):!stale&&task.hasExecutingWorker===true);
-   const archive=onArchive&&!archived&&!stale&&(executing||task.archiveBlocker!==undefined)?{
+   const archive=onArchive&&!archived&&!stale&&!executing&&task.archiveBlocker!==undefined?{
     reason:task.archiveBlocker?archiveReason(task.archiveBlocker):null,pending:archiving?.has(task.id)===true,activate:()=>onArchive(task),
    }:undefined;
    return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title} tabIndex={-1}>

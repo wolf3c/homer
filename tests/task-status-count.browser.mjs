@@ -57,8 +57,8 @@ try{
   if(path===archivePath+'/before/70')return route.fulfill({json:{tasks:[task('older',{title:olderTitle,creationOrder:69,historyState:'archived'})]}});
   errors.push('unexpected_read '+path);return route.abort();
  };
- const createPage=async hasTouch=>{
-  const context=await browser.newContext({viewport:{width:800,height:600},deviceScaleFactor:2,hasTouch});
+ const createPage=async (hasTouch,width=1440)=>{
+  const context=await browser.newContext({viewport:{width,height:850},deviceScaleFactor:2,hasTouch});
   await context.route('**/*',routeFixture);
   const next=await context.newPage();next.setDefaultTimeout(10000);
   next.on('pageerror',error=>errors.push(error.message));
@@ -71,7 +71,7 @@ try{
  const refresh=()=>page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
  for(const width of [1440,390,320]){
   if(width===390){
-   await page.context().close();page=await createPage(true);
+   await page.context().close();page=await createPage(true,width);
    trigger=page.locator('#task-status-trigger');panel=page.locator('#task-status-panel');
   }
   await page.setViewportSize({width,height:850});await trigger.waitFor();
@@ -167,7 +167,7 @@ try{
   const text=el.querySelector('.status-task-title'),title=text.getBoundingClientRect();
   const icon=el.querySelector('.status-task-running').getBoundingClientRect();
   const count=el.querySelector('.status-task-workers').getBoundingClientRect();
-  return title.height===21&&text.scrollWidth>text.clientWidth&&getComputedStyle(text).textOverflow==='ellipsis'&&title.right<=icon.left&&icon.top===title.top&&title.bottom<count.top&&el.scrollWidth<=el.clientWidth;
+  return title.height===21&&text.scrollWidth>text.clientWidth&&getComputedStyle(text).textOverflow==='ellipsis'&&title.right<=icon.left&&Math.abs(title.top+title.bottom-icon.top-icon.bottom)<1&&icon.bottom<=count.top&&el.scrollWidth<=el.clientWidth;
  })&&(await row.getAttribute('title'))===longTitle,'long title truncates beside icon and above count');
  await row.tap();
  ok(await panel.getByText(longTitle,{exact:true}).count()===1&&await panel.locator('.status-full-title').count()===0,'touch keeps a single truncated title');
