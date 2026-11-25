@@ -392,7 +392,7 @@ test('grouping uses projected answers on both rows and one verified task and tit
   const task = (taskId: string, title = '同名事项') => ({ target: { taskId }, title });
   const first = { ...m('a', 1700000000000), role: 'assistant', status: 'completed', threadId: 'thread', taskSources: [task('one')] };
   const second = { ...first, id: 'b', status: 'running', text: '流式回复' };
-  const continues = (previous: typeof first | undefined, current: typeof second, hasBody = !!current.text.trim(), priorHasBody = !!previous?.text.trim()) =>
+  const continues = (previous: typeof first | undefined, current: typeof second & {taskSourceUnresolved?: true}, hasBody = !!current.text.trim(), priorHasBody = !!previous?.text.trim()) =>
     wrappers.continuesReplyTask(previous && wrappers.replyPosition(previous, priorHasBody), wrappers.replyPosition(current, hasBody), false, false);
   assert.equal(continues(first, second), true);
   assert.equal(continues(first, { ...second, text: '' }), false);

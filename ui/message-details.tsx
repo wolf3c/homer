@@ -103,6 +103,13 @@ export function MessageDetails({ message, runtime = false, children }: { message
     : !!message.text&&<><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>;
   return children ? <><div ref={rowRef} className="message-bubble-row">{children}{actions}</div>{sources}</> : <>{sources}{actions}</>;
 }
+export function hasRuntimeMessageActions(message:Pick<ConversationMessage,'text'>,hasOrigin=false){
+  return !!message.text||hasOrigin;
+}
+export function visibleMessageSources(sources:NonNullable<ConversationMessage['sources']> = []){
+  return sources.filter(source=>webSourceUrl(source.url));
+}
+
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
   const [open,setOpen]=useState(false);
   const visible=visibleMessageSources(sources);
@@ -121,13 +128,6 @@ function RuntimeMessageActions({message,write,busy,notice,onNotice,showTimestamp
     if(!text){onNotice('本条消息没有可引用的正文。');return;}
     if(!canQuote())return;
     appendQuote({messageId:message.id,text,...('itemIds' in selected&&selected.itemIds.length?{itemIds:selected.itemIds}:{})});
-export function hasRuntimeMessageActions(message:Pick<ConversationMessage,'text'>,hasOrigin=false){
-  return !!message.text||hasOrigin;
-}
-export function visibleMessageSources(sources:NonNullable<ConversationMessage['sources']> = []){
-  return sources.filter(source=>webSourceUrl(source.url));
-}
-
     onNotice(!!parts&&'itemIds' in selected&&parts.length>selected.itemIds.length?'正文较长，已引用可核验的前段。':'');
     window.getSelection()?.removeAllRanges();focusInput();
   }
