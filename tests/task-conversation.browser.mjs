@@ -14,17 +14,20 @@ try{
   const f=await fixture(160,'after'),thread='synthetic-history',db=f.store.db;
   const page=await chrome.page(f.server.url,width);
   const click=async selector=>{
+   await exists(selector);
    const box=await page.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)return; e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
    assert.ok(box,selector);
    await page.command('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...box});
    await page.command('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...box});
   };
   const exists=selector=>page.until(`!!document.querySelector(${JSON.stringify(selector)})`,7000);
+  let expectedFocus;
   const text=(selector)=>page.evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent`);
   const insert=async (selector,value)=>{
    await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
    await page.command('Input.insertText',{text:value});
   };
+  let releaseSummary,releaseBrowser;
   try{
    f.store.setMeta('mainAgentId','main:synthetic');
    const create=(name,requestId)=>f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:requestId},
@@ -64,9 +67,131 @@ try{
     if(disposition==='stale'){disposition='accept';db.prepare('UPDATE tasks SET title=? WHERE id=?').run('合成事项 A 修订',a);throw Error('task_reference_stale');}
     return inputs.accept(input);
    };
+   const archivedTitle='归档事项'+ '合成标题用于检查窄屏换行'.repeat(4);
+   const c=create(archivedTitle,'request-2');
+   db.prepare("UPDATE tasks SET historyState='archived',state='paused' WHERE id=?").run(c);
+   const publish=(body,taskId)=>f.attach(body,[],{taskId,taskVersion:1}).messageId;
+   const title=id=>'#message-'+id+' .message-task-open';
+   const messageA=publish('合成事项入口 A',a), continuation=publish('连续事项入口 A',a);
+   const messageC=publish('历史归档事项入口',c);
+   const originalSummary=f.bridge.taskOverview.summary;
+   let summaryMode='mismatch';
+   f.bridge.taskOverview.summary=async id=>{
+    if(id===c&&summaryMode!=='normal'){
+     const mode=summaryMode;summaryMode='normal';
+     if(mode==='mismatch')return originalSummary(b);
+     await new Promise(resolve=>{releaseSummary=resolve;});
+    }
+    return originalSummary(id);
+   };
+   const previewLink=width===1440?f.attach('[合成网页](https://example.com/synthetic)',[]).messageId:undefined;
+   if(previewLink){
+    f.bridge.openPreview=async input=>{
+     assert.equal(input.show,false);
+     const {source}=input;
+     const id='browser:'+source.messageId,opened={id,threadId:thread,owner:'main:'+thread,url:source.url,title:source.title,document:1,control:'user',source};
+     await page.evaluate(`window.syntheticNativePage(${JSON.stringify(opened)})`);
+     await new Promise(resolve=>{releaseBrowser=resolve;});
+     return opened;
+    };
+    await page.command('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
+     let pages=[],notify=()=>{};
+     window.syntheticNativePage=page=>{pages=[page];notify();};
+     window.homerBrowserPreview={
+      list:async()=>pages,onChanged:fn=>{notify=fn;return ()=>{};},onShow:()=>()=>{},onAnnotation:()=>()=>{},
+      annotations:async()=>{},present:async()=>{},control:async({action})=>{if(action==='close'){pages=[];notify();}},
+     };
+    })()`});
+   }
+   await page.command('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{
+    const original=Response.prototype.json;
+    Response.prototype.json=async function(){
+     const value=await original.call(this);
+     if(new URL(this.url,location.href).pathname===${JSON.stringify('/api/tasks/'+c+'/summary')})
+      requestAnimationFrame(()=>{window.archivedSummaries=(window.archivedSummaries??0)+1;});
+     return value;
+    };
+   })()`});
    await page.navigate();
    const primary='.preview-main-panel [contenteditable=true]',draft='.task-conversation [contenteditable=true]';
    await exists(primary);
+   const panel='#canvas-panel';
+   const taskReader=id=>`.task-conversation[data-task-conversation="${id}"]`;
+   const key=async (key,virtualKey)=>{
+    const event={key,code:key===' '?'Space':key,windowsVirtualKeyCode:virtualKey};
+    await page.command('Input.dispatchKeyEvent',{...event,type:'keyDown',...(key==='Enter'?{text:'\r'}:{})});
+    await page.command('Input.dispatchKeyEvent',{...event,type:'keyUp'});
+   };
+   const focus=async selector=>{await exists(selector);await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);};
+   const focused=selector=>{expectedFocus=selector;return page.until(`document.activeElement.matches(${JSON.stringify(selector)})`,7000);};
+   const closed=()=>page.until(()=>!document.querySelector('#canvas-panel'),7000);
+   if(previewLink){
+    await click('#message-'+previewLink+' .markdown a');
+    for(let attempt=0;!releaseBrowser&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+    assert.ok(releaseBrowser);
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    check(!await page.evaluate(()=>document.querySelector('#canvas-panel')),'native list delivery does not open a pending tab');
+    releaseBrowser();
+    await page.until(()=>document.querySelector('#canvas-panel [role=tab][aria-selected=true]')?.textContent==='合成网页',7000);
+    await click('.canvas-tab-close[aria-label="关闭合成网页"]');
+    await closed();
+   }
+   await exists(title(messageA));
+   await exists(title(continuation));
+   check(await page.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(title(continuation))})).visibility==='hidden'`),'folded title skips keyboard and pointer');
+   await focus(title(messageA));
+   await key('Tab',9);
+   check(await page.evaluate(`!document.activeElement.matches(${JSON.stringify(title(continuation))})`),'Tab skips the folded title');
+   await focus(title(messageA));
+   check(await page.evaluate(`document.activeElement.matches(':focus-visible')`),'keyboard focus is visible');
+   await key('Enter',13);
+   await exists(taskReader(a));
+   if(width<700)await focused('#canvas-panel [role=tab][aria-selected=true]');
+   await click('.canvas-collapse');
+   await closed();
+   await focused(title(messageA));
+   await click(title(messageC)+' svg');
+   await page.until(()=>document.querySelector('.history-navigation')?.textContent.includes('暂时无法打开事项'),7000);
+   check(!(await page.evaluate(()=>document.querySelector('#canvas-panel'))),'wrong summary identity cannot open a task');
+   if(width===1440){
+    summaryMode='delay';
+    await click(title(messageC));
+    for(let attempt=0;!releaseSummary&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+    assert.ok(releaseSummary);
+    await click(title(messageA)+' svg');
+    await exists(taskReader(a));
+    releaseSummary();
+    await page.until(()=>window.archivedSummaries===2,7000);
+    check(await page.evaluate(`!!document.querySelector(${JSON.stringify(taskReader(a))})&&document.querySelectorAll('#canvas-panel [role=tab]').length===1`),'late summary cannot replace the latest task intent');
+    await click('.canvas-collapse');
+    await closed();
+   }
+   await focus(title(messageC));
+   if(width<700)await page.screenshot('message-task-title-'+width+'.png');
+   await key(' ',32);
+   await exists(taskReader(c));
+   check(await page.evaluate(()=>document.querySelectorAll('#canvas-panel [role=tab]').length===2),'an archived message opens its own task tab');
+   check(await page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'long archived title fits the viewport');
+   await page.screenshot('message-task-preview-'+width+'.png');
+   if(width===1440){
+    for(const next of [700,699,700]){
+     await page.command('Emulation.setDeviceMetricsOverride',{width:next,height:900,deviceScaleFactor:1,mobile:false});
+     const role=next<700?'dialog':'complementary';
+     await exists(panel+'[role="'+role+'"]');
+     if(next<700)await focused('#canvas-panel [role=tab][aria-selected=true],#canvas-panel .canvas-collapse');
+     check(await page.evaluate(`(()=>{const aside=document.querySelector('.status-aside');return ${next}<700?!aside:aside?.getBoundingClientRect().width===300;})()`),'700px breakpoint preserves the docked 300px status rail');
+    }
+    await page.command('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+   }
+   await exists(taskReader(c)+' .task-message-origin button');
+   await click(taskReader(c)+' .task-message-origin button');
+   if(width<700)await closed();
+   await focused('#message-'+messageC);
+   if(width<700)await click('.conversation-header button[aria-label="预览"]');
+   await exists(panel);
+   await click('.canvas-tab-close[aria-label="关闭'+archivedTitle+'"]');
+   await click('.canvas-tab-close[aria-label="关闭合成事项 A"]');
+   await closed();
    await insert(primary,'主对话合成草稿');
    const readAnchor=()=>page.evaluate(()=>{
     const view=document.querySelector('.preview-main-panel .thread-viewport'),top=view.getBoundingClientRect().top;
@@ -83,7 +208,7 @@ try{
    await exists('.task-conversation #task-message-node-154');
    check((await text('.task-conversation #task-message-node-154')).includes('合成事项答复 154'),'public projected final');
    check(!(await page.evaluate(()=>document.querySelector('.task-conversation #task-message-node-159'))),'unrelated history excluded');
-   check(await page.evaluate(`(()=>{const p=document.querySelector('#canvas-panel').getBoundingClientRect();return ${width}<=800?p.width===innerWidth:p.left>0&&p.width>380;})()`),'width appropriate Preview');
+   check(await page.evaluate(`(()=>{const p=document.querySelector('#canvas-panel').getBoundingClientRect();return ${width}<700?p.width===innerWidth:p.left>0&&p.width>380;})()`),'width appropriate Preview');
    check(await page.evaluate(()=>document.documentElement.scrollWidth===innerWidth),'no horizontal overflow');
    check(await text(primary)==='主对话合成草稿','main draft retained');
    await page.until(`(()=>{const view=document.querySelector('.preview-main-panel .thread-viewport');
@@ -186,10 +311,11 @@ try{
    assert.deepEqual(page.errors,[]);
    assert.deepEqual(page.blocked,[]);
   }catch(error){
-   console.log(JSON.stringify({width,errors:page.errors,lastRequests:page.requests.slice(-12)}));
+   const focus=await page.evaluate(`(()=>{const target=document.querySelector(${JSON.stringify(expectedFocus??':focus')});return {active:document.activeElement.outerHTML.slice(0,400),target:target?.outerHTML.slice(0,120),inert:!!target?.closest('[inert]'),visibility:target&&getComputedStyle(target).visibility};})()`);
+   console.log(JSON.stringify({width,focus,expectedFocus,errors:page.errors,lastRequests:page.requests.slice(-12)}));
    await page.screenshot('failure-'+width+'.png');
    throw error;
-  }finally{await page.close();await f.close();}
+  }finally{releaseSummary?.();releaseBrowser?.();await page.close();await f.close();}
  }
  console.log(JSON.stringify({checks,widths:[1440,390,320]}));
 }finally{const result=await chrome.close();console.log(JSON.stringify({chrome:result}));assert.equal(result.code,0);assert.equal(result.watchdog,false);}

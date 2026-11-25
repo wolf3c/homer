@@ -10,6 +10,7 @@
 .messages [data-continues-task]:not(:has(>.message-day-separator))>.assistant-message>.message-task-title{
   position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap
 }
+.messages [data-continues-task]:not(:has(>.message-day-separator))>.assistant-message>.message-task-title .message-task-open{visibility:hidden}
 .message-bubble-row>.assistant-message-bubble,.message-bubble-row>.user-message-bubble{position:relative}
 .message-bubble-row .message-actions{margin-top:2px}
 .message-bubble-row .message-actions>.aui-message-action{width:44px;height:44px}

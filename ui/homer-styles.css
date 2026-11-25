@@ -128,7 +128,11 @@
 .schedule-source>svg{flex:none}
 .schedule-source>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 button.schedule-source{position:relative;padding:0;border-radius:3px;background:transparent;color:var(--link);text-align:left}
-button.schedule-source>span{text-decoration:underline;text-underline-offset:3px}
+.message-task-open{display:inline-flex;align-items:baseline;gap:7px;max-width:100%;vertical-align:top;padding:0;border-radius:3px;background:transparent;color:var(--link);font:inherit;text-align:left}
+.message-task-open>svg{flex:none;align-self:start;margin-top:1px}
+.message-task-open>span{min-width:0}
+button.schedule-source>span,.message-task-open>span{text-decoration:underline;text-underline-offset:3px}
+.message-task-open:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 /* Extend the 18px title upward and through its 4px gap without moving the bubble. */
 @media(any-pointer:coarse){
   button.schedule-source{min-width:44px}

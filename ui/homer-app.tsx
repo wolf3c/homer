@@ -1,6 +1,6 @@
 import type {WebSendScope} from '../src/web-contract';
 import {TaskConversation,type TaskConversationWindow} from './task-conversation';
-import type {OverviewTask} from '../src/task-overview';
+import type {OverviewTask,TaskDetail} from '../src/task-overview';
 import {taskName} from '../src/task-presentation';
 import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
 import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file-download';
@@ -264,12 +264,13 @@ function UserMessage() {
   </MessagePrimitive.Root></>;
 }
 const ScheduleNavigationContext=createContext<((id:string,trigger:HTMLElement)=>void)|undefined>(undefined);
+const TaskPreviewNavigationContext=createContext<((id:string,trigger:HTMLElement)=>void)|undefined>(undefined);
 const ProcessMessagesContext=createContext<ReadonlyMap<string,WebState['messages'][number]>>(new Map());
 function messageTaskTitles(message:WebState['messages'][number]|undefined){
   const process=message?.process;
-  const titles=new Map<string,string>();
-  for(const {title,target} of message?.taskSources??[]){
-    if(title&&!titles.has('task:'+target.taskId))titles.set('task:'+target.taskId,title);
+  const titles=new Map<string,{title:string;taskId?:string}>();
+  for(const {title,target,previewVerified} of message?.taskSources??[]){
+    if(title&&!titles.has('task:'+target.taskId))titles.set('task:'+target.taskId,{title,taskId:previewVerified?target.taskId:undefined});
   }
   for(const item of process?.items??[]){
     if(item.kind!=='workerEvent'||!item.event?.title)continue;
@@ -277,7 +278,7 @@ function messageTaskTitles(message:WebState['messages'][number]|undefined){
     const received=process?.sourceKind==='worker'&&item.event.eventKind==='reply_received'&&item.event.sourceMessageId&&process.sourceMessageIds.includes(item.event.sourceMessageId);
     if(!delegated&&!received)continue;
     const key=item.event.taskId?'task:'+item.event.taskId:'event:'+item.eventKey;
-    if(!titles.has(key))titles.set(key,item.event.title);
+    if(!titles.has(key))titles.set(key,{title:item.event.title,taskId:message?.taskEventTargets?.[item.id]?.taskId});
   }
   return titles;
 }
@@ -292,7 +293,7 @@ function singleReplyTask(message:WebState['messages'][number]|undefined,hasBody=
 function continuesReplyTask(previous:WebState['messages'][number]|undefined,current:WebState['messages'][number]|undefined,hasBody?:boolean){
   if(previous?.role!=='assistant'||!current||previous.status!=='completed'||previous.threadId!==current.threadId)return false;
   const task=singleReplyTask(current,hasBody),prior=task&&singleReplyTask(previous);
-  if(!prior||prior[0]!==task[0]||prior[1]!==task[1])return false;
+  if(!prior||prior[0]!==task[0]||prior[1].title!==task[1].title)return false;
   const day=new Date(previous.createdAt);
   return Number.isFinite(day.getTime())&&day.toDateString()===new Date(current.createdAt).toDateString();
 }
@@ -307,6 +308,7 @@ function AssistantMessage() {
   const original=useContext(ProcessMessagesContext).get(String(metadata.messageId));
   const parts=useProcessParts();
   const openSchedule=useContext(ScheduleNavigationContext);
+  const openTask=useContext(TaskPreviewNavigationContext);
   if(!isVisibleConversationMessage(original))return null;
   const process=original?.process;
   const scheduled=process?.sourceKind==='scheduled';
@@ -318,8 +320,13 @@ function AssistantMessage() {
   const messageFiles=files.filter(file=>file.messageId===metadata.messageId&&!file.destination);
   const hasBubble=hasBody||!!original?.source||messageFiles.length>0;
   const completed=!!process&&confirmedTerminal(process)&&process.status==='completed';
-  const taskTitle=hasBubble||internal&&process.turnIds.length>0&&!completed
-    ? [...messageTaskTitles(original).values()].join('、')||(internal?'事项标题待确认':'') : '';
+  const titles=hasBubble||internal&&process.turnIds.length>0&&!completed ? messageTaskTitles(original) : undefined;
+  const taskTitle=titles&&(titles.size>0||internal)&&<p className="message-task-title">
+    {titles.size?[...titles].map(([key,{title,taskId}],index)=><Fragment key={key}>
+      {index>0?'、':null}{taskId&&openTask?<button type="button" className="message-task-open"
+        onClick={event=>openTask(taskId,event.currentTarget)}><ListTodoIcon size={15} aria-hidden/><span>{title}</span></button>:title}
+    </Fragment>):'事项标题待确认'}
+  </p>;
   const bubble=hasBubble&&<div className="assistant-message-bubble">
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
@@ -330,10 +337,10 @@ function AssistantMessage() {
     {scheduled?<p className="message-schedule-title">{scheduleId&&openSchedule
       ?<button type="button" className="schedule-source" title={scheduleTitle} aria-haspopup="dialog" onClick={event=>openSchedule(scheduleId,event.currentTarget)}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></button>
       :<span className="schedule-source" title={scheduleTitle}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></span>}</p>:!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
-    {internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
+    {internal&&taskTitle}
     <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} node={process}>
     {hasBubble&&<>
-    {!internal&&taskTitle&&<p className="message-task-title">{taskTitle}</p>}
+    {!internal&&taskTitle}
     {original ? <MessageDetails runtime message={original}>{bubble}</MessageDetails> : bubble}
     </>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
@@ -1475,7 +1482,7 @@ function HomerApp() {
       const files=old.tabs.filter(tab=>!('kind'in tab)||tab.kind!=='browser');
       const pages=browser.pages.filter(p=>p.resource||!files.some(tab=>!('kind'in tab)&&!tab.resource&&p.source.kind==='attachment'&&tab.assetId===p.source.assetId&&tab.revision===p.source.revision));
       const tabs:typeof old.tabs=[...files,...pages.map(page=>({...old.tabs.find(tab=>tab.id===page.id),kind:'browser' as const,id:page.id,title:page.title,page}))];
-      const activeId=tabs.some(tab=>tab.id===old.activeId)?old.activeId:tabs[0]?.id??null;
+      const activeId=old.activeId===null||tabs.some(tab=>tab.id===old.activeId)?old.activeId:tabs[0]?.id??null;
       const signature=(items:typeof tabs,selected:string|null)=>JSON.stringify([items.map(tab=>({...tab,trigger:undefined})),selected]);
       return signature(tabs,activeId)===signature(old.tabs,old.activeId)?old:{...old,tabs,activeId};
     });
@@ -1491,18 +1498,20 @@ function HomerApp() {
     if(previewScope.current.key!==key)previewScope.current={key,generation:previewScope.current.generation+1};
   }
   updatePreviewScope(canvasOpen,activePreviewTab?.id??null);
-  const previewGeneration=previewScope.current.generation;
+  const {generation:previewGeneration,key:previewKey}=previewScope.current;
   const isCurrentPreview=()=>previewGeneration===previewScope.current.generation;
   useEffect(()=>{
     const bridge=window.homerBrowserPreview;
     return bridge?.onShow((page,origin)=>{
       if(page.threadId!==state.threadId)return;
       if(!origin){showBrowser(page);return;}
-      if(canvasOpen&&isCurrentPreview()&&activeBrowser?.id===origin.pageId)
+      if(canvasOpen&&previewKey===previewScope.current.key&&activeBrowser?.id===origin.pageId){
+        const current=claimPreviewOpen();
         void bridge.list(page.threadId).then(pages=>{
-          if(isCurrentPreview()&&pages.some(source=>source.id===origin.pageId&&source.document===origin.document&&source.control==='user')
+          if(current()&&pages.some(source=>source.id===origin.pageId&&source.document===origin.document&&source.control==='user')
             &&pages.some(child=>child.id===page.id))showBrowser(page);
         }).catch(()=>{});
+      }
     });
   },[state.threadId,previewTabs,canvasOpen]);
   useEffect(()=>window.homerBrowserPreview?.onLink?.(({page,href})=>{
@@ -1533,6 +1542,8 @@ function HomerApp() {
   const visibleIds=()=>new Set(Array.from(viewport.current?.querySelectorAll<HTMLElement>('[data-conversation-message]')??[]).filter(element=>{const box=element.getBoundingClientRect(),view=viewport.current!.getBoundingClientRect();return box.height>0&&box.bottom>view.top&&box.top<view.bottom;}).map(element=>element.dataset.conversationMessage!));
   function readingPins(){
     const pins=visibleIds(),saved=anchor.current;if(saved){pins.add(saved.id);if(saved.next)pins.add(saved.next.id);}
+    const trigger=canvasTrigger.current?.closest<HTMLElement>('[data-conversation-message]');
+    if(trigger&&canvasOpen)pins.add(trigger.dataset.conversationMessage!);
     for(const control of viewport.current?.querySelectorAll<HTMLElement>('[aria-haspopup][aria-expanded="true"],.aui-image-zoom-trigger[aria-expanded="true"]')??[]){const message=control.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}
     for(const media of viewport.current?.querySelectorAll<HTMLMediaElement>('audio,video')??[]){if(!media.paused&&!media.ended){const message=media.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}}
     const selected=window.getSelection();for(const node of [selected?.anchorNode,selected?.focusNode,document.activeElement]){const e=node instanceof Element?node:node?.parentElement;const message=e?.closest<HTMLElement>('[data-conversation-message]');if(message)pins.add(message.dataset.conversationMessage!);}return pins;
@@ -2096,21 +2107,50 @@ function HomerApp() {
     if(tab&&'kind'in tab&&tab.kind==='task')taskViews.current.delete(JSON.stringify([state.history?.readEpoch,tab.task.id]));
     setPreviewTabs(remove);
   };
-  function openTaskConversation(task:OverviewTask,trigger:HTMLElement){
+  function claimPreviewOpen(){
+    const generation=++previewScope.current.generation,scope=positionScope();
+    return ()=>generation===previewScope.current.generation&&scope===positionScope();
+  }
+  async function openTaskConversation(taskId:string,trigger:HTMLElement,summary?:OverviewTask){
     if(!state.history)return;
-    const id='task:'+task.id;
+    const current=claimPreviewOpen();
+    const unavailable='暂时无法打开事项，请重试。';
+    setPageNotice(notice=>notice===unavailable?'':notice);
+    const id='task:'+taskId;
+    const existing=previewTabs.tabs.find(tab=>tab.id===id);
+    let task=existing&&'kind'in existing&&existing.kind==='task'?existing.task:summary;
+    if(!task){
+      try{
+        const response=await fetch('/api/tasks/'+encodeURIComponent(taskId)+'/summary');
+        const result:TaskDetail=await response.json();
+        if(!current()||!reader.current.connected)return;
+        if(!response.ok||result.overview?.id!==taskId)throw Error('task_overview_unavailable');
+        task=result.overview;
+      }catch{
+        if(current()&&reader.current.connected)setPageNotice(unavailable);
+        return;
+      }
+    }
     canvasTrigger.current=trigger;updatePreviewScope(true,id);if(!canvasOpen)captureAnchor();
     setAnnotationFocus(undefined);
-    setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id===id)?old.tabs:[...old.tabs,{kind:'task',id,title:taskName(task).text,task,trigger}],activeId:id}));
+    const tab={kind:'task' as const,id,title:taskName(task).text,task,trigger};
+    setPreviewTabs(old=>({...old,tabs:old.tabs.some(item=>item.id===id)
+      ?old.tabs.map(item=>item.id===id?{...item,trigger}:item):[...old.tabs,tab],activeId:id}));
     setCanvasOpen(true);
   }
   function taskOrigin(trigger:Element|null|undefined){
     return trigger?.closest('[data-task-conversation]')&&activePreviewTab&&'kind'in activePreviewTab&&activePreviewTab.kind==='task'?activePreviewTab.id:undefined;
   }
   const openSchedules=(trigger:HTMLElement)=>{
+    claimPreviewOpen();
     canvasTrigger.current=trigger;updatePreviewScope(true,'schedules');setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
     setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id==='schedules')?old.tabs:[...old.tabs,{id:'schedules',kind:'schedules',title:'定时任务',trigger}],activeId:'schedules'}));setCanvasOpen(true);
   };
+  function requestBrowserPage(source:Parameters<typeof openBrowserPreview>[1],show:(page:BrowserPage)=>void,url?:string){
+    const current=claimPreviewOpen();
+    void openBrowserPreview(state.threadId,source,url,false)
+      .then(page=>{if(current())show(page);}).catch(error=>{if(current())setPageNotice(error.message);});
+  }
   const openArtifact=(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>{
     const active=trigger??document.activeElement;
     const returnTo=taskOrigin(active);
@@ -2118,9 +2158,12 @@ function HomerApp() {
     if(origin)canvasTrigger.current=origin;
     const native=browser.pages.find(p=>!p.resource&&p.source.kind==='attachment'&&p.source.messageId===file.messageId&&p.source.assetId===file.assetId&&p.source.revision===file.revision);
     if(window.homerBrowserPreview&&(native||/\.html?$/i.test(file.title))){
-      if(native)showBrowser(native,annotation,false,returnTo);
-      else void openBrowserPreview(state.threadId,{kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title}).then(page=>showBrowser(page,annotation,false,returnTo)).catch(error=>setPageNotice(error.message));return;
+      if(native){claimPreviewOpen();showBrowser(native,annotation,false,returnTo);}
+      else requestBrowserPage({kind:'attachment',messageId:file.messageId,assetId:file.assetId,revision:file.revision,sha256:file.sha256,title:file.title},
+        page=>showBrowser(page,annotation,false,returnTo));
+      return;
     }
+    claimPreviewOpen();
     if(annotation)setAnnotationFocus({...annotation,nonce:crypto.randomUUID()});
     if(canvasOpen&&canvasArtifact?.id===file.id)return;
     if(!annotation)setAnnotationFocus(undefined);
@@ -2146,6 +2189,7 @@ function HomerApp() {
     });setCanvasOpen(true);
   }
   function openLocalFile(messageId:string,destination:string,title:string,trigger?:HTMLElement,annotation?:{key:string;id:string;history?:PreviewRequest}){
+    claimPreviewOpen();
     const id=JSON.stringify(['message-file',messageId,destination]);
     if(trigger)canvasTrigger.current=trigger;
     updatePreviewScope(true,id);setAnnotationFocus(annotation?{...annotation,nonce:crypto.randomUUID()}:undefined);if(!canvasOpen)captureAnchor();
@@ -2156,17 +2200,18 @@ function HomerApp() {
     });setCanvasOpen(true);
   }
   function openDocumentLink(source:Parameters<typeof openPreviewLink>[1],href?:string,sourceCurrent?:()=>Promise<boolean>){
-    if(!isCurrentPreview())return;
+    if(previewKey!==previewScope.current.key)return;
+    const claimed=claimPreviewOpen();
+    const current=async()=> (!sourceCurrent||await sourceCurrent())&&claimed();
     setPageNotice('');
     if(href===undefined){
-      const current=async()=> (!sourceCurrent||await sourceCurrent())&&isCurrentPreview();
       void openBrowserPreview(state.threadId,source,undefined,false).then(async page=>{
         if(await current())showBrowser(page,undefined,true);
       }).catch(async error=>{if(await current())setPageNotice(error.message);});
       return;
     }
     void openPreviewLink(state.threadId,source,href).then(async result=>{
-      if(sourceCurrent&&!await sourceCurrent()||!isCurrentPreview())return;
+      if(!await current())return;
       if('page'in result){showBrowser(result.page);return;}
       if('attachment'in result){
         const file=result.attachment;
@@ -2181,7 +2226,7 @@ function HomerApp() {
       }
       openLocalFile(result.messageId,result.destination,result.title);
     }).catch(error=>{
-      if(isCurrentPreview())setPageNotice(error.message==='message_file_scope_denied'?'这个文件未单独交付或链接，无法在预览中打开。':'链接无法打开（'+error.message+'）。');
+      if(claimed())setPageNotice(error.message==='message_file_scope_denied'?'这个文件未单独交付或链接，无法在预览中打开。':'链接无法打开（'+error.message+'）。');
     });
   }
   function openBrowserLink(destination:string,trigger:HTMLAnchorElement,resources=artifacts){
@@ -2204,11 +2249,13 @@ function HomerApp() {
     if(local){
       const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
       const existing=browser.pages.find(page=>page.source.kind==='message-file'&&page.source.messageId===messageId&&page.source.destination===destination);
-      if(existing)void openBrowserPreview(state.threadId,existing.source).then(page=>showBrowser(page,undefined,false,returnTo)).catch(error=>setPageNotice(error.message));
+      if(existing)requestBrowserPage(existing.source,page=>showBrowser(page,undefined,false,returnTo));
       else openLocalFile(messageId,destination,title,trigger);
       return true;
     }
-    void openBrowserPreview(state.threadId,{kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname}).then(page=>showBrowser(page,undefined,false,returnTo)).catch(error=>setPageNotice(error.message));return true;
+    requestBrowserPage({kind:'browser',messageId,url:trigger.href,title:trigger.textContent?.trim().slice(0,500)||new URL(trigger.href).hostname},
+      page=>showBrowser(page,undefined,false,returnTo));
+    return true;
   }
   function openBrowserReference(reference:PreviewRequest,id:string,history=false){
     if(!window.homerBrowserPreview)return;
@@ -2222,9 +2269,8 @@ function HomerApp() {
     const keepFileTab=reference.source.kind==='message-file'&&messageFileLineSuffix.test(decodeMessageLink(reference.source.destination)??'');
     const show=(page:BrowserPage)=>showBrowser(page,focus,keepFileTab);
     const existing=browser.pages.find(page=>page.id===reference.page?.id&&page.url===reference.page.url);
-    if(existing&&reference.source.kind!=='message-file'){show(existing);return;}
-    void openBrowserPreview(state.threadId,reference.source,reference.source.kind!=='message-file'&&reference.page?.url.startsWith('http')?reference.page.url:undefined,keepFileTab?false:undefined)
-      .then(show).catch(error=>setPageNotice(error.message));
+    if(existing&&reference.source.kind!=='message-file'){claimPreviewOpen();show(existing);return;}
+    requestBrowserPage(reference.source,show,reference.source.kind!=='message-file'&&reference.page?.url.startsWith('http')?reference.page.url:undefined);
   }
   const queueDrafts=(()=>{try{return Object.keys(sessionStorage).filter(key=>key.startsWith('homer-queue-edit:')).flatMap(key=>{const draft=storage.read<Pick<ConversationInput,'text'|'quote'|'quotes'|'resourceReference'|'resourceReferences'|'attachments'>>(key);return draft?[{key,...draft}]:[];});}catch{return [];}})();
   const questionDrafts=(state.inactiveInteractions??[]).filter(item=>item.kind==='question').flatMap(item=>{
@@ -2260,7 +2306,7 @@ function HomerApp() {
       <Group className="preview-layout" elementRef={setPreviewLayout} orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={narrowPreview?'0px':statusDocked?'501px':nativeTitlebar?'241px':'201px'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} wide={!narrowPreview} pinned={statusPinned} onPinnedChange={setStatusPinned} previewModal={narrowPreview&&canvasOpen} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?openTaskConversation:undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} wide={!narrowPreview} pinned={statusPinned} onPinnedChange={setStatusPinned} previewModal={narrowPreview&&canvasOpen} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?(task,trigger)=>void openTaskConversation(task.id,trigger,task):undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}
@@ -2290,14 +2336,14 @@ function HomerApp() {
                 {['帮我整理一份资料','和我一起规划一件事','帮我核对一份结果'].map(example => <button key={example} type="button" onClick={() => {setEditDraft({text:example,id:crypto.randomUUID(),source:'welcome'});focusEditor.current?.();}}>{example}</button>)}
               </div>
             </div></ThreadPrimitive.Empty>}
-            <div className="messages" ref={messageList}><MessageTimestamps messages={state.messages}>
+            <div className="messages" ref={messageList}><TaskPreviewNavigationContext.Provider value={connected&&state.history&&state.features?.taskConversation?openTaskConversation:undefined}><MessageTimestamps messages={state.messages}>
               {virtualRows.map((row,i)=><Fragment key={row.key}>
                 <div aria-hidden="true" style={{height:Math.max(0,row.start-(virtualRows[i-1]?.end??listTop))}}/>
                 <div data-index={row.index} data-processing-tail={processingInline&&row.index===rows.length-1||undefined}
                   data-continues-task={continuesReplyTask(processMessages.get(rows[row.index-1]?.id),processMessages.get(rows[row.index].id),runtimeMessages[rows[row.index].index].content.some(part=>part.type==='text'))||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
               </Fragment>)}
               <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
-            </MessageTimestamps>
+            </MessageTimestamps></TaskPreviewNavigationContext.Provider>
               {processingInline&&<div className="processing-inline" ref={indicator.marker} aria-hidden="true"><span>AI 正在处理</span></div>}
             </div>
             {(['queue','interactions'] as const).map(kind=>(kind!=='queue'||!state.features?.queueDispatch)&&activePages.current[kind].checking&&<p key={kind} role="status">{kind==='queue'?'待发送页':'待答页'}正在核对；编辑草稿保留，提交暂不可用。<button type="button" disabled={!activePages.current[kind].needsRead} onClick={()=>void readActivePage(kind)}>重新核对</button></p>)}

@@ -6,7 +6,7 @@ const message=(process:ProcessNode,text='Public conclusion'):DisplayMessage=>({i
 function setup(){const f=chatFixture(),task=f.create('Inspect synthetic evidence');const worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'PRIVATE_INSTRUCTION'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'PRIVATE_REPLY'},true)!;return {...f,task,worker,run,reply,project:(m:DisplayMessage,thread='thread:main')=>withTaskSources(f.store.db,[m],thread)[0]!};}
 test('only consumed authenticated scoped replies become sources, with immutable version and no raw body',()=>{
  const f=setup();try{
-  const input=message(node([f.reply.messageId])),source=f.project(input);assert.equal(source.taskSources?.length,1);assert.equal(source.taskSources![0]!.phaseLabel,'收到 Worker 回复');assert.ok(source.taskSources![0]!.originalRequestMessageId);assert.doesNotMatch(JSON.stringify(source),/PRIVATE/);
+  const input=message(node([f.reply.messageId])),source=f.project(input);assert.equal(source.taskSources?.length,1);assert.equal(source.taskSources![0]!.previewVerified,undefined);assert.equal(source.taskSources![0]!.phaseLabel,'收到 Worker 回复');assert.ok(source.taskSources![0]!.originalRequestMessageId);assert.doesNotMatch(JSON.stringify(source),/PRIVATE/);
   f.store.db.prepare("UPDATE agent_receipts SET state='rejected' WHERE messageId=?").run(f.reply.messageId);assert.deepEqual(f.project(input).taskSources,source.taskSources);
   assert.equal(f.project({...input,process:{...input.process!,turnIds:[]}}).taskSources,undefined);assert.equal(f.project(input,'other').taskSources,undefined);assert.deepEqual(f.project({...input,text:''}).taskSources,source.taskSources);assert.equal(f.project(message(node([]))).taskSources,undefined);
   f.tasks.updateTask(f.actor,{operationId:'next',taskId:f.task.taskId,expectedRevision:1,patch:{goal:'Changed scope'}});assert.equal(f.project(input).taskSources![0]!.target.version,1);
@@ -42,6 +42,45 @@ test('a reply remains a plain conversation fact and matching event cards suppres
   (n.items[0] as any).event={...event,sourceMessageId:'unrelated'};assert.equal(f.project(message(n)).taskSources?.length,1);
  }finally{f.close();}
 });
+test('Worker title targets require exact same-process delegation and received reply facts',()=>{
+ const f=setup();try{
+  const {db}=f.store,{taskId}=f.task,runId=f.run.id;
+  const target={taskId,version:1,runId};
+  const event={schemaVersion:1 as const,title:'Worker',body:'Public preview',...target,observedAtMs:1,failureStage:null,errorCode:null};
+  const delegation={id:'dispatch',kind:'workerEvent' as const,seq:1,revision:1,eventKey:'dispatch:'+f.worker.operationKey,event:{...event,eventKind:'delegated' as const,bodySource:'description' as const,sourceMessageId:null,operationKey:f.worker.operationKey}};
+  const dispatch=node([f.actor.inputMessageId!],[delegation]);
+  dispatch.turnIds=[f.actor.turnId!];
+  assert.deepEqual(f.project(message(dispatch)).taskEventTargets,{dispatch:target});
+  assert.equal(f.project(message(dispatch)).taskSources,undefined);
+  assert.equal(f.project(message({...dispatch,turnIds:['other']})).taskEventTargets,undefined);
+  assert.equal(f.project(message({...dispatch,sourceMessageIds:[]})).taskEventTargets,undefined);
+  assert.equal(f.project(message({...dispatch,threadId:'other'})).taskEventTargets,undefined);
+  db.prepare("UPDATE operations SET state='uncertain' WHERE id=?").run(f.worker.operationKey);
+  assert.equal(f.project(message(dispatch)).taskEventTargets,undefined);
+
+  const reply={id:'reply',kind:'workerEvent' as const,seq:1,revision:1,eventKey:'worker-reply:'+f.reply.messageId,event:{...event,eventKind:'reply_received' as const,bodySource:'reply' as const,sourceMessageId:f.reply.messageId,operationKey:null}};
+  const process=node([f.reply.messageId],[reply]);
+  assert.equal(f.project(message(process)).taskEventTargets,undefined);
+  f.consumeMain(f.reply.messageId);
+  process.turnIds=[String(db.prepare('SELECT offeredTurnId FROM agent_receipts WHERE messageId=?').get(f.reply.messageId)!.offeredTurnId)];
+  const legacy={...process,items:[]};
+  assert.equal(f.project(message(legacy)).taskSources?.[0]?.previewVerified,true);
+  assert.equal(f.project(message({...legacy,turnIds:['other']})).taskSources?.[0]?.previewVerified,undefined);
+  const conflict={...reply,id:'conflict',eventKey:'conflict',event:{...reply.event,version:2}};
+  assert.deepEqual(f.project(message({...process,items:[conflict,reply]})).taskEventTargets,{reply:target});
+  assert.equal(f.project(message({...process,turnIds:['other']})).taskEventTargets,undefined);
+  assert.equal(f.project(message({...process,items:[{...reply,event:{...reply.event,runId:null}}]})).taskEventTargets,undefined);
+  assert.equal(f.project(message(process)).taskSources,undefined);
+  const payload=String(db.prepare('SELECT payloadJson FROM agent_messages WHERE id=?').get(f.reply.messageId)!.payloadJson);
+  db.prepare("UPDATE agent_messages SET payloadJson=json_set(payloadJson,'$.runId','wrong-run') WHERE id=?").run(f.reply.messageId);
+  assert.equal(f.project(message(process)).taskEventTargets,undefined);
+  db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(payload,f.reply.messageId);
+  db.prepare("UPDATE agent_receipts SET state='rejected' WHERE messageId=?").run(f.reply.messageId);
+  assert.equal(f.project(message(process)).taskEventTargets,undefined);
+  assert.equal(f.project(message(legacy)).taskSources?.[0]?.previewVerified,undefined);
+ }finally{f.close();}
+});
+
 test('verified sources distinguish a literal title from an unavailable public name',()=>{
  const f=setup();try{
   const input=message(node([f.reply.messageId])),rename=f.store.db.prepare('UPDATE tasks SET title=? WHERE id=?');

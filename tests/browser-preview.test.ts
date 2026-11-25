@@ -78,7 +78,8 @@ test('UI opens and sent references validate real message/request provenance with
 });
 
 test('a native final can open its visible web link, while process-only and forged links stay out',async()=>{
- const f=fixture();f.app.bindBrowserPreview(async()=>({opened:true}));
+ const f=fixture(),calls:Record<string,unknown>[]=[];
+ f.app.bindBrowserPreview(async(_actor,_action,input)=>{calls.push(input);return {opened:true};});
  try{
   const url='https://example.com/final',internal='https://example.com/internal';
   f.setScript(async main=>{
@@ -91,6 +92,8 @@ test('a native final can open its visible web link, while process-only and forge
   const threadId=f.app.store.meta('mainThread')!,node=f.app.processes.list(threadId).find(item=>item.sourceKind==='user')!;
   const source={kind:'browser',messageId:node.messageId,url,title:'Report'};
   assert.deepEqual(await f.app.openBrowserPreview({threadId,source}),{opened:true});
+  assert.deepEqual(await f.app.openBrowserPreview({threadId,source,show:false}),{opened:true});
+  assert.deepEqual(calls,[{source,user:true},{source,user:true,show:false}]);
   for(const unlisted of [internal,'https://example.com/forged'])
    await assert.rejects(f.app.openBrowserPreview({threadId,source:{...source,url:unlisted}}),/preview_source_mismatch/);
   f.app.history.record('legacy-web-source',threadId,`[Report](${url})`);

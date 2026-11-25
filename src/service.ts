@@ -280,7 +280,7 @@ export class Homer {
       throw Error('message_file_scope_denied');
     }
     const file=this.validateBrowserSource(threadId,source);
-    const background=a.show===false&&source.kind!=='browser'?{show:false}:{};
+    const background=a.show===false?{show:false}:{};
     if(source.kind==='message-file'){
       if(a.url!==undefined||file?.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');
       const actual='attachment' in file&&file.attachment

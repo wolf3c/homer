@@ -198,7 +198,7 @@ export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId=
     {narrow&&<Dialog.Backdrop className="canvas-backdrop"/>}
     <Dialog.Popup ref={panel} id="canvas-panel" className="canvas-panel" role={narrow?'dialog':'complementary'} aria-modal={narrow||undefined} aria-label={title} initialFocus={()=>rail.current?.querySelector<HTMLElement>('[role=tab][aria-selected=true]')??collapseButton.current??panel.current} finalFocus={()=>{
       const target=typeof returnFocusTo==='function'?returnFocusTo():returnFocusTo;
-      return target===false?false:target?.isConnected?target:document.querySelector<HTMLElement>('.conversation-header [aria-controls="canvas-panel"]');
+      return target===false?false:target?.isConnected&&target.getClientRects().length&&getComputedStyle(target).visibility==='visible'?target:document.querySelector<HTMLElement>('.conversation-header [aria-controls="canvas-panel"]');
     }}>
     <Dialog.Title className="sr-only">{title}</Dialog.Title>
     {hasTabs?<Tabs.Root className="canvas-tabs" value={selected} onValueChange={id=>{if(typeof id==='string')onSelectArtifact?.(id);}}>

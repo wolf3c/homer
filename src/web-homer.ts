@@ -48,7 +48,9 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
    END`;
  const sourceIds=[...new Set(eligible.flatMap(m=>m.process?.threadId===threadId&&m.process.sourceKind==='worker'&&m.process.turnIds.length?m.process.sourceMessageIds:[]))];
  const notices=new Map(batch(`SELECT m.id,m.taskId,m.taskVersion,m.senderAgentId,m.senderRunId,m.senderEpoch,m.kind,o.actorAgentId,o.kind AS operationKind,o.state AS operationState,o.scopeId,
-   coalesce(ar.offeredTurnId,ar.processedBy) AS receivedTurnId,
+   coalesce(ar.offeredTurnId,ar.processedBy) AS receivedTurnId,ar.state AS receiptState,
+   CASE WHEN o.kind='worker_return' THEN json_extract(o.responseJson,'$.messageId')=m.id
+     AND json_extract(m.payloadJson,'$.runId')=m.senderRunId AND json_extract(m.payloadJson,'$.epoch')=m.senderEpoch END AS replyMatches,
    CASE WHEN o.kind='archive_work' THEN json_extract(o.detailsJson,'$.threadId') END AS archiveThread,
    CASE WHEN o.kind='archive_work' THEN
      json_extract(o.responseJson,'$.operationKey')=o.id AND json_extract(o.responseJson,'$.taskId')=m.taskId
@@ -78,11 +80,21 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
   return [{item,activity:item.activity,target:item.activity.target}];
  }):[];
  const actions=eligible.flatMap(m=>taskActions(m.process));
+ const titleEvents=new Map(eligible.flatMap(message=>{
+  const node=message.process;
+  if(includeCoveredSources||node?.threadId!==threadId)return [];
+  const items=node.items.flatMap(item=>item.kind==='workerEvent'&&item.event?.title&&(
+   item.event.eventKind==='delegated'&&item.event.bodySource==='description'||
+   node.sourceKind==='worker'&&item.event.eventKind==='reply_received'&&item.event.sourceMessageId&&node.sourceMessageIds.includes(item.event.sourceMessageId)
+  )?[{id:item.id,event:item.event}]:[]);
+  return items.length?[[message.id,items] as const]:[];
+ }));
+ const titleSnapshots=[...titleEvents.values()].flatMap(items=>items.map(({event})=>event));
  const operations=new Map(batch(`SELECT o.id,o.actorAgentId,o.scopeId,o.kind,o.state,json_extract(o.responseJson,'$.taskId') AS responseTaskId,
-   CASE WHEN o.kind='task_control' THEN json_extract(o.responseJson,'$.version') END AS responseVersion,
-   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.threadId') END AS threadId,
-   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.turnId') END AS turnId,
-   CASE WHEN o.kind='task_control' THEN json_extract(o.detailsJson,'$.inputMessageId') END AS inputMessageId,
+   json_extract(o.responseJson,'$.version') AS responseVersion,
+   CASE WHEN o.kind='worker_open' THEN json_extract(o.responseJson,'$.runId') END AS responseRunId,
+   json_extract(o.detailsJson,'$.threadId') AS threadId,json_extract(o.detailsJson,'$.turnId') AS turnId,
+   json_extract(o.detailsJson,'$.inputMessageId') AS inputMessageId,
    CASE WHEN o.kind='task_control' THEN
      json_extract(o.responseJson,'$.operationKey')=o.id
      AND CASE json_extract(o.detailsJson,'$.action')
@@ -92,16 +104,29 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
      AND EXISTS(SELECT 1 ${inputReceipt} AND i.recipientAgentId=o.actorAgentId AND (
        (${userInput}) OR (${hostInput})
      )) END AS updateMatches
-   FROM operations o WHERE o.id IN ($keys)`,[...new Set(actions.flatMap(({target})=>target.operationKey?[target.operationKey]:[]))]).map(o=>[o.id,o]));
- const runIds=[...new Set([...notices.values()].flatMap(n=>typeof n.senderRunId==='string'?[n.senderRunId]:[]).concat(actions.flatMap(({target})=>target.runId?[target.runId]:[])))];
+   FROM operations o WHERE o.id IN ($keys)`,[...new Set([...actions.map(({target})=>target.operationKey),
+    ...titleSnapshots.map(event=>event.operationKey)].filter((key):key is string=>!!key))]).map(o=>[o.id,o]));
+ const runIds=[...new Set([...notices.values()].flatMap(n=>typeof n.senderRunId==='string'?[n.senderRunId]:[]).concat([...actions.map(({target})=>target.runId),...titleSnapshots.map(event=>event.runId)].filter((id):id is string=>!!id)))];
  const runs=new Map(batch('SELECT id,taskId,version,epoch FROM runs WHERE id IN ($keys)',runIds).map(r=>[r.id,r]));
- const targets=[...notices.values()].map(n=>[n.taskId,n.taskVersion]).concat(actions.map(({target})=>[target.taskId,target.version]),formal.map(m=>[m.taskId,m.taskVersion]));
+ const targets=[...notices.values()].map(n=>[n.taskId,n.taskVersion]).concat(actions.map(({target})=>[target.taskId,target.version]),formal.map(m=>[m.taskId,m.taskVersion]),titleSnapshots.map(event=>[event.taskId,event.version]));
  const keys=[...new Set(targets.filter(([id,version])=>typeof id==='string'&&Number.isSafeInteger(version)).map(pair=>JSON.stringify(pair)))];
  const versions=new Map<string,Record<string,any>>();
  for(let at=0;at<keys.length;at+=200){
   const rows=db.prepare(`SELECT v.taskId,v.version,t.title,c.id AS sourceMessageId FROM json_each(?) k JOIN task_versions v ON v.taskId=json_extract(k.value,'$[0]') AND v.version=json_extract(k.value,'$[1]') JOIN tasks t ON t.id=v.taskId LEFT JOIN conversation_inputs i ON i.requestId=v.sourceRequestId AND i.threadId=? LEFT JOIN conversation_messages c ON c.threadId=i.threadId AND c.requestId=i.requestId AND c.role='user' WHERE v.sourceRequestId IS NULL OR i.requestId IS NOT NULL`).all('['+keys.slice(at,at+200).join(',')+']',threadId);
   for(const row of rows){const key=JSON.stringify([row.taskId,row.version]),old=versions.get(key);versions.set(key,old?{...old,sourceMessageId:null}:row);}
  }
+ type Node=NonNullable<DisplayMessage['process']>;
+ const receivedIn=(notice:Record<string,any>,node:Node)=>
+  ['received','processed'].includes(notice.receiptState)&&node.turnIds.includes(notice.receivedTurnId);
+ const confirmedReply=(notice:Record<string,any>,node:Node)=>
+  notice.kind==='worker_reply'&&notice.senderAgentId==='host'&&notice.actorAgentId==='host'&&
+  notice.operationKind==='worker_return'&&notice.operationState==='confirmed'&&notice.replyMatches===1&&receivedIn(notice,node);
+ const operationIn=(operation:Record<string,any>,node:Node)=>
+  operation.state==='confirmed'&&operation.actorAgentId===main&&operation.threadId===threadId&&
+  node.turnIds.includes(operation.turnId)&&node.sourceMessageIds.includes(operation.inputMessageId);
+ const confirmedOpen=(operation:Record<string,any>,node:Node,{taskId,version,runId}:TaskMessageSource['target'])=>
+  !!runId&&operation.kind==='worker_open'&&operationIn(operation,node)&&operation.scopeId===taskId&&
+  operation.responseTaskId===taskId&&operation.responseVersion===version&&operation.responseRunId===runId;
  const out=new Map<string,TaskMessageSource[]>(),unresolved=new Set<string>(),seen=new Set<string>();
  const push=(id:string,source:TaskMessageSource)=>{
   const v=versions.get(JSON.stringify([source.target.taskId,source.target.version]));if(!v){unresolved.add(id);return;}
@@ -112,7 +137,7 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
  };
  for(const message of formal){
   const node=message.process?.threadId===threadId?message.process:undefined;
-  push(message.id,{key:JSON.stringify([threadId,message.id,'message']),target:{taskId:message.taskId!,version:message.taskVersion!},title:'',icon:'Inbox',origin:{kind:'message',messageId:message.id,...(node?{processId:node.id}:{})},phaseLabel:'事项相关回复',owner:'main'});
+  push(message.id,{key:JSON.stringify([threadId,message.id,'message']),target:{taskId:message.taskId!,version:message.taskVersion!},title:'',icon:'Inbox',origin:{kind:'message',messageId:message.id,...(node?{processId:node.id}:{})},phaseLabel:'事项相关回复',owner:'main',previewVerified:true});
  }
  for(const message of eligible){
   const node=message.process?.threadId===threadId?message.process:undefined;
@@ -134,7 +159,8 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
        ? ['worker_return','notify'].includes(notice.operationKind)&&runMatches
        : notice.operationKind==='notify'&&notice.kind!=='task_archived'&&(notice.kind!=='interaction_required'||notice.senderRunId==null));
    if(!verified){unresolved.add(message.id);continue;}
-   push(message.id,{key:JSON.stringify([threadId,node.id,id]),target:{taskId:notice.taskId,version:notice.taskVersion,...(run?{runId:run.id}:{})},title:'',icon:notice.kind==='worker_reply'?'MessagesSquare':'Inbox',origin:{kind:'message',processId:node.id,messageId:id},phaseLabel:notice.kind==='worker_reply'?'收到 Worker 回复':notice.kind==='task_archived'?'事项已归档':'Homer 协作事项',owner:'main'});
+   const previewVerified=notice.kind==='worker_reply'?confirmedReply(notice,node):receivedIn(notice,node);
+   push(message.id,{key:JSON.stringify([threadId,node.id,id]),target:{taskId:notice.taskId,version:notice.taskVersion,...(run?{runId:run.id}:{})},title:'',icon:notice.kind==='worker_reply'?'MessagesSquare':'Inbox',origin:{kind:'message',processId:node.id,messageId:id},phaseLabel:notice.kind==='worker_reply'?'收到 Worker 回复':notice.kind==='task_archived'?'事项已归档':'Homer 协作事项',owner:'main',...(previewVerified?{previewVerified:true}:{})});
   }
   if(!node)continue;
   for(const {item,activity,target} of taskActions(node)){
@@ -148,10 +174,33 @@ export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage
       &&(!item.turnId||item.turnId===operation.turnId)&&node.sourceMessageIds.includes(operation.inputMessageId)&&operation.updateMatches
     : ({create_task:['task_create','worker_open'],update_task:['task_update'],stop_task:['worker_stop']} as Record<string,string[]>)[activity.action]?.includes(operation.kind);
    if(!verified){unresolved.add(message.id);continue;}
-   push(message.id,{key:JSON.stringify([threadId,node.id,item.id]),target,title:'',icon:activity.action==='create_task'?'Send':'CornerDownRight',origin:{kind:'activity',processId:node.id,itemId:item.id},phaseLabel:activityOutcomes[activity.outcome],owner:'main'});
+   const previewVerified=operation.kind==='worker_open'?confirmedOpen(operation,node,target)
+    : operationIn(operation,node)&&(!item.turnId||item.turnId===operation.turnId)&&operation.responseTaskId===target.taskId&&
+      (operation.kind==='worker_stop'||operation.responseVersion===target.version);
+   push(message.id,{key:JSON.stringify([threadId,node.id,item.id]),target,title:'',icon:activity.action==='create_task'?'Send':'CornerDownRight',origin:{kind:'activity',processId:node.id,itemId:item.id},phaseLabel:activityOutcomes[activity.outcome],owner:'main',...(previewVerified?{previewVerified:true}:{})});
   }
  }
- return messages.map(m=>({...m,...(out.has(m.id)?{taskSources:out.get(m.id)}:{}),...(unresolved.has(m.id)?{taskSourceUnresolved:true as const}:{})}));
+ return messages.map(message=>{
+  const node=message.process;
+  const eventTargets=titleEvents.get(message.id)?.flatMap(({id,event})=>{
+   const {taskId,version,runId}=event;
+   if(!node||!taskId||!version||!runId||!versions.has(JSON.stringify([taskId,version])))return [];
+   const run=runs.get(runId);
+   if(!run||run.taskId!==taskId||run.version!==version)return [];
+   if(event.eventKind==='delegated'){
+    const operation=operations.get(event.operationKey);
+    if(!operation||!confirmedOpen(operation,node,{taskId,version,runId}))return [];
+   }else{
+    const notice=notices.get(event.sourceMessageId);
+    if(!notice||!confirmedReply(notice,node)||notice.scopeId!==taskId||notice.taskId!==taskId||
+       notice.taskVersion!==version||notice.senderRunId!==runId||notice.senderEpoch==null||notice.senderEpoch>run.epoch)return [];
+   }
+   return [[id,{taskId,version,runId}]] as const;
+  });
+  return {...message,...(out.has(message.id)?{taskSources:out.get(message.id)}:{}),
+   ...(eventTargets?.length?{taskEventTargets:Object.fromEntries(eventTargets)}:{}),
+   ...(unresolved.has(message.id)?{taskSourceUnresolved:true as const}:{})};
+ });
 }
 import { readTaskOverview, readTaskDetail, readTaskSummary } from './task-overview.js';
 import { businessOptions,projectQuestions } from './question-schema.js';
