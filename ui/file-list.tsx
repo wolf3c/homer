@@ -1,3 +1,4 @@
+import {ReferenceCard} from './reference-card';
 import {useId} from 'react';
 import {FileRoot,FileIconDisplay,FileName} from './vendor/assistant-ui/file';
 
@@ -30,7 +31,7 @@ export function FileList<T extends FileListItem>({files,label,onOpen,selectedId,
   return <ul data-slot="file-list" className="file-list m-0 flex min-w-0 max-w-full list-none flex-col gap-2 p-0" aria-label={label}>
     {files.map((file,index)=>{
       const appearance=fileAppearance(file.title),typeId=descriptionId+'-'+index;
-      return <li key={file.id} className="min-w-0">
+      return <ReferenceCard as="li" key={file.id} className="min-w-0">
         <button type="button" className="file-list-open w-full border-0 bg-transparent p-0 text-start" aria-label={'预览 '+file.title} aria-describedby={typeId}
           aria-controls={controlsId} aria-expanded={controlsId?selectedId===file.id:undefined}
           aria-current={selectedId===file.id?'true':undefined} onClick={event=>onOpen(file,event.currentTarget)}>
@@ -40,7 +41,7 @@ export function FileList<T extends FileListItem>({files,label,onOpen,selectedId,
           </FileRoot>
           <span id={typeId} className="sr-only">{appearance.label}</span>
         </button>
-      </li>;
+      </ReferenceCard>;
     })}
   </ul>;
 }

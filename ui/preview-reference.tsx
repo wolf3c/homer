@@ -1,5 +1,6 @@
+import {ReferenceCard} from './reference-card';
 import {createContext,useContext,type ReactNode} from 'react';
-import {MessageCirclePlus,XIcon,FileTextIcon,ImageIcon,GlobeIcon} from 'lucide-react';
+import {MessageCirclePlus,FileTextIcon,ImageIcon,GlobeIcon} from 'lucide-react';
 import {Button} from '@base-ui/react/button';
 import {QuoteBlock} from './vendor/assistant-ui/quote';
 import './image-reference.css';
@@ -23,10 +24,12 @@ export function AnnotationChips({references,onOpen,onRemove,preparingKeys=[],not
    const summary=note.comment?.trim()||object.trim()||'未填写批注';
    const kindLabel=reference.kind==='text'&&!reference.annotations?'文本引用':reference.kind==='text'?'文本批注':reference.kind==='image'?'图片批注':reference.source.kind==='web'?'网页批注':'页面批注';
    const detail=[title,object&&`对象：${object}`,note.comment&&`批注：${note.comment}`].filter(Boolean).join(' · ');
-   return <div className="annotation-chip" key={referenceKey(reference)+note.id}>
-   <Button type="button" className="annotation-chip-open" onClick={()=>onOpen(reference,note.id)} title={detail} aria-label={`打开 ${title} 的批注 ${i+1}：${detail}${preparingKeys.includes(referenceKey(reference))?'；原图待确认':''}`}><SourceIcon size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{summary}</span><span className="compact-context-source">{kindLabel} · {title}</span></span>{preparingKeys.includes(referenceKey(reference))&&<span className="annotation-chip-state">原图待确认</span>}</Button>
-   <Button type="button" className="annotation-chip-remove" onClick={()=>onRemove(referenceKey(reference),note.id)} aria-label={`删除 ${title} 的批注 ${i+1}`}><XIcon size={14}/></Button>
-  </div>;});
+   const key=referenceKey(reference),preparing=preparingKeys.includes(key);
+   return <ReferenceCard key={key+note.id} summary={{
+    icon:<SourceIcon size={15} aria-hidden/>,title:summary,subtitle:kindLabel+' · '+title,status:preparing?'原图待确认':undefined,
+    open:{onClick:()=>onOpen(reference,note.id),title:detail,'aria-label':`打开 ${title} 的批注 ${i+1}：${detail}${preparing?'；原图待确认':''}`},
+    remove:{onClick:()=>onRemove(key,note.id),'aria-label':`删除 ${title} 的批注 ${i+1}`},
+   }}/>;});
  })}</div>;
 }
 export function WindowAXExcerpt({ax,children}:{ax:WindowAXNode[];children?:ReactNode}){
@@ -52,7 +55,7 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
   const pageTitle=page?.title??title;
   const host=(page?webSourceUrl(page.url)?.host:undefined)??('url' in source?webSourceUrl(source.url)?.host:undefined);
   const multiple=annotations.length>1;
-  return <section className="preview-reference web-annotation-reference" aria-label={'网页批注 · '+pageTitle}>
+  return <ReferenceCard as="section" className="preview-reference web-annotation-reference" aria-label={'网页批注 · '+pageTitle}>
    <header className="web-annotation-source">
     <GlobeIcon size={15} aria-hidden="true"/>
     <div><div className="web-annotation-title">{pageTitle}</div>
@@ -68,12 +71,12 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
      </div>
     </li>)}
    </ol>
-  </section>;
+  </ReferenceCard>;
  }
  if(reference.kind==='image'&&imageNotes(reference).length){
   const notes=imageNotes(reference);
   const screenshot=isDraftImageReference(reference);
-  return <div className="preview-reference image-reference" aria-label="图片批注">
+  return <ReferenceCard className="preview-reference image-reference" aria-label="图片批注">
    <div className={'image-reference-layout'+(children?' has-image':'')}>
     {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions reference={reference}/></div>}
     <ol className="image-reference-notes" aria-label="图片区域批注">{notes.map(note=><li key={note.id}>{note.comment.length>240||note.comment.split('\n').length>4?<details className="image-reference-long-comment"><summary>{note.comment.slice(0,60).trimEnd()}… <span>全文</span></summary><p className="image-reference-comment">{note.comment}</p></details>:<p className="image-reference-comment">{note.comment}</p>}</li>)}</ol>
@@ -84,15 +87,15 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
     <ol>{notes.map((note,i)=><li key={note.id}>区域 {i+1}：{coordinates(note.region)}</li>)}</ol>
    </details>
    {screenshot&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}</>}
-  </div>;
+  </ReferenceCard>;
  }
  const excerpt=reference.kind==='text'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. ${note.text}\n批注：${note.comment}`).join('\n\n'):reference.text:reference.kind==='image'?reference.annotations?reference.annotations.map((note,i)=>`${i+1}. 区域：${coordinates(note.region)}\n批注：${note.comment}`).join('\n\n'):`区域：${coordinates(reference.region)}\n${reference.comment}`:reference.annotations.map(note=>`${note.element}：${note.comment}`).join('\n');
- return <div className="preview-reference" aria-label="预览引用">
+ return <ReferenceCard className="preview-reference" aria-label="预览引用">
   <span className="preview-reference-source" title={source.kind==='web'?source.url:title}>来源：{title}</span>
   {excerpt&&<QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text className={reference.kind!=='web'&&reference.annotations?'resource-annotations-text':undefined}>{excerpt}</QuoteBlock.Text></QuoteBlock.Root>}
   {source.kind==='message-file'&&reference.kind!=='image'&&(window.homerBrowserPreview
    ?reference.annotations?.map((note,index)=><Button key={note.id} type="button" className="annotation-chip-open" onClick={()=>browser.openReference(reference,note.id,true)}>打开批注 {index+1}</Button>)
    :<span className="preview-reference-source">原文件可在桌面打开。</span>)}
   {isDraftImageReference(reference)&&reference.ax&&<WindowAXExcerpt ax={reference.ax}/>}
- </div>;
+ </ReferenceCard>;
 }

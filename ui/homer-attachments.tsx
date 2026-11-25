@@ -1,3 +1,4 @@
+import {ReferenceCard} from './reference-card';
 import {createContext,useContext,useEffect,useState} from 'react';
 import {ComposerPrimitive,useAui,useAuiState} from '@assistant-ui/react';
 import {attachmentAsset,type HomerAttachment} from './homer-attachment-adapter';
@@ -30,10 +31,10 @@ function DraftAttachment(){
  // The installed Remove primitive drops its Promise; keep rejection handling
  // here so a failed discard retains the exact attachment and original identity.
  const description=asset?'已准备 · '+(asset.size/1024).toFixed(1)+' KB':attachment.status.type==='running'?'正在准备':'准备未确认';
- return <div className="context-attachment-item"><AttachmentUI src={preview||undefined} removeDisabled={controls.busy||controls.blocked} onRemove={remove}
+ return <ReferenceCard compact className="context-attachment-item"><AttachmentUI src={preview||undefined} removeDisabled={controls.busy||controls.blocked} onRemove={remove}
   onPreview={controls.edit}
   removeLabel={asset&&controls.annotationCount(asset)?`移除原图及 ${controls.annotationCount(asset)} 条批注` :undefined}
-  description={description}/><div className="context-attachment-copy"><span title={attachment.name}>{attachment.name}</span><span>{attachment.type==='image'?'图片附件':'文件附件'} · {description}</span></div></div>;
+  description={description}/><div className="context-attachment-copy"><span title={attachment.name}>{attachment.name}</span><span>{attachment.type==='image'?'图片附件':'文件附件'} · {description}</span></div></ReferenceCard>;
 }
 export function HomerAttachmentByIndex({index,blocked,busy,removing,removed,annotationCount,edit}:{index:number;annotationCount:(asset:{assetId:string;revision:number})=>number;blocked:boolean;busy:boolean;removing:(busy:boolean)=>void;removed:(id:string)=>void;edit?:()=>void}){
  return <Controls.Provider value={{blocked,busy,removing,removed,annotationCount,edit}}><ComposerPrimitive.AttachmentByIndex index={index} components={{Attachment:DraftAttachment}}/></Controls.Provider>;

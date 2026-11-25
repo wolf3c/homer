@@ -13,9 +13,11 @@ import {withDom,React,descendants} from './helpers/process-dom.mjs';
 const source=readFileSync(new URL('../ui/homer-app.tsx',import.meta.url),'utf8');
 const result=buildSync({stdin:{contents:[
  'import {useState,useCallback,useEffect} from "react";',
+ 'import {ReferenceCard} from "./reference-card";',
  'import {LazyMedia} from "./lazy-media";',
  'import {ImageRoot,ImageZoom,ImagePreview} from "./vendor/assistant-ui/image";',
  'import {FileRoot,FileIconDisplay,FileName,FileSize,FileDownload} from "./vendor/assistant-ui/file";',
+ 'import {mobileDownloadNotice,MOBILE_DOWNLOAD_LIMIT_NOTICE,saveBlob} from "./file-download";',
  'import {connectionFetch as fetch} from "./web-connection-client";',
  source.slice(source.indexOf('function ResourceDownload('),source.indexOf('function MediaAttachments(')),
  'export {MediaAttachment};',

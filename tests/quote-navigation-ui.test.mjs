@@ -14,7 +14,8 @@ function component(file,name,bindings){
  const js=ts.transpileModule(source.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS}}).outputText;
  return Function('require','exports',...Object.keys(bindings),js+';return '+name)(require,{},...Object.values(bindings));
 }
-const nodes=t=>!t||typeof t!=='object'?[]:Array.isArray(t)?t.flatMap(nodes):[t,...nodes(t.props?.children)];
+const ReferenceCard=component('ui/reference-card.tsx','ReferenceCard',{XIcon:'svg'});
+const nodes=t=>t?.type===ReferenceCard?nodes(ReferenceCard(t.props)):!t||typeof t!=='object'?[]:Array.isArray(t)?t.flatMap(nodes):[t,...nodes(t.props?.children)];
 function actions({allowed=true,disabled=false,message={id:'source',text:'**原文** [资料](https://example.com/hidden)'}}={}){
  const quotes=[],notices=[];let focused=0,cleared=0;
  const Component=component('ui/message-details.tsx','RuntimeMessageActions',{useContext:()=>({canQuote:()=>allowed,appendQuote:q=>quotes.push(q)}),PreviewActionsContext:{},useAuiState:fn=>fn({thread:{isDisabled:disabled}}),useComposerInputFocus:()=>()=>focused++,useActionBarCopy:()=>({copy(){},isCopied:false}),previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,MessageActions:'actions',MessageTimestamp:'time',window:{getSelection:()=>({removeAllRanges(){cleared++;}})}});
@@ -33,7 +34,7 @@ test('message quote action respects composer exclusion and preserves complete lo
 });
 test('the grey excerpt is the source link and exposes no internal identifiers',()=>{
  const quote={messageId:'internal-message-id',itemIds:['internal-item-id'],text:'保留的灰色原文',annotation:'备注'},navigations=[];
- const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:p=>React.createElement('div',p),Text:p=>React.createElement('p',p)},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
+ const Component=component('ui/homer-app.tsx','QuoteSource',{ReferenceCard,useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:p=>React.createElement('div',p),Text:p=>React.createElement('p',p)},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
  const tree=Component({quote,index:0}),html=renderToStaticMarkup(tree),link=nodes(tree).find(n=>n.type==='a');
  assert.ok(link,'excerpt itself is keyboard reachable');assert.match(html,/保留的灰色原文/);assert.doesNotMatch(html.replace(/href="[^"]*"/g,''),/internal-message-id|internal-item-id/);
  link.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
@@ -41,14 +42,14 @@ test('the grey excerpt is the source link and exposes no internal identifiers',(
 
 test('the default QuoteBlock clamp preserves the full source payload',()=>{
  const quote={messageId:'long-source',text:'长引用。'.repeat(1000),annotation:'保留批注'},navigations=[],Text='quote-text';
- const Component=component('ui/homer-app.tsx','QuoteSource',{useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:'quote-block',Text},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
+ const Component=component('ui/homer-app.tsx','QuoteSource',{ReferenceCard,useContext:()=>q=>navigations.push(q),QuoteNavigationContext:{},QuoteBlock:{Root:'quote-block',Text},MessageCirclePlus:'svg',window:{getSelection:()=>null}});
  const tree=nodes(Component({quote,index:1})),text=tree.find(n=>n.type===Text),link=tree.find(n=>n.type==='a');
  assert.equal(text.props.children,quote.text);assert.equal(text.props.className,undefined);assert.equal(link.props.href,'#message-long-source');
  link.props.onClick({currentTarget:{},preventDefault(){},stopPropagation(){}});assert.deepEqual(navigations,[quote]);
 });
 test('user quotes keep each annotation directly after its source as ordinary body text',()=>{
  const QuoteSource='quote-source',Parts='message-parts';
- const render=metadata=>component('ui/homer-app.tsx','UserMessage',{Fragment:React.Fragment,useAuiState:fn=>fn({message:{metadata:{custom:metadata},content:[{type:'text',text:'普通正文'}]}}),draftQuotes,MessageDaySeparator:'day',MessagePrimitive:{Root:'article',Parts},QuoteSource,referencesOf:()=>[],ResourceReferenceBlock:'resource',MediaAttachments:'media',Markdown:'markdown',CompletedInteractionCard:'interaction',InactiveInteractionNotes:'inactive',MessageDetails:({children})=>children,MessageTimestamp:'time'})();
+ const render=metadata=>component('ui/homer-app.tsx','UserMessage',{Fragment:React.Fragment,useContext:context=>context,MessageIdPrefixContext:'message-',ScheduleNavigationContext:undefined,useAuiState:fn=>fn({message:{metadata:{custom:metadata},content:[{type:'text',text:'普通正文'}]}}),draftQuotes,MessageDaySeparator:'day',MessagePrimitive:{Root:'article',Parts},QuoteSource,referencesOf:()=>[],ResourceReferenceBlock:'resource',MediaAttachments:'media',Markdown:'markdown',CompletedInteractionCard:'interaction',InactiveInteractionNotes:'inactive',MessageDetails:({children})=>children,MessageTimestamp:'time'})();
  const quotes=[{messageId:'a',text:'原文甲',annotation:'  第一段备注\n**用户原样输入**  '},{messageId:'b',text:'原文乙',annotation:'第二段备注'},{messageId:'c',text:'原文丙',annotation:''}];
  const metadata={messageId:'quoted',quotes},before=structuredClone(metadata),tree=render(metadata);
  const sequence=nodes(tree).filter(n=>n.type===QuoteSource||n.type==='p'||n.type===Parts);

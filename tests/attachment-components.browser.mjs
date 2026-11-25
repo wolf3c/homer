@@ -27,9 +27,16 @@ try{
    await page.navigate();await wait(()=>!!document.querySelector('.attach-button:not(:disabled)'));
    await select(page,[image,file]);await wait(()=>document.querySelectorAll('.aui-attachment-root').length===2&&!document.querySelector('.composer-upload-status'));
    await wait(()=>document.querySelector('.aui-attachment-tile-image')?.naturalWidth===4);
-   await wait(()=>document.querySelector('.aui-attachment-tile')?.getBoundingClientRect().width===56);
-   await check('official 56px tiles, avatar image and file fallback replace custom cards',()=>{const e=document.querySelector('.aui-attachment-tile'),r=e.getBoundingClientRect();return r.width===56&&r.height===56&&!!document.querySelector('.aui-attachment-tile-fallback-icon')&&!document.querySelector('.composer-file-preview,.composer-file-info,.composer-thumbnail');});
-   await check('remove retains upstream 20px icon surface and its official 32px hit region',()=>{const b=document.querySelector('.aui-attachment-tile-remove'),r=b.getBoundingClientRect(),s=getComputedStyle(b,'::after');return r.width===20&&r.height===20&&r.width-parseFloat(s.left)-parseFloat(s.right)===32;});
+   await check('file and image retain their official tiles inside the shared 56px cards',()=>{
+    const cards=[...document.querySelectorAll('.context-attachment-item[data-slot="reference-card"]')];
+    return cards.length===2&&cards.every(card=>card.offsetHeight===56&&card.querySelector('.aui-attachment-tile').offsetWidth===38)&&
+     !!cards[0].querySelector('.aui-attachment-tile-image')&&!!cards[1].querySelector('.aui-attachment-tile-fallback-icon');
+   });
+   await check('the attachment remove button uses the card hit region',()=>{
+    const button=document.querySelector('.aui-attachment-tile-remove');
+    return button.offsetWidth===28&&button.offsetHeight===30;
+   });
+   await page.evaluate(()=>Promise.all([...document.querySelectorAll('.aui-attachment-root')].flatMap(tile=>tile.getAnimations().map(animation=>animation.finished))));
    await page.command('Emulation.setTouchEmulationEnabled',{enabled:true});
    const touch=await page.evaluate(()=>document.querySelectorAll('.aui-attachment-tile')[1].getBoundingClientRect().toJSON());
    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:touch.left+8,y:touch.bottom-8}]});
@@ -78,7 +85,7 @@ try{
    await press(page,'.aui-attachment-tile-remove');await wait(()=>!document.querySelector('.aui-attachment-root'));
    await page.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
    await select(page,tenFiles);await wait(()=>document.querySelectorAll('.aui-attachment-root').length===10&&!document.querySelector('.composer-upload-status'));
-   await check('ten official tiles scroll inside the composer without page overflow',()=>{const e=document.querySelector('.aui-composer-attachments');e.scrollLeft=e.scrollWidth;return document.documentElement.scrollWidth<=innerWidth&&(e.scrollWidth<=e.clientWidth||e.scrollLeft>0)&&getComputedStyle(document.querySelector('.aui-attachment-root')).animationName==='none';});
+   await check('ten official tiles scroll inside the composer without page overflow',()=>{const e=document.querySelector('.composer-reference-strip');e.scrollLeft=e.scrollWidth;return document.documentElement.scrollWidth<=innerWidth&&e.scrollWidth>e.clientWidth&&e.scrollLeft>0&&getComputedStyle(document.querySelector('.aui-attachment-root')).animationName==='none';});
    for(let remaining=9;remaining>=0;remaining--){await press(page,'.aui-attachment-tile-remove');await page.until('document.querySelectorAll(".aui-attachment-root").length==='+remaining,10000);}
    fixture.configure({uploadHold:true});await select(page,[image]);await wait(()=>!!document.querySelector('.aui-attachment-tile-uploading'));
    await check('official progress overlay disables remove and send while upload is pending',()=>document.querySelector('.aui-attachment-tile-remove').disabled&&document.querySelector('.send-button').disabled&&document.querySelector('.aui-attachment-tile').getAttribute('aria-label').includes('正在上传'));

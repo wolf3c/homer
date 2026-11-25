@@ -39,6 +39,8 @@ try{
   });
   fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2,scheduleReference:1},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
   await page.goto(fixture.url);const editor=page.locator('[contenteditable=true]');await editor.waitFor();await editor.fill('把这个改到每天上午十点。');
+  const assistant=page.locator('#message-synthetic-reply');
+  assert.equal(await assistant.locator('.file-list-open').locator('..').getAttribute('data-slot'),'reference-card');
   await page.getByRole('button',{name:'预览 原文件.md',exact:true}).click();await page.locator('.canvas-markdown').waitFor();
   if(width<=800)await page.getByRole('button',{name:'收起预览',exact:true}).click();
   await page.getByRole('button',{name:'定时任务',exact:true}).click();const detailButton=page.getByRole('button',{name:'查看定时任务详情：整理 AI 行业简报',exact:true});await detailButton.waitFor();
@@ -87,6 +89,7 @@ try{
   const sent=page.locator('[data-conversation-message="accepted-'+submitted.requestId+'"]');
   const sentCard=sent.getByRole('button',{name:'查看定时任务引用：'+rows[0].title});
   await sentCard.waitFor();
+  assert.equal(await sent.locator('.schedule-chip').getAttribute('data-slot'),'reference-card');
   assert.equal(await sent.locator('.markdown').innerText(),'把这个改到每天上午十点。');
   assert.equal(await sent.getByRole('button',{name:'移除定时任务引用'}).count(),0);
   const readSent=page.waitForRequest(req=>req.url().endsWith('/api/schedules/read')&&req.postDataJSON().view==='detail');
@@ -240,6 +243,24 @@ try{
   assert.equal(await editor.innerText(),composed);
   assert.equal(fixture.received.messages.length,1,'the example must only change the draft');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  const comment='保留网页批注全文。\n'+('长批注内容。'.repeat(30));
+  fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2,scheduleReference:1},messages:[{
+   id:'mixed-historical-cards',threadId:'composer-review',requestId:'mixed-historical',role:'user',text:'历史正文',
+   status:'completed',createdAt:1700000000001,taskReference:{taskId:'synthetic-task',version:1,title:'合成事项'},
+   quotes:[{messageId:artifact.messageId,text:'原消息摘录',annotation:'消息批注'}],
+   media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}],
+   resourceReferences:[{kind:'web',source:{kind:'message-file',messageId:artifact.messageId,destination:'preview.html',title:'合成网页'},annotations:[{id:'note',element:'页面标题',elementPath:'h1',comment,x:0,y:0}]}],
+  }]});
+  await page.reload();
+  const mixed=page.locator('#message-mixed-historical-cards');
+  await mixed.locator('.web-annotation-reference').waitFor();
+  assert.equal(await mixed.locator('[data-slot=reference-card]').count(),4);
+  assert.equal(await mixed.locator('figure.message-attachment').getAttribute('data-slot'),'reference-card');
+  assert.equal(await mixed.locator('a[data-slot=reference-card]').count(),2);
+  assert.equal(await mixed.locator('.web-annotation-comment').textContent(),comment);
+  assert.equal(await mixed.locator('.web-annotation-reference').locator('a,button,summary,[tabindex]').count(),0);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.screenshot({animations:'disabled',path:join(dest,'mixed-reference-cards-'+width+'.png')});
   checks.push({width,reads,detailReads,relativeTime:true,loadedPagesPreserved:true,dueRefresh:true,foregroundRecovery:true,staleCursorRejected:width===1440,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
  }
  assert.deepEqual(errors,[]);

@@ -8,6 +8,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 const source=readFileSync(new URL('../ui/homer-app.tsx',import.meta.url),'utf8');
 const built=buildSync({stdin:{contents:[
  'import {useState,useCallback} from "react";',
+ 'import {ReferenceCard} from "./reference-card";',
  'import {LazyMedia} from "./lazy-media";',
  'import {ImageRoot,ImageZoom,ImagePreview} from "./vendor/assistant-ui/image";',
  'import {FileRoot,FileIconDisplay,FileName,FileSize,FileDownload} from "./vendor/assistant-ui/file";',
@@ -23,6 +24,12 @@ const image={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1};
 const notes=[{id:'one',region:{x:10,y:20,width:30,height:40},comment:'第一条\n保留换行'},{id:'two',region:{x:60,y:80,width:90,height:100},comment:'第二条原文'}];
 const reference={kind:'image',source:{kind:'draft-image'},width:960,height:540,image,annotations:notes,ax:[{role:'AXStaticText',name:'截图的窗口摘录'}]};
 const html=element=>renderToStaticMarkup(element);
+
+test('a paired image and its annotations share the reference card display',()=>{
+ const output=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:[media()],references:[reference]}));
+ assert.equal((output.match(/data-slot="reference-card"/g)??[]).length,2);
+});
+
 test('image comments are full primary text and coordinates are disclosed on demand',()=>{
  const output=html(React.createElement(ResourceReferenceBlock,{reference},React.createElement('figure',null,'合成图片')));
  assert.match(output,/<ol[^>]*aria-label="图片区域批注"/);
@@ -35,7 +42,7 @@ test('image comments are full primary text and coordinates are disclosed on dema
 const media=extra=>({...image,filename:'合成截图.png',kind:'image',state:'ready',mime:'image/png',size:100,error:null,...extra});
 test('the exact attachment identity is shown once beside its reference',()=>{
  const output=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:[media()],references:[reference]}));
- assert.equal((output.match(/class="message-attachment"/g)??[]).length,1);
+ assert.equal((output.match(/<figure\b[^>]*\bclass="[^"]*\bmessage-attachment\b[^"]*"/g)??[]).length,1);
  assert.match(output,/class="image-reference-image"/);
  for(const note of notes)assert.ok(output.includes(note.comment));
 });
@@ -67,7 +74,7 @@ test('a different revision cannot be paired and missing media never removes comm
   const output=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:assets,references:[reference]}));
   assert.doesNotMatch(output,/class="image-reference-image"/);
   for(const note of notes)assert.ok(output.includes(note.comment));
-  assert.equal((output.match(/class="message-attachment"/g)??[]).length,assets.length);
+  assert.equal((output.match(/<figure\b[^>]*\bclass="[^"]*\bmessage-attachment\b[^"]*"/g)??[]).length,assets.length);
  }
 });
 test('legacy single-region text and AX-only controls retain their contents',()=>{
@@ -84,7 +91,7 @@ test('several references never duplicate an attachment or swallow an AX-only ima
  const duplicate={...reference,annotations:[{...notes[0],id:'three',comment:'另一份批注'}]};
  for(const references of [[ax],[reference,duplicate],[ax,reference]]){
   const output=html(React.createElement(MediaAttachments,{messageId:'synthetic-user',media:[media()],references}));
-  assert.equal((output.match(/class="message-attachment"/g)??[]).length,1);
+  assert.equal((output.match(/<figure\b[^>]*\bclass="[^"]*\bmessage-attachment\b[^"]*"/g)??[]).length,1);
   for(const item of references)for(const note of item.annotations)assert.ok(output.includes(note.comment));
   if(references.includes(ax))assert.ok(output.includes('原窗口摘录'));
  }

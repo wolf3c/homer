@@ -1,3 +1,4 @@
+import {ReferenceCard} from './reference-card';
 import type {WebSendScope} from '../src/web-contract';
 import {TaskConversation,type TaskConversationWindow} from './task-conversation';
 import type {OverviewTask,TaskDetail} from '../src/task-overview';
@@ -181,12 +182,12 @@ function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;me
  const previewError=useCallback(()=>setFailedPath(previewPath),[previewPath]);
  const previewStatus=useCallback((status:'loaded'|'error')=>setFailedPath(previous=>status==='error'?previewPath:previous===previewPath?'':previous),[previewPath]);
  const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onError={image?previewError:undefined}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio={ratio} onStatusChange={previewStatus}/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
- return <figure className="message-attachment">
+ return <ReferenceCard as="figure" className="message-attachment">
   {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:preview}
   {(!image||imageFailed)&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} size={asset.size} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
- </figure>;
+ </ReferenceCard>;
 }
 function MediaAttachments({media,messageId,references=[],hideScreenshotDetails,webAnnotationsReadOnly}:{media:MediaView[];messageId:string;references?:ResourceReference[];hideScreenshotDetails?:boolean;webAnnotationsReadOnly?:boolean}){
  const paired=new Set<number>();
@@ -206,11 +207,11 @@ const MessageIdPrefixContext=createContext('message-');
 const QuoteNavigationContext=createContext<(quote:MessageQuote)=>void>(()=>{});
 function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
  const locate=useContext(QuoteNavigationContext);
- return <a className="message-quote-source" href={'#message-'+encodeURIComponent(quote.messageId)} aria-label={'查看引用 '+(index+1)+' 的原消息'} onClick={event=>{
+ return <ReferenceCard as="a" className="message-quote-source" href={'#message-'+encodeURIComponent(quote.messageId)} aria-label={'查看引用 '+(index+1)+' 的原消息'} onClick={event=>{
   event.preventDefault();event.stopPropagation();
   const selection=window.getSelection();if(selection&&!selection.isCollapsed&&selection.containsNode(event.currentTarget,true))return;
   locate(quote);
- }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></a>;
+ }}><QuoteBlock.Root><MessageCirclePlus data-slot="quote-block-icon" className="text-muted-foreground/60 mt-0.5 size-3 shrink-0" aria-hidden/><QuoteBlock.Text>{quote.text}</QuoteBlock.Text></QuoteBlock.Root></ReferenceCard>;
 }
 function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][number]['interaction']>}){
  if(item.kind==='authorization'){
@@ -231,10 +232,10 @@ function CompletedInteractionCard({item}:{item:NonNullable<WebState['messages'][
 const TaskReferenceNavigationContext=createContext<(taskId:string)=>void>(()=>{});
 function TaskReferenceSource({reference}:{reference:TaskReference}){
  const locate=useContext(TaskReferenceNavigationContext);
- return <a href={'#task-'+encodeURIComponent(reference.taskId)} className="message-quote-source task-reference-source" aria-label={'查看引用事项：'+reference.title}
+ return <ReferenceCard as="a" href={'#task-'+encodeURIComponent(reference.taskId)} className="message-quote-source task-reference-source" aria-label={'查看引用事项：'+reference.title}
   title={reference.title} onClick={event=>{event.preventDefault();locate(reference.taskId);}}><QuoteBlock.Root>
   <ListTodoIcon size={15} aria-hidden/><div><QuoteBlock.Text>{reference.title}</QuoteBlock.Text><small>事项引用</small></div>
- </QuoteBlock.Root></a>;
+ </QuoteBlock.Root></ReferenceCard>;
 }
 function UserMessage() {
   const prefix=useContext(MessageIdPrefixContext);
@@ -1196,18 +1197,19 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     {scheduleContext&&<ScheduleChip value={scheduleContext} onRemove={()=>{setScheduleContext(undefined);focusInput();}}/>}
     {(()=>{
       const items=new Map<string,ReactNode>();
-      if(taskReference)items.set(taskContextKey,<div className="annotation-chip" key={taskContextKey}>
-        <div className="annotation-chip-open task-reference-chip" title={taskReference.title}><ListTodoIcon size={15} aria-hidden/><span className="compact-context-copy"><span className="compact-context-label">{taskReference.title}</span><span className="compact-context-source">事项引用</span></span></div>
-        {!boundTask&&<button type="button" className="annotation-chip-remove" aria-label="移除事项引用" onClick={()=>{setTaskReference(undefined);focusInput();}}>×</button>}
-      </div>);
+      if(taskReference)items.set(taskContextKey,<ReferenceCard key={taskContextKey} summary={{
+        icon:<ListTodoIcon size={15} aria-hidden/>,title:taskReference.title,subtitle:'事项引用',
+        remove:boundTask?undefined:{'aria-label':'移除事项引用',onClick:()=>{setTaskReference(undefined);focusInput();}},
+      }}/>);
       for(const reference of chipReferences)for(const note of reference.annotations??[{id:'legacy'}]){
         const key=contextKey('ref',referenceKey(reference),note.id);
         items.set(key,<AnnotationChips key={key} references={[reference]} noteId={note.id} preparingKeys={preparingKeys} onOpen={(ref,id)=>{if(isDraftImageReference(ref)){openScreenshot(ref,id);return;}const source=ref.source;if(ref.kind==='web'&&window.homerBrowserPreview){browserPreview.openReference(ref,id);return;}if(source.kind==='attachment')openReferenceArtifact({...source,id:JSON.stringify([source.messageId,source.assetId,source.revision])},undefined,{key:referenceKey(ref),id});else browserPreview.openReference(ref,id);}} onRemove={(_,id)=>!scopedPending&&void removeComposerNote(reference,id).catch(error=>setDraftNotice(error.message))}/>);
       }
-      quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId);items.set(key,<div className="annotation-chip" key={key}>
-        <button type="button" className="annotation-chip-open" aria-label={'编辑引用 '+(i+1)} disabled={scopedPending} onClick={event=>editQuote(quote,event.currentTarget)} title={quote.text+'\n'+quote.annotation}><MessageCirclePlus size={15} aria-hidden="true"/><span className="compact-context-copy"><span className="compact-context-label">{quote.annotation?.trim()||quote.text}</span><span className="compact-context-source">{quote.annotation?.trim()?'消息批注':'消息引用'}</span></span></button>
-        <button type="button" className="annotation-chip-remove" aria-label={'删除引用 '+(i+1)} disabled={scopedPending} onClick={()=>{if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');return;}replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quote.draftId));focusInput();}}>×</button>
-      </div>);});
+      quotes.forEach((quote,i)=>{const key=contextKey('quote',quote.draftId),comment=quote.annotation?.trim();items.set(key,<ReferenceCard key={key} summary={{
+        icon:<MessageCirclePlus size={15} aria-hidden/>,title:comment||quote.text,subtitle:comment?'消息批注':'消息引用',
+        open:{'aria-label':'编辑引用 '+(i+1),disabled:scopedPending,onClick:event=>editQuote(quote,event.currentTarget),title:quote.text+'\n'+quote.annotation},
+        remove:{'aria-label':'删除引用 '+(i+1),disabled:scopedPending,onClick:()=>{if(quoteEditorRef.current){setDraftNotice('请先保存或取消引用批注。');return;}replaceQuotes(quotesRef.current.filter(q=>q.draftId!==quote.draftId));focusInput();}},
+      }}/>);});
       draftAttachments.forEach((attachment,index)=>{
         const asset=attachmentAsset(attachment),key=contextKey('attachment',asset?.assetId??attachment.id);
         const reference=savedReferences.filter(isDraftImageReference).find(ref=>ref.image.assetId===asset?.assetId&&ref.image.revision===asset.revision);

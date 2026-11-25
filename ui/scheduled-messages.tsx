@@ -1,7 +1,8 @@
+import {ReferenceCard} from './reference-card';
 import {createElement,useEffect,useRef,useState} from 'react';
 import '@github/relative-time-element';
 import type {RelativeTimeElement} from '@github/relative-time-element';
-import {Clock3,MessageCircle,X} from 'lucide-react';
+import {Clock3,MessageCircle} from 'lucide-react';
 import {connectionFetch} from './web-connection-client';
 import type {ScheduleSummary,ScheduleReadRequest,ScheduleReadResult} from '../src/schedule-display';
 import type {ScheduleContext} from './conversation-client';
@@ -12,12 +13,11 @@ import './vendor/assistant-ui/schedules.css';
 import './scheduled-messages.css';
 
 export function ScheduleChip({value,onRemove,onOpen}:{value:ScheduleContext;onRemove?:()=>void;onOpen?:(trigger:HTMLElement)=>void}){
- const label=<><Clock3 size={15} aria-hidden/><span className="compact-context-copy"><span className="compact-context-label">{value.label}</span><span className="compact-context-source">定时任务引用</span></span></>;
- return <div className="annotation-chip schedule-chip">
-  {onOpen?<button type="button" className="annotation-chip-open" title={value.label} aria-label={'查看定时任务引用：'+value.label} aria-haspopup="dialog" onClick={event=>onOpen(event.currentTarget)}>{label}</button>
-   :<div className="annotation-chip-open task-reference-chip" title={value.label}>{label}</div>}
-  {onRemove&&<button type="button" className="annotation-chip-remove" aria-label="移除定时任务引用" title="移除定时任务引用" onClick={onRemove}><X size={14} aria-hidden/></button>}
- </div>;
+ return <ReferenceCard className="schedule-chip" summary={{
+  icon:<Clock3 size={15} aria-hidden/>,title:value.label,subtitle:'定时任务引用',
+  open:onOpen?{'aria-label':'查看定时任务引用：'+value.label,'aria-haspopup':'dialog',onClick:event=>onOpen(event.currentTarget)}:undefined,
+  remove:onRemove?{'aria-label':'移除定时任务引用',title:'移除定时任务引用',onClick:onRemove}:undefined,
+ }}/>;
 }
 async function read(input:ScheduleReadRequest,threadId:string,signal:AbortSignal){
  const response=await connectionFetch('/api/schedules/read',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),signal});
