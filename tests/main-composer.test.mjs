@@ -683,8 +683,13 @@ test('image preparation reserves its original attachment in the full snapshot bu
 
 test('restored message quote appends while keeping the draft and annotation owner intact',async()=>{
  const f=fixture({text:'Body'});await tick();f.render();await f.preview().add(textReference);f.render();
+ const PreviewActionsContext={},TaskMessageOriginContext={};
  const Actions=productionFunction(new URL('../ui/message-details.tsx',import.meta.url),'RuntimeMessageActions',{
-  useContext:()=>f.preview(),PreviewActionsContext:{},useAuiState:fn=>fn({thread:{isDisabled:false}}),useComposerInputFocus:()=>()=>{},previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,window:{getSelection:()=>null},useActionBarCopy:()=>({copy(){},isCopied:false}),MessageActions:'actions',MessageTimestamp:'timestamp',
+  useContext:context=>{
+   if(context===PreviewActionsContext)return f.preview();
+   assert.equal(context,TaskMessageOriginContext);
+   return undefined;
+  },PreviewActionsContext,TaskMessageOriginContext,useAuiState:fn=>fn({thread:{isDisabled:false}}),useComposerInputFocus:()=>()=>{},previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,window:{getSelection:()=>null},useActionBarCopy:()=>({copy(){},isCopied:false}),MessageActions:'actions',MessageTimestamp:'timestamp',
  });
  const tree=Actions({message:{id:'action-source',text:'**Visible** source'},write:async()=>{},busy:false,notice:'',onNotice(){}});
  const actions=nodes(tree).find(n=>n.type==='actions');
