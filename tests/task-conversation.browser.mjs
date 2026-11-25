@@ -48,6 +48,16 @@ try{
     return readPage(sparse&&taskId===b?{...input,request:{...input.request,limit:1}}:input);
    };
    const actor={agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'};
+   const requestId='created-in-main',createdNode='created-task-process',turnId='turn-created-task';
+   f.inputs.accept({requestId,text:'创建两个同名事项'});
+   const input=f.inputs.claim();
+   assert.equal(input.input.requestId,requestId);
+   f.store.transaction(()=>{
+    f.processes.start({id:createdNode,threadId:thread,sourceKind:'user',sourceMessageIds:[input.messageId],
+     messageId:createdNode,replyMessageId:input.replyId,replyPolicy:'explicitFinal'},turnId);
+    f.history.record(createdNode,thread,'','running',null,'internal');
+    f.inputs.startedInTransaction(input.messageId,input.revision,'generation-created-task',turnId);
+   });
    const firstTitle='汇总访谈资料并核对所有补货项目的原始记录和不同版本之间的变化';
    const worker=f.tasks.workerOpen(actor,{operationId:'synthetic-assignment',taskId:a,text:'检查合成访谈资料',workTitle:firstTitle,workingDirectory:process.cwd()});
    const run=f.tasks.claim(worker.runId);
@@ -186,6 +196,83 @@ try{
     await page.until(()=>document.querySelector('#canvas-panel [role=tab][aria-selected=true]')?.textContent==='合成网页',7000);
     await click('.canvas-tab-close[aria-label="关闭合成网页"]');
     await closed();
+   }
+   const creatingActor={...actor,sourceRequestId:requestId,inputMessageId:input.messageId,turnId};
+   const createdTitle='同名新开事项用于检验气泡宽度和完整读屏名称'.repeat(3);
+   const receipt=f.tasks.createTask(creatingActor,{operationId:'create-entry-first',title:createdTitle,goal:'合成创建'});
+   const duplicate=f.tasks.createTask(creatingActor,{operationId:'create-entry-second',title:createdTitle,goal:'合成创建'});
+   const nodeSelector='#message-'+createdNode,entries=nodeSelector+' .message-created-tasks';
+   const firstEntry=entries+' button:first-child',secondEntry=entries+' button:nth-child(2)';
+   await exists(nodeSelector);
+   check(!await page.evaluate(`!!document.querySelector(${JSON.stringify(entries)})`),'confirmed receipts wait for completed activities');
+   for(const result of [receipt,duplicate]){
+    f.processes.tool(createdNode,{id:result.operationKey,label:'创建任务',phase:'end',status:'completed',turnId,
+     activity:f.tasks.captureActivity(creatingActor,'task_create',{},result)});
+   }
+   if(width===390)await page.command('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
+   await focus(firstEntry);
+   check(!await page.evaluate(`!!document.querySelector(${JSON.stringify(nodeSelector+' .assistant-message-bubble')})`),'live entries render before the answer');
+   await page.evaluate(()=>{window.firstCreatedTaskButton=document.activeElement;});
+   f.processes.agent(createdNode,{turnId,itemId:'answer',phase:'final_answer',delta:'已创建。',completed:false});
+   await exists(nodeSelector+' .assistant-message-bubble');
+   check(await page.evaluate(()=>window.firstCreatedTaskButton===document.activeElement),'the same focused button survives the streamed answer');
+   f.store.transaction(()=>{
+    f.processes.agent(createdNode,{turnId,itemId:'answer',phase:'final_answer',text:'已创建。',completed:true});
+    f.processes.agent(createdNode,{turnId,itemId:'answer-more',phase:'final_answer',text:'可以查看。',completed:true});
+    f.processes.finish(createdNode,'completed','turn:'+turnId+':terminal:completed');
+    f.inputs.finishInTransaction(input.messageId,input.revision,'completed');
+   });
+   await page.until(`document.querySelector(${JSON.stringify(nodeSelector+' .assistant-message-bubble')})?.textContent.includes('可以查看。')`,7000);
+   check(await page.evaluate(`(()=>{
+    const list=document.querySelector(${JSON.stringify(entries)}),bubble=list.previousElementSibling.getBoundingClientRect();
+    const buttons=[...list.querySelectorAll('button')];
+    return buttons.length===2&&document.activeElement===window.firstCreatedTaskButton&&
+     buttons.every(button=>{const rect=button.getBoundingClientRect(),label=button.querySelector('span');
+      return rect.left===bubble.left&&rect.right<=bubble.right+1&&rect.top>=bubble.bottom&&
+       label.textContent===${JSON.stringify(createdTitle)}&&label.scrollWidth>label.clientWidth&&rect.height>=${width===390?44:18};
+     })&&list.nextElementSibling?.matches('.message-actions');
+   })()`),'two same-name rows retain their full names outside the multi-answer bubble and precede message actions');
+   await page.screenshot('created-task-entries-'+width+'.png');
+   await key('Enter',13);
+   await exists(taskReader(receipt.taskId));
+   await click('.canvas-collapse');
+   await closed();
+   await focused(firstEntry);
+   await key('Tab',9);
+   await focused(secondEntry);
+   if(width===390){
+    const point=await page.evaluate(`(()=>{const box=document.querySelector(${JSON.stringify(secondEntry)}).getBoundingClientRect();
+     return {x:box.left+box.width/2,y:box.top+box.height/2};})()`);
+    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+   }else await key(' ',32);
+   await exists(taskReader(duplicate.taskId));
+   await click('.canvas-collapse');
+   await closed();
+   await focused(secondEntry);
+   if(width===390)await page.command('Emulation.setTouchEmulationEnabled',{enabled:false});
+   check(true,'keyboard and touch distinguish same-name task IDs and restore trigger focus');
+   await focus(firstEntry);
+   await key('Enter',13);
+   await exists(taskReader(receipt.taskId));
+   check(await page.evaluate(()=>document.querySelectorAll('#canvas-panel [role=tab]').length===2),'reopening an entry reuses its existing Preview tab');
+   await click('.canvas-tab-close');
+   await exists(taskReader(duplicate.taskId));
+   await click('.canvas-tab-close');
+   await closed();
+   if(width===1440){
+    await page.evaluate(()=>{
+     Object.defineProperty(navigator,'clipboard',{configurable:true,value:{async writeText(text){window.createdMessageCopy=text;}}});
+    });
+    await focus(nodeSelector+' [aria-label="复制"]');
+    await key('Enter',13);
+    await page.until(()=>window.createdMessageCopy==='已创建。\n\n可以查看。',7000);
+    await focus(nodeSelector+' [aria-label="引用"]');
+    await key('Enter',13);
+    await exists('[aria-label="编辑引用 1"]');
+    check((await text('[aria-label="编辑引用 1"]'))?.includes('已创建。')&&
+     !(await text('[aria-label="编辑引用 1"]'))?.includes(createdTitle),'copy and quote keep only the two answer fragments');
+    await click('[aria-label="删除引用 1"]');
    }
    await exists('#message-'+staticReply+' .message-task-static');
    await exists(title(messageA));

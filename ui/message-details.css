@@ -15,12 +15,21 @@
 .message-bubble-row .message-actions{margin-top:2px}
 .message-bubble-row .message-actions>.aui-message-action{width:44px;height:44px}
 
+.message-created-tasks{display:grid;gap:2px;margin-block:4px 0;font-size:12px;line-height:18px;min-width:0;user-select:none}
+.message-bubble-row:has(>.assistant-message-bubble)>.message-created-tasks{
+  contain:inline-size;max-width:var(--message-bubble-width,100%)
+}
+.message-created-tasks .message-task-open{padding:2px}
+@media(any-pointer:coarse){.message-created-tasks .message-task-open{padding-block:0}}
+
 @media(hover:hover) and (pointer:fine) and (not (any-pointer:coarse)){
   .message-bubble-row:has(>.message-actions){
     --actions-width:36px;
     display:grid;grid-template-columns:minmax(0,auto) var(--actions-width);column-gap:6px;width:fit-content;max-width:100%
   }
   .message-bubble-row[data-single-line]{--actions-width:74px}
+  .message-bubble-row:has(>.message-created-tasks)>.message-actions{grid-column:2;grid-row:1}
+  .message-bubble-row:has(>.assistant-message-bubble)>.message-created-tasks{grid-column:1;grid-row:2}
   .user-message>.message-bubble-row:has(>.message-actions){grid-template-columns:var(--actions-width) minmax(0,auto)}
   .user-message>.message-bubble-row>.user-message-bubble{grid-column:2;grid-row:1}
   .message-bubble-row>.message-actions{

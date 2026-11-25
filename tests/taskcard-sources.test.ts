@@ -1,6 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {withTaskSources} from '../src/web-homer.js';import {MainProcessHistory,type ProcessNode} from '../src/main-process.js';import {chatFixture} from './task-chat-fixture.js';import type {DisplayMessage} from '../src/conversation-projection.js';
+import {withCreatedTasks,withTaskSources} from '../src/web-homer.js';import {MainProcessHistory,type ProcessNode} from '../src/main-process.js';import {chatFixture} from './task-chat-fixture.js';import type {DisplayMessage} from '../src/conversation-projection.js';
 import {WorkerInteractions} from '../src/worker-interactions.js';
+import {WebHistoryPages} from '../src/web-history-pages.js';
 const node=(ids:string[],items:ProcessNode['items']=[]):ProcessNode=>({id:'process',threadId:'thread:main',seq:1,revision:1,sourceKind:'worker',sourceMessageIds:ids,messageId:'public',state:'worked',status:'completed',turnIds:['turn'],items});
 const message=(process:ProcessNode,text='Public conclusion'):DisplayMessage=>({id:'public',threadId:'thread:main',requestId:null,role:'assistant',text,status:'completed',createdAt:2,process});
 function setup(){const f=chatFixture(),task=f.create('Inspect synthetic evidence');const worker=f.tasks.workerOpen(f.actor,{operationId:'open',taskId:task.taskId,text:'PRIVATE_INSTRUCTION'}),run=f.start(worker.workerId),reply=f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'PRIVATE_REPLY'},true)!;return {...f,task,worker,run,reply,project:(m:DisplayMessage,thread='thread:main')=>withTaskSources(f.store.db,[m],thread)[0]!};}
@@ -97,6 +98,69 @@ test('creation provenance authenticates the actual returned Task and never a nei
   const task=f.create(),activity=f.tasks.captureActivity(f.actor,'task_create',{},task)!;const n={...node([],[{id:'create',kind:'tool' as const,seq:1,revision:1,label:'创建任务',status:'completed' as const,activity}]),sourceKind:'user' as const};
   assert.equal(withTaskSources(f.store.db,[message(n)],'thread:main')[0]!.taskSources?.[0]?.target.taskId,task.taskId);
   const other=f.create('Another task','another');activity.target={...activity.target!,taskId:other.taskId};assert.equal(withTaskSources(f.store.db,[message(n)],'thread:main')[0]!.taskSources,undefined);
+ }finally{f.close();}
+});
+
+test('created task entries use the sole persisted owner across history pages',()=>{
+ const f=chatFixture();try{
+  const thread=f.actor.threadId!,request=f.actor.sourceRequestId!,input=f.actor.inputMessageId!,turn=f.actor.turnId!;
+  const replyId=f.inputs.byRequestIds([request])[0]!.replyId;
+  new WorkerInteractions(f.store.db);
+  const processes=new MainProcessHistory(f.store.db),reader=new WebHistoryPages(f.history,processes,f.inputs);
+  const db=f.store.db,owner='creation-owner';
+  const start=(id:string,turnId=turn,replyMessageId=replyId)=>{
+   processes.start({id,threadId:thread,sourceKind:'user',sourceMessageIds:[input],messageId:id,replyMessageId,replyPolicy:'explicitFinal'},turnId);
+   f.history.record(id,thread,'','running',null,'internal');
+  };
+  start(owner);
+  const create=(operationId:string)=>f.tasks.createTask(f.actor,{operationId,title:'Same name',goal:'Private requirements'});
+  const first=create('first'),second=create('second');
+  const activity=(receipt:typeof first,id:string,extra:Partial<ProcessNode['items'][number]>={}):ProcessNode['items'][number]=>({
+   id,kind:'tool',seq:1,revision:1,label:'创建任务',status:'completed',turnId:turn,activity:f.tasks.captureActivity(f.actor,'task_create',{},receipt)!,...extra
+  } as ProcessNode['items'][number]);
+  const key='publicMainNode:v1:'+owner;
+  const persisted=JSON.parse(f.store.meta(key)!);
+  const write=(items:ProcessNode['items'],extra={})=>f.store.setMeta(key,JSON.stringify({...persisted,items,...extra}));
+  const read=(request:Parameters<WebHistoryPages['read']>[1]={})=>{
+   const {messages}=reader.read(thread,request);
+   return withCreatedTasks(db,messages,thread).find(message=>message.id===owner);
+  };
+  assert.equal(read()?.createdTasks,undefined);
+  write([activity(first,'running',{status:'running'})]);
+  assert.equal(read()?.createdTasks,undefined);
+  const worker=f.tasks.workerOpen(f.actor,{operationId:'open-created',taskId:first.taskId,text:'delegate'});
+  const delegated={...activity(first,'delegated'),activity:{...f.tasks.captureActivity(f.actor,'task_create',{},first)!,target:{taskId:first.taskId,version:1,operationKey:worker.operationKey}}};
+  const items=[delegated,activity(first,'first'),activity(first,'duplicate'),activity(second,'second')];
+  write(items);
+  const expected=[first,second].map(({taskId})=>({taskId,title:'Same name'}));
+  assert.equal(read()?.text,'');
+  assert.deepEqual(read()?.createdTasks,expected);
+  db.prepare("UPDATE operations SET state='accepted' WHERE id=?").run(second.operationKey);
+  assert.deepEqual(read()?.createdTasks,expected.slice(0,1));
+  db.prepare("UPDATE operations SET state='confirmed' WHERE id=?").run(second.operationKey);
+  db.prepare("UPDATE task_versions SET triggerOpId=? WHERE taskId=?").run(worker.operationKey,first.taskId);
+  assert.deepEqual(read()?.createdTasks,expected.slice(1));
+  db.prepare("UPDATE task_versions SET triggerOpId=? WHERE taskId=?").run(first.operationKey,first.taskId);
+  processes.finish(owner,'completed','end-created');
+  write(items,{state:'worked',status:'completed',endEventId:'end-created'});
+  start('different-turn','another-turn');
+  const latest=reader.read(thread,{limit:1});
+  assert.ok(latest.before);
+  assert.deepEqual(read({before:latest.before!,limit:1})?.createdTasks,expected);
+  assert.deepEqual(read({around:owner,limit:1})?.createdTasks,expected);
+  const userId=f.history.inputs(thread,[request]).get(request)!.id;
+  const revoked=[owner,userId].map(id=>{
+   assert.equal(f.history.revokeMessage(thread,id),true);
+   const projected=read({around:owner,limit:1})?.createdTasks;
+   db.prepare('UPDATE conversation_messages SET revokedAt=NULL WHERE id=?').run(id);
+   return projected;
+  });
+  assert.deepEqual(revoked,[undefined,undefined],'revoking either the process or its original user message suppresses the entries');
+  assert.deepEqual(read({around:owner,limit:1})?.createdTasks,expected);
+  start('conflicting-owner');
+  const conflict=reader.read(thread,{limit:1});
+  assert.ok(conflict.messages.some(message=>message.id==='conflicting-owner'));
+  assert.equal(read({around:owner,limit:1})?.createdTasks,undefined);
  }finally{f.close();}
 });
 

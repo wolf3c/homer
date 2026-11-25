@@ -44,7 +44,7 @@ export function MessageBubble({side,messageId,fitTitle,children}:{
 
 const desktopActions='(hover:hover) and (pointer:fine) and (not (any-pointer:coarse))';
 
-export function MessageDetails({ message, runtime = false, children }: { message: import('../src/conversation-projection').DisplayMessage; runtime?: boolean; children?: ReactNode }) {
+export function MessageDetails({ message, runtime = false, children, afterBubble }: { message: import('../src/conversation-projection').DisplayMessage; runtime?: boolean; children?: ReactNode; afterBubble?: ReactNode }) {
   const [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const copying = useRef(false), current=useRef(message.id);
   const rowRef=useRef<HTMLDivElement>(null);
@@ -101,7 +101,7 @@ export function MessageDetails({ message, runtime = false, children }: { message
   const actions = runtime
     ? hasRuntimeMessageActions(message,!!openOrigin)&&<RuntimeMessageActions message={message} write={copy} busy={busy} notice={notice} onNotice={setNotice} showTimestamp={!children}/>
     : !!message.text&&<><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>;
-  return children ? <><div ref={rowRef} className="message-bubble-row">{children}{actions}</div>{sources}</> : <>{sources}{actions}</>;
+  return children||afterBubble ? <><div ref={rowRef} className="message-bubble-row">{children}{afterBubble}{actions}</div>{sources}</> : <>{sources}{actions}</>;
 }
 export function hasRuntimeMessageActions(message:Pick<ConversationMessage,'text'>,hasOrigin=false){
   return !!message.text||hasOrigin;

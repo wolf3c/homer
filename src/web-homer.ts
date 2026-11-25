@@ -6,6 +6,71 @@ import type {DatabaseSync} from 'node:sqlite';
 import {activityOutcomes,publicActivityName} from './activity-facts.js';
 import type {DisplayMessage,TaskMessageSource} from './conversation-projection.js';
 
+export function withCreatedTasks(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string):DisplayMessage[]{
+ const candidates=messages.flatMap(message=>{
+  const node=message.process;
+  if(message.role!=='assistant'||message.revokedAt!=null||message.threadId!==threadId||node?.threadId!==threadId||
+     node.sourceKind!=='user'||node.messageId!==message.id||!message.requestId)return [];
+  return node.items.flatMap(item=>{
+   if(item.kind!=='tool'||item.status!=='completed')return [];
+   const activity=item.activity,target=activity?.target;
+   if(activity?.action!=='create_task'||activity.outcome!=='created'||
+      !target?.operationKey||target.version!==1||target.runId)return [];
+   return [{message,node,target,key:target.operationKey}];
+  });
+ });
+ if(!candidates.length)return [...messages];
+ // Start with receipt keys on this page. The request index includes owners on
+ // other pages, even if they have no copy of the activity.
+ const owners=db.prepare(`
+   SELECT o.id AS operationKey,t.id AS taskId,t.title,p.id AS nodeId,p.messageId,
+     c.requestId,c.replyId,p.replyId AS nodeReplyId,
+     i.id AS inputId,json_extract(o.detailsJson,'$.turnId') AS turnId
+   FROM json_each(?) k
+   CROSS JOIN operations o ON o.id=k.value
+   JOIN task_versions v ON v.taskId=json_extract(o.responseJson,'$.taskId')
+     AND v.version=1 AND v.triggerOpId=o.id AND v.sourceRequestId=json_extract(o.detailsJson,'$.sourceRequestId')
+   JOIN tasks t ON t.id=v.taskId
+   JOIN conversation_inputs c ON c.requestId=v.sourceRequestId AND c.threadId=?
+   JOIN agent_messages i ON i.id=json_extract(o.detailsJson,'$.inputMessageId')
+     AND i.kind='user_input' AND i.recipientAgentId=o.actorAgentId AND i.targetRunId IS NULL
+     AND i.senderAgentId='user:'||o.actorAgentId AND json_extract(i.payloadJson,'$.requestId')=c.requestId
+   JOIN operations accepted ON accepted.id=i.operationKey AND accepted.kind='user_accept'
+     AND accepted.state='confirmed' AND accepted.actorAgentId=i.senderAgentId AND accepted.scopeId=c.requestId
+     AND json_extract(accepted.responseJson,'$.messageId')=i.id AND json_extract(accepted.responseJson,'$.replyId')=c.replyId
+   JOIN conversation_messages reply ON reply.id=c.replyId AND reply.threadId=c.threadId
+     AND reply.requestId=c.requestId AND reply.role='assistant' AND reply.revokedAt IS NULL
+   JOIN web_process_ids p ON p.threadId=c.threadId AND p.requestId=c.requestId AND p.sourceKind='user' AND p.position IS NOT NULL
+   JOIN meta n ON n.key='publicMainNode:v1:'||p.id
+   WHERE o.kind='task_create' AND o.state='confirmed' AND o.scopeId='tasks'
+     AND o.actorAgentId=(SELECT value FROM meta WHERE key='mainAgentId')
+     AND json_extract(o.responseJson,'$.operationKey')=o.id AND json_extract(o.responseJson,'$.version')=1
+     AND json_extract(o.detailsJson,'$.threadId')=c.threadId
+     AND (SELECT u.audience='user' AND u.revokedAt IS NULL FROM conversation_messages u
+       WHERE u.requestId=c.requestId AND u.threadId=c.threadId AND u.role='user' ORDER BY u.rowid DESC LIMIT 1)
+     AND EXISTS(SELECT 1 FROM json_each(n.value,'$.turnIds') turn WHERE turn.value=json_extract(o.detailsJson,'$.turnId'))
+   GROUP BY o.id HAVING count(*)=1`
+ ).all(JSON.stringify([...new Set(candidates.map(({key})=>key))]),threadId);
+ const byOperation=new Map(owners.map(owner=>[owner.operationKey,owner]));
+ const createdByMessage=new Map<string,Map<string,{taskId:string;title:string}>>();
+ for(const {message,node,target,key} of candidates){
+  const owner=byOperation.get(key);
+  if(!owner||owner.taskId!==target.taskId||owner.messageId!==message.id||owner.nodeId!==node.id||
+     owner.requestId!==message.requestId||owner.nodeReplyId!==owner.replyId||owner.replyId!==node.replyMessageId||
+     typeof owner.inputId!=='string'||!node.sourceMessageIds.includes(owner.inputId)||
+     typeof owner.turnId!=='string'||!node.turnIds.includes(owner.turnId))continue;
+  const title=publicActivityName(owner.title);
+  if(!title)continue;
+  let created=createdByMessage.get(message.id);
+  if(!created)createdByMessage.set(message.id,created=new Map());
+  created.set(target.taskId,{taskId:target.taskId,title});
+ }
+ return messages.map(message=>{
+  const created=createdByMessage.get(message.id);
+  return created?{...message,createdTasks:[...created.values()]}:message;
+ });
+}
+
 // Read-only page enrichment. Inputs are the already-authorized persisted page,
 // never arbitrary caller IDs or an inbox listing. No inspect/ACK/file grants.
 export function withTaskSources(db:DatabaseSync,messages:readonly DisplayMessage[],threadId:string,includeCoveredSources=false):DisplayMessage[]{
@@ -318,7 +383,9 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       if(!process&&!user)return [];
       return [{id:item.id,kind:item.kind,state:item.state as 'cancelled'|'expired',...(item.code?{code:item.code}:{}),sourceRequestId:item.authority.sourceRequestId,...(process?{processId:process.id}:{messageId:user!.id})}];
     });
-    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withInteractionResponses(app.store.db,withTaskSources(app.store.db,result.messages,result.threadId),result.threadId).map(message=>({...message,...(message.process?{process:message.process}:{}),...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
+    const db=app.store.db,thread=result.threadId;
+    const messages=withCreatedTasks(db,withTaskSources(db,result.messages,thread),thread);
+    return {...result,artifacts,inactiveInteractions,inactiveMore,messages:withInteractionResponses(db,messages,thread).map(message=>({...message,...(message.process?{process:message.process}:{}),...(message.attachments?{media:message.attachments.map(ref=>app.media.view(ref))}:{}),...(message.source?.attachments?{source:{...message.source,media:message.source.attachments.map(ref=>app.media.view(ref))}}:{})}))};
   };
   const queuePage=(after=0)=>{const page=pageReader().queuePage(after);return {...page,items:page.items.map(item=>({...item,user:{...item.user,...(item.user.attachments?{media:item.user.attachments.map(ref=>app.media.view(ref))}:{})}}))};};
   const interactionPage=(after=0)=>{

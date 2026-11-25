@@ -352,7 +352,11 @@ function AssistantMessage() {
       : <span key={key} className="message-task-static" title={title}>{title}</span>)
       : <span className="message-task-static" title="事项标题待确认">事项标题待确认</span>}
   </div>;
-  const bubble=hasBubble&&<MessageBubble side="assistant" messageId={String(metadata.messageId)} fitTitle={scheduled||!!taskTitle}>
+  const createdTasks=openTask&&original.createdTasks?.length ? <div className="message-created-tasks">
+    {original.createdTasks.map(({taskId,title})=><button key={taskId} type="button" className="message-task-open" title={title}
+      onClick={event=>openTask(taskId,event.currentTarget)}><ListTodoIcon size={15} aria-hidden/><span>{title}</span></button>)}
+  </div> : undefined;
+  const bubble=hasBubble&&<MessageBubble side="assistant" messageId={String(metadata.messageId)} fitTitle={scheduled||!!taskTitle||!!createdTasks}>
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
     <ArtifactFiles files={messageFiles}/>
@@ -363,15 +367,13 @@ function AssistantMessage() {
       :<span className="schedule-source" title={scheduleTitle}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></span>}</p>:!!metadata.sourceLabel&&!internal&&<p className="message-source-label">{metadata.sourceMessageId?<a href={'#message-'+String(metadata.sourceMessageId)}>{String(metadata.sourceLabel)}</a>:String(metadata.sourceLabel)}</p>}
     {internal&&taskTitle}
     <ProcessMessageContent taskSourceUnresolved={original?.taskSourceUnresolved} node={process}>
-    {hasBubble&&<>
-    {!internal&&taskTitle}
-    {original ? <MessageDetails runtime message={original}>{bubble}</MessageDetails> : bubble}
-    </>}
+    {hasBubble&&!internal&&taskTitle}
+    {(hasBubble||createdTasks)&&<MessageDetails runtime message={original} afterBubble={createdTasks}>{bubble}</MessageDetails>}
     {!!original&&!process&&status?.type === "running" && !content.some(part => part.type === "text" && part.text) && <p className="thinking" role="status">处理阶段待确认</p>}
     {status?.type === "incomplete" && <span className="message-state">{process?.status==='unknown'?"这条回复结束状态待核实，未自动重跑":status.reason === "cancelled" ? "这条回复已停止" : "这条回复未完成"}</span>}
     </ProcessMessageContent>
     <InactiveInteractionNotes items={metadata.inactiveInteractions as WebState['inactiveInteractions']}/>
-    {!hasBubble&&original&&<MessageDetails runtime message={original}/>}
+    {!hasBubble&&!createdTasks&&<MessageDetails runtime message={original}/>}
     {!hasBubble&&!original?.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
   </MessagePrimitive.Root></>;
 }
