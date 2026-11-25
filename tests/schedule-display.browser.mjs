@@ -297,6 +297,59 @@ try{
   await dialog.waitFor({state:'hidden'});
   assert.equal(await title.evaluate(node=>node===document.activeElement),true);
   await page.screenshot({animations:'disabled',path:join(dest,'scheduled-reply-'+width+'.png')});
+  const activeProcess={...scheduled.process,threadId:'composer-review',messageId:scheduled.id,
+   turnIds:['scheduled-turn'],state:'working',status:'running'};
+  const activity={processId:activeProcess.id,source:'internal',stage:'native',turnId:'scheduled-turn'};
+  const active={...scheduled,text:'',status:'running',process:activeProcess,scheduledSource:{...scheduled.scheduledSource,title:rows[0].title}};
+  const preceding=message('preceding','assistant','上一条回复',createdAt);
+  const running={processNodes:[activeProcess],mainActivity:activity};
+  fixture.reset({messages:[preceding,active],...running});
+  await page.reload();
+  const activeTitle=reply.getByRole('button',{name:rows[0].title,exact:true});
+  await activeTitle.waitFor();
+  await page.locator('.processing-inline').waitFor();
+  assert.deepEqual(await activeTitle.evaluate(button=>{
+   const message=button.closest('.assistant-message');
+   const previous=document.querySelector('#message-preceding').closest('[data-index]').getBoundingClientRect();
+   const title=button.getBoundingClientRect(),slot=document.querySelector('.processing-inline').getBoundingClientRect();
+   return [Math.round(title.top-previous.bottom),Math.round(slot.top-title.bottom),getComputedStyle(message).marginTop];
+  }),width===390?[22,4,'0px']:[20,4,'20px']);
+  if(width===390){
+   const point=await activeTitle.evaluate(button=>{
+    const {left,top,bottom}=button.getBoundingClientRect(),hit={x:left+4,y:top-21};
+    const row=button.closest('[data-index]').getBoundingClientRect();
+    return hit.y>=row.top&&bottom+3<row.bottom&&
+     button.contains(document.elementFromPoint(hit.x,hit.y))&&
+     button.contains(document.elementFromPoint(hit.x,bottom+3))?hit:null;
+   });
+   assert.ok(point,'the upper touch edge must hit its own title');
+   await page.touchscreen.tap(point.x,point.y);
+   await dialog.locator('[data-slot=spec-sheet]').waitFor();
+   await dialog.getByRole('button',{name:'关闭',exact:true}).click();
+   await dialog.waitFor({state:'hidden'});
+   assert.equal(await activeTitle.evaluate(node=>node===document.activeElement),true);
+  }
+  await page.screenshot({animations:'disabled',path:join(dest,'scheduled-processing-'+width+'.png')});
+  fixture.reset({messages:[active],...running});
+  await page.reload();
+  await activeTitle.waitFor();
+  await page.locator('.processing-inline').waitFor();
+  assert.equal(await reply.evaluate(node=>getComputedStyle(node).marginTop),'0px');
+  const originalTitle=await activeTitle.elementHandle();
+  fixture.update({mainActivity:{...activity,finalText:'简报已整理。'}});
+  await reply.locator('.assistant-message-bubble').getByText('简报已整理。',{exact:true}).waitFor();
+  await page.waitForFunction(button=>{
+   const bubble=button.closest('.assistant-message').querySelector('.assistant-message-bubble');
+   return bubble&&button===document.querySelector('#message-scheduled-answer .schedule-source')
+     &&Math.abs(button.closest('.message-schedule-title').getBoundingClientRect().width-bubble.getBoundingClientRect().width)<1;
+  },originalTitle);
+  await page.screenshot({animations:'disabled',path:join(dest,'scheduled-processing-to-reply-'+width+'.png')});
+  for(const [status,label] of [['interrupted','这条回复已停止'],['failed','这条回复未完成']]){
+   fixture.update({messages:[{...active,status,process:{...activeProcess,state:'worked',status}}],
+    mainActivity:null});
+   await reply.getByText(label,{exact:true}).waitFor();
+   await page.locator('.processing-inline').waitFor({state:'detached'});
+  }
   checks.push({width,reads,detailReads,relativeTime:true,loadedPagesPreserved:true,dueRefresh:true,foregroundRecovery:true,staleCursorRejected:width===1440,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
  }
  assert.deepEqual(errors,[]);

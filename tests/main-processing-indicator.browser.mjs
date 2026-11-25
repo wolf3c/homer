@@ -146,6 +146,10 @@ try{
     await down();
     await sprite.waitFor({state:'visible'});
     assert.equal(await bubble.count(),0);
+    assert.equal(await receiptRow.locator('.message-task-title').evaluate(title=>{
+      const marker=document.querySelector('.processing-inline');
+      return Math.round(marker.getBoundingClientRect().top-title.getBoundingClientRect().bottom);
+    }),4);
     for(const text of ['已核对','已核对归档。']){
       fixture.update({mainActivity:{...activity,finalText:text}});
       await bubble.getByText(text,{exact:true}).waitFor();
@@ -182,4 +186,5 @@ try{
   const exit=await chrome.finish();
   assert.equal(exit.code,0);
   assert.equal(exit.forced,false);
+  assert.equal(exit.watchdog,false);
 }

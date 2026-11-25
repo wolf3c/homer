@@ -3,9 +3,12 @@
 /* A row keeps the bubble and its own actions together on both input modes. */
 .message-bubble-row>.message-action-notice,.message-bubble-row~.message-link-sources{max-width:100%;overflow-wrap:anywhere}
 .messages [data-index]>.message:has(>.message-bubble-row),
-.messages [data-processing-tail]>.assistant-message:has(>.message-task-title:only-child){margin-block:20px 0;padding-block:0}
-.messages [data-index="0"]>.message:has(>.message-bubble-row,>.message-task-title:only-child){margin-top:0}
-.messages [data-processing-tail]:has(>.assistant-message>.message-task-title:only-child)~.processing-inline{margin-top:0}
+.messages [data-processing-tail]>.assistant-message:has(>:is(.message-task-title,.message-schedule-title):only-child){margin-block:20px 0;padding-block:0}
+.messages [data-index="0"]>.message:has(>.message-bubble-row,>:is(.message-task-title,.message-schedule-title):only-child){margin-top:0}
+.messages [data-processing-tail]:has(>.assistant-message>:is(.message-task-title,.message-schedule-title):only-child)~.processing-inline{margin-top:0}
+@media(any-pointer:coarse){
+  .messages [data-processing-tail]>.assistant-message:has(>.message-schedule-title:only-child>button){margin-top:0;padding-top:22px}
+}
 .messages [data-continues-task]:not(:has(>.message-day-separator))>.assistant-message:has(>.message-bubble-row){margin-top:8px}
 .messages [data-continues-task]:not(:has(>.message-day-separator))>.assistant-message>.message-task-title{
   position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap
