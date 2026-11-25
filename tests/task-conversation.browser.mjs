@@ -33,8 +33,15 @@ try{
    const create=(name,requestId)=>f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:requestId},
     {operationId:'task-'+requestId,goal:name,title:name,notes:'合成工作笔记',workingDirectory:process.cwd()}).taskId;
    const a=create('合成事项 A','request-0'),b=create('合成事项 B','request-1');
-   f.tasks.workerOpen({agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'},
-    {operationId:'synthetic-assignment',taskId:a,text:'检查合成访谈资料',workTitle:'复核补货访谈纪要',workingDirectory:process.cwd()});
+   const actor={agentId:'main:synthetic',threadId:thread,sourceRequestId:'request-0'};
+   const firstTitle='汇总访谈资料并核对所有补货项目的原始记录和不同版本之间的变化';
+   const worker=f.tasks.workerOpen(actor,{operationId:'synthetic-assignment',taskId:a,text:'检查合成访谈资料',workTitle:firstTitle,workingDirectory:process.cwd()});
+   const run=f.tasks.claim(worker.runId);
+   f.tasks.bind(run.id,run.epoch,'thread:assignment','turn:assignment');
+   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'整理完毕'},true);
+   f.tasks.workerMessage(actor,{operationId:'next-assignment',workerId:worker.workerId,text:'复核纪要',workTitle:'复核补货访谈纪要'});
+   f.tasks.workerOpen(actor,{operationId:'second-worker',taskId:a,text:'核对库存',workTitle:'核对库存差异'});
+   f.tasks.workerOpen(actor,{operationId:'untitled-worker',taskId:a,text:'协助归档'});
    for(const index of [9,60,121,154]){
     db.prepare('UPDATE conversation_messages SET quote=? WHERE id=?').run(JSON.stringify({taskReference:{taskId:a,version:1,title:'合成事项 A'}}),'user-'+index);
     updateSyntheticPublicText(f,'node-'+index,'合成事项答复 '+index);
@@ -204,6 +211,10 @@ try{
    assert.ok(mainAnchor);
    if(!await page.evaluate(()=>document.querySelector('#task-status-trigger')?.getAttribute('aria-expanded')==='true'))await click('#task-status-trigger');
    await exists(`[data-todo-id="${a}"] .status-task-open`);
+   const taskRow=`[data-todo-id="${a}"]`;
+   check(await page.evaluate(`document.querySelector(${JSON.stringify(taskRow+' .status-task-workers')})?.getAttribute('aria-label')==='3 个 Worker'`),'task list shows Worker count');
+   const listEntry=await text(taskRow);
+   check(!listEntry.includes(firstTitle)&&!listEntry.includes('复核补货访谈纪要'),'task list omits current and previous assignments');
    await click(`[data-todo-id="${a}"] .status-task-open`);
    await exists('.task-conversation #task-message-node-154');
    check((await text('.task-conversation #task-message-node-154')).includes('合成事项答复 154'),'public projected final');
@@ -218,10 +229,40 @@ try{
    await insert(draft,'事项 A 草稿');
    await page.until(()=>!document.querySelector('.task-conversation .send-button')?.disabled,7000);
    await page.screenshot('task-conversation-'+width+'.png');
-   await click('.task-conversation-toolbar button');
+   await focus('.task-conversation-toolbar button');
+   await key('Enter',13);
    check((await text('.task-conversation-info')).includes('合成工作笔记'),'current details');
-   check((await text('.task-conversation-info')).includes('复核补货访谈纪要'),'confirmed Worker title');
+   const assignments=await page.evaluate(()=>Array.from(document.querySelectorAll('.task-worker-timeline'),list=>Array.from(list.children,item=>[
+    item.textContent.trim(),item.getAttribute('aria-current')==='true',Number(getComputedStyle(item.querySelector('strong')??item).fontWeight),
+   ])));
+   assert.deepEqual(assignments,[
+    [['复核补货访谈纪要',true,700],[firstTitle,false,400]],
+    [['核对库存差异',true,700]],
+   ]);
+   check((await text('.task-detail-workers')).includes('暂无工作标题'),'untitled Worker stays visible');
+   check(await page.evaluate(()=>[...document.querySelectorAll('.task-worker-timeline')].every(list=>
+    list.getAttribute('role')==='list'&&list.getAttribute('aria-label')?.includes('最新在前')&&list.scrollWidth<=list.clientWidth
+    &&[...list.children].every(item=>item.getBoundingClientRect().height>0))),'visible accessible lists without horizontal overflow');
    await page.screenshot('task-details-'+width+'.png');
+   if(width===1440){
+    const separator=()=>page.evaluate(()=>document.querySelector('.preview-separator').getBoundingClientRect().toJSON());
+    const original=await separator();
+    await focus('.preview-separator');
+    await key('End',35);
+    await page.until(()=>document.querySelector('#canvas-panel').clientWidth<=420,7000);
+    check(await page.evaluate(()=>{
+     const worker=document.querySelector('.task-detail-workers>li');
+     const [label,timeline]=worker.children;
+     return timeline.getBoundingClientRect().top>=label.getBoundingClientRect().bottom&&timeline.scrollWidth<=timeline.clientWidth;
+    }),'narrow Preview stacks the timeline inside a wide window');
+    await page.screenshot('task-details-narrow-preview.png');
+    const narrow=await separator();
+    const pointer={button:'left',clickCount:1,y:narrow.y+narrow.height/2};
+    await page.command('Input.dispatchMouseEvent',{...pointer,type:'mousePressed',x:narrow.x});
+    await page.command('Input.dispatchMouseEvent',{...pointer,type:'mouseMoved',buttons:1,x:original.x});
+    await page.command('Input.dispatchMouseEvent',{...pointer,type:'mouseReleased',x:original.x});
+    await page.until(`Math.abs(document.querySelector('.preview-separator').getBoundingClientRect().x-${original.x})<3`,7000);
+   }
    await click('.task-conversation-toolbar button');
    await exists(draft);
    check(await text(draft)==='事项 A 草稿','detail return retains draft');

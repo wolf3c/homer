@@ -165,7 +165,17 @@ export function TaskConversation({cache,threadId,readEpoch,revision,connected,on
    {detailNotice&&<p role="status">{detailNotice} <button type="button" onClick={refreshTask}>重试</button></p>}
    <h3>事项内容</h3><p>{task.goal??'暂无事项内容'}</p>
    <h3>笔记</h3><p>{task.notes||'暂无笔记'}</p>
-   <h3>Worker</h3>{task.workers.length?<ul>{task.workers.map((worker,index)=><li key={worker.id}><span>Worker {index+1}</span><strong>{worker.workTitle??'暂无工作标题'}</strong></li>)}</ul>:<p>暂无 Worker</p>}
+   <h3>Worker</h3>{task.workers.length?<ul className="task-detail-workers" role="list">{task.workers.map((worker,index)=>{
+    const label='Worker '+(index+1);
+    const assignments=worker.assignments?.slice().reverse();
+    return <li key={worker.id}><span>{label}</span>
+     {assignments?.length||worker.workTitle?<ol className="task-worker-timeline" role="list" aria-label={label+' 分工，最新在前'}>
+      {assignments?.length?assignments.map(({messageId,title},position)=><li key={messageId} aria-current={position===0?true:undefined}>
+       {position===0?<strong>{title}</strong>:title}
+      </li>):<li aria-current="true"><strong>{worker.workTitle}</strong></li>}
+     </ol>:<span>暂无工作标题</span>}
+    </li>;
+   })}</ul>:<p>暂无 Worker</p>}
   </div>:<>
    <div className="task-conversation-history">
     {cache.before&&<button type="button" disabled={busy||!connected} onClick={()=>scan('before')}>查看更早消息</button>}

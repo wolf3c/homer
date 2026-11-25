@@ -76,14 +76,6 @@ function TaskSection({archived,connected,read,tasks,tail,running,onReference,onO
    return <section key={task.id} id={'task-'+encodeURIComponent(task.id)} data-todo-id={task.id} aria-label={title} tabIndex={-1}>
     <TaskStatusRow label={title} workerCount={task.workers.length} running={executing} archived={archived} archive={archive} onOpen={onOpen?trigger=>onOpen(task,trigger):undefined}
      onReference={onReference&&!stale?()=>onReference({taskId:task.id,version:task.headVersion,title}):undefined}/>
-    {task.workers.some(worker=>worker.workTitle)&&<ul className="status-worker-assignments" aria-label="Worker 分工">
-     {task.workers.filter(worker=>worker.workTitle).map(worker=>{
-      const previous=worker.assignments?.slice(0,-1)??[];
-      return <li key={worker.id}>{worker.workTitle}{previous.length>0&&<details>
-       <summary>此前分工</summary><ul>{previous.map(item=><li key={item.messageId}>{item.title}</li>)}</ul>
-      </details>}</li>;
-     })}
-    </ul>}
     {archived&&task.archiveReviewIssue&&<p className="status-archive-notice" role="status">{task.archiveReviewIssue==='failed'?'归档复核失败，事项已归档。':'归档复核结果待确认。'}</p>}
    </section>;
   })}</div>
