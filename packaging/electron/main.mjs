@@ -1268,7 +1268,7 @@ try{
    accountChanged('native-account-disconnected');
    for(const pending of nativeRequests.values()){clearTimeout(pending.timer);pending.reject(Error('native_account_unconfirmed'));}nativeRequests.clear();
    desktopAccessToken=undefined;
-   closed=true;browserPreview?.expirePermissions();exitCode=status;exitSignal=signal;clearUpdateCheck();
+   closed=true;browserPreview?.expirePermissions();browserPreview?.releaseAll();exitCode=status;exitSignal=signal;clearUpdateCheck();
    for(const pending of powerRequests.values()){clearTimeout(pending.timer);pending.reject(Error('power_recheck_unconfirmed'));}powerRequests.clear();
    void closeDesktopPower();
    cancelDesktopCapture();

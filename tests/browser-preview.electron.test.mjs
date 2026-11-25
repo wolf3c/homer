@@ -21,8 +21,9 @@ test('native HTML modal annotation preserves its draft and uses the real Compose
 test('real Preview UI, service provenance, Worker MCP and native page content close the synthetic loop', {timeout:120000},()=>runPreview(false));
 test('desktop Preview locates linked source lines in Markdown and plain text', {timeout:60000},()=>runPreview(false,false,true));
 test('desktop Preview more actions follow the current document and real native viewport', {timeout:60000},()=>runPreview(false,false,false,true));
-async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=false){
- const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':moreOnly?'more':'.');await mkdir(out,{recursive:true});
+test('native Preview AI lock preserves real page input and handoff', {timeout:60000},()=>runPreview(false,false,false,false,true));
+async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=false,lockOnly=false){
+ const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':moreOnly?'more':lockOnly?'lock':'.');await mkdir(out,{recursive:true});
  const openFilesDirectory=join(scratch,'exports'),oldExport=join(openFilesDirectory,'snapshot-staled');
  if(moreOnly){await mkdir(oldExport,{recursive:true});await utimes(oldExport,1,1);}
  const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError,webScreenshotRef;
@@ -32,6 +33,7 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
  try{
   site=createServer(async(req,res)=>{
    if(req.url==='/start'||req.url==='/explicit-start')await slowPage;
+   if(req.url==='/lock-stall'){await slowPage;res.destroy();return;}
    res.setHeader('Content-Type','text/html; charset=utf-8');res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'");
    if(req.url==='/link-source'){
     res.end('<!doctype html><meta charset="utf-8"><title>链接来源页</title><a href="/link-target" target="_blank">打开新页</a> <a href="/link-target">当前页跳转</a>');
@@ -122,6 +124,115 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   const waitPage=async target=>{let p;await until(()=>!!(p=electron.context().pages().find(p=>p.url()===target)));return p;};
   async function annotationMode(active){const button=host.getByRole('button',{name:'批注',exact:true});await button.click();await host.waitForFunction(active=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-pressed')===String(active),active);await host.waitForFunction(()=>document.querySelector('.preview-annotation-button')?.getAttribute('aria-busy')==='false');}
   async function hoverMatch(target,selector){await target.locator(selector).hover();await target.waitForFunction(selector=>{const h=document.querySelector('[data-homer-annotation]')?.shadowRoot?.querySelector('.annotation-hover-outline'),e=document.querySelector(selector);if(!h||!e)return false;const a=h.getBoundingClientRect(),b=e.getBoundingClientRect();return Math.abs(a.x-b.x)<1&&Math.abs(a.y-b.y)<1&&Math.abs(a.width-b.width)<1&&Math.abs(a.height-b.height)<1;},selector);}
+  if(lockOnly){
+   await f.app.message('Delegate both pages','preview-lock-fixture');
+   await until(()=>f.engines.filter(p=>p.options.role==='worker'&&p.finish).length===2);
+   const [worker,other]=f.engines.filter(p=>p.options.role==='worker');
+   const opened=await call(worker,'preview_open',{url:url+'/lock-target'},'open-lock');
+   const otherPage=await call(other,'preview_open',{url:url+'/lock-other'},'open-other');
+   const {pageId,document}=await call(worker,'preview_read',{pageId:opened.id},'read-lock');
+   await call(worker,'preview_show',{pageId},'show-lock');
+   await host.getByRole('status').filter({hasText:'AI 正在操作此页'}).waitFor();
+   const target=await waitPage(url+'/lock-target');
+   await until(()=>electron.evaluate(()=>globalThis.testWindow.contentView.children.at(-1)?.webContents.getURL().startsWith('data:text/html')));
+   const layer=await electron.evaluate((_,url)=>{
+    const views=globalThis.testWindow.contentView.children;
+    const page=views.find(view=>view.webContents.getURL()===url),cover=views.at(-1);
+    return {visible:page.getVisible()&&cover.getVisible(),sameBounds:JSON.stringify(page.getBounds())===JSON.stringify(cover.getBounds()),above:page!==cover&&cover.webContents.getURL().startsWith('data:text/html')};
+   },url+'/lock-target');
+   assert.deepEqual(layer,{visible:true,sameBounds:true,above:true});
+   assert.equal(await host.getByRole('button',{name:'批注',exact:true}).isDisabled(),true);
+   const captureGuard=await electron.evaluate(async({webContents},{url,document})=>{
+    const contents=webContents.getAllWebContents().find(view=>view.getURL()===url);
+    const original=contents.capturePage;
+    let captures=0;
+    contents.capturePage=(...args)=>{captures++;return original.apply(contents,args);};
+    try{
+     const result=await contents.executeJavaScriptInIsolatedWorld(999,[{code:`Promise.allSettled([
+      globalThis.homerAnnotationBridge.begin(),globalThis.homerAnnotationBridge.capture(${document})
+     ]).then(results=>results.map(result=>result.status==='rejected'?result.reason.message:result.status))`}]);
+     return {result,captures};
+    }finally{contents.capturePage=original;}
+   },{url:url+'/lock-target',document});
+   assert.match(captureGuard.result[0],/preview_user_control/);
+   assert.match(captureGuard.result[1],/preview_document_changed/);
+   assert.equal(captureGuard.captures,0);
+   record('native lock disables annotation and rejects screenshot IPC without invoking capturePage');
+   await assert.rejects(host.evaluate(page=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action:'close'}),opened),/preview_user_control/);
+   await assert.rejects(host.evaluate(page=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action:'reload'}),opened),/preview_user_control/);
+   const run=(action,selector,value,id)=>call(worker,'preview_act',{pageId,document,action,selector,...(value===undefined?{}:{value})},id);
+   await run('fill','role=textbox[name="任务输入"]','需要清空','fill-lock');
+   assert.equal(await target.getByLabel('任务输入').inputValue(),'需要清空');
+   await run('fill','role=textbox[name="任务输入"]','','clear-lock');
+   assert.equal(await target.getByLabel('任务输入').inputValue(),'');
+   await run('select','role=combobox[name="任务选项"]','b','select-lock');
+   assert.equal(await target.getByLabel('任务选项').inputValue(),'b');
+   await run('click','#business',undefined,'click-lock');
+   assert.equal(await target.locator('#business').textContent(),'已完成点击');
+   const parallel=await call(other,'preview_read',{pageId:otherPage.id},'read-other');
+   await call(other,'preview_act',{pageId:parallel.pageId,document:parallel.document,action:'click',selector:'#business'},'click-other');
+   assert.equal(await (await waitPage(url+'/lock-other')).locator('#business').textContent(),'已完成点击');
+   if(process.platform==='darwin'){
+    const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);
+    execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'lock-native.png')],{timeout:10000});
+   }
+   await call(worker,'preview_show',{pageId,control:'request-user'},'handoff-lock');
+   await assert.rejects(run('click','#business',undefined,'old-turn-write'),/preview_user_control/);
+   assert.equal((await call(worker,'preview_read',{pageId},'check-unlocked')).locked,false);
+   await host.getByRole('button',{name:'重新加载',exact:true}).waitFor();
+   assert.equal(await host.getByRole('button',{name:'重新加载',exact:true}).isEnabled(),true);
+   const resumedInput={pageId,document,action:'fill',selector:'role=textbox[name="任务输入"]',value:'续办'};
+   const resumedActor={threadId:opened.threadId,owner:opened.owner,turnId:'later-turn',requestId:'request-with-page-reference'};
+   const resume=(action,input)=>electron.evaluate((_,args)=>globalThis.preview.execute(args.actor,args.action,args.input),{actor:resumedActor,action,input});
+   await assert.rejects(resume('act',resumedInput),/preview_user_control/);
+   await resume('read',{pageId});
+   await assert.rejects(resume('act',resumedInput),/preview_user_control/);
+   await resume('open',{pageId,claim:{url:opened.url}});
+   await assert.rejects(resume('act',resumedInput),/preview_user_control/);
+   await resume('read',{pageId});
+   await resume('act',resumedInput);
+   assert.equal(await target.getByLabel('任务输入').inputValue(),'续办');
+   record('same Worker in a later turn needs an authorized page claim and a fresh read');
+   const bounds={x:300,y:140,width:440,height:400};
+   const present=(page,revision,bounds)=>host.evaluate(value=>window.homerBrowserPreview.present(value),{pageId:page.id,threadId:page.threadId,revision,bounds});
+   const shownLayers=()=>electron.evaluate(()=>{
+    const views=globalThis.testWindow.contentView.children,cover=views.at(-1);
+    return {urls:views.slice(0,-1).filter(view=>view.getVisible()).map(view=>view.webContents.getURL()),coverVisible:cover.getVisible(),coverBounds:cover.getBounds()};
+   });
+   assert.equal(await present(opened,1_000_000,bounds),true);
+   assert.equal(await present(otherPage,1_000_002,bounds),true);
+   assert.equal(await present(opened,1_000_001,{...bounds,x:400}),false);
+   assert.deepEqual(await shownLayers(),{urls:[otherPage.url],coverVisible:true,coverBounds:bounds});
+   assert.equal(await present(otherPage,1_000_004,null),true);
+   assert.equal(await present(otherPage,1_000_003,bounds),false);
+   assert.deepEqual(await shownLayers(),{urls:[],coverVisible:false,coverBounds:bounds});
+   await resume('show',{pageId,control:'release'});
+   await host.evaluate(page=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action:'close'}),opened);
+   await assert.rejects(present(opened,1_000_005,bounds),/preview_page_unavailable/);
+   assert.deepEqual(await shownLayers(),{urls:[],coverVisible:false,coverBounds:bounds});
+   record('late non-empty bounds cannot restore a switched, hidden or closed page and cover');
+   const otherState=()=>host.evaluate(async id=>(await window.homerBrowserPreview.list(id.threadId)).find(p=>p.id===id.id),otherPage);
+   const actor={threadId:otherPage.threadId,owner:otherPage.owner,turnId:other.turnId};
+   const raw=electron.evaluate((_,args)=>globalThis.preview.execute(args.actor,'navigate',args.input),{actor,input:{pageId:otherPage.id,document:parallel.document,url:url+'/lock-stall'}});
+   const navigation=assert.rejects(raw,/preview_result_unconfirmed/);
+   try{
+    await until(async()=>(await otherState())?.loading===true);
+    other.finish({status:'completed',text:'结束隔离用例'});
+    assert.equal((await otherState()).locked,true);
+    await navigation;
+    assert.match((await otherState()).error,/未确认/);
+    assert.equal((await otherState()).locked,true);
+   } finally {releaseSlowPage();await navigation.catch(()=>{});}
+   await until(async()=>(await otherState())?.locked===false);
+   assert.match((await otherState()).error,/未确认/);
+   record('terminal release waits for the raw navigation after its timeout; unknown evidence is retained');
+   record('native cover, trusted AI click/fill/clear/select, separate pages and explicit handoff');
+   await electron.close();const exit=await electronExit;
+   clearTimeout(watchdog);electronClosed=true;
+   await writeFile(join(out,'lock-report.json'),JSON.stringify({checks,errors,exit,watchdog:false},null,2));
+   assert.deepEqual(exit,{code:0,signal:null});assert.deepEqual(errors,[]);
+   return;
+  }
   if(modalOnly){
    await host.getByRole('link',{name:'打开业务网页',exact:true}).click();releaseSlowPage();
    const page=await waitPage(url+'/start');page.on('pageerror',error=>errors.push(error.message));
@@ -727,12 +838,13 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    await selected('链接来源页');
    await close('脚本新页');
    const current=await host.evaluate(async threadId=>(await window.homerBrowserPreview.list(threadId)).find(page=>page.title==='链接来源页'),f.app.store.meta('mainThread'));
-   const controlLink=action=>host.evaluate(({page,action})=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action}),{page:current,action});
-   await controlLink('resume');
-   await electron.evaluate((_,page)=>globalThis.preview.execute({threadId:page.threadId,owner:page.owner},'act',{pageId:page.id,document:page.document,action:'click',selector:'a[target="_blank"]'}),current);
+   const actor={threadId:current.threadId,owner:current.owner,requestId:'link-probe',turnId:'link-turn'};
+   const execute=(action,input)=>electron.evaluate((_,value)=>globalThis.preview.execute(value.actor,value.action,value.input),{actor,action,input});
+   await execute('open',{pageId:current.id,claim:{url:current.url}});
+   await execute('act',{pageId:current.id,document:current.document,action:'click',selector:'a[target="_blank"]'});
    await host.getByRole('tab',{name:'新页目标',exact:true,selected:false}).waitFor();
    await selected('链接来源页');
-   await controlLink('takeover');
+   await execute('show',{pageId:current.id,control:'release'});
    await close('新页目标');await close('链接来源页');
    await host.getByRole('link',{name:'打开附有 Demo 的方案',exact:true}).click();
    let requestSeen,continueRequest;
@@ -1017,6 +1129,44 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   assert(f.inputs.some(text=>text.includes('inspect_attachment')&&text.includes(screenshot.assetId)));
   webScreenshotRef=accepted.attachments[0];
   record('web annotation pairs viewport image with coordinates and a model-readable attachment reference');
+  {
+   let notifyUploaded,releaseUpload,notifyDiscarded;
+   const uploaded=new Promise(resolve=>{notifyUploaded=resolve;});
+   const gate=new Promise(resolve=>{releaseUpload=resolve;});
+   const discarded=new Promise(resolve=>{notifyDiscarded=resolve;});
+   const discard=f.app.discardAttachment.bind(f.app);
+   f.app.uploadAttachment=async value=>{
+    const asset=await upload(value);
+    notifyUploaded(asset);
+    await gate;
+    return asset;
+   };
+   f.app.discardAttachment=async value=>{
+    const result=await discard(value);
+    notifyDiscarded(value);
+    return result;
+   };
+   try{
+    const annotation=host.getByRole('button',{name:'批注',exact:true});
+    if(await annotation.getAttribute('aria-pressed')!=='true')await annotationMode(true);
+    await page.locator('#target').click();
+    await annotationInput.fill('切页期间迟到的截图批注');
+    await saveAnnotation.click();
+    const asset=await Promise.race([uploaded,new Promise((_,reject)=>setTimeout(()=>reject(Error('expected_switch_upload')),5000))]);
+    await host.getByRole('link',{name:'打开本地文档',exact:true}).click();
+    await host.getByRole('tab',{name:'current.md',exact:true,selected:true}).waitFor();
+    releaseUpload();
+    const removed=await Promise.race([discarded,new Promise((_,reject)=>setTimeout(()=>reject(Error('expected_switch_discard')),5000))]);
+    assert.equal(removed.assetId,asset.assetId);
+    await host.getByRole('button',{name:'移除附件 网页批注.png',exact:true}).waitFor({state:'detached'});
+    assert.equal(await host.locator('.annotation-chip').filter({hasText:'切页期间迟到的截图批注'}).count(),0);
+   }finally{
+    releaseUpload();
+    f.app.uploadAttachment=upload;
+    f.app.discardAttachment=discard;
+   }
+   record('switching Preview tabs invalidates a late screenshot upload and keeps it out of the draft');
+  }
 
   await f.app.message('Delegate both pages','delegate-browser-fixture');await until(()=>f.engines.filter(p=>p.options.role==='worker'&&p.finish).length===2);
   const workers=f.engines.filter(p=>p.options.role==='worker');
@@ -1031,7 +1181,7 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   record('only the Worker receiving the actual screenshot attachment can read it');
   const opened=await Promise.all(workers.map((w,i)=>call(w,'preview_open',{url:url+'/worker-'+i},'open-'+i)));
   const snapshots=await Promise.all(workers.map((w,i)=>call(w,'preview_read',{pageId:opened[i].id},'read-'+i)));
-  await assert.rejects(electron.evaluate((_,input)=>globalThis.preview.execute(input.actor,'act',input.input),{actor:{owner:opened[0].owner,threadId:opened[0].threadId},input:{pageId:opened[0].id,document:snapshots[0].document,selector:'#does-not-exist',action:'click'}}),/preview_target_missing/);
+  await assert.rejects(electron.evaluate((_,input)=>globalThis.preview.execute(input.actor,'act',input.input),{actor:{owner:opened[0].owner,threadId:opened[0].threadId,turnId:workers[0].turnId},input:{pageId:opened[0].id,document:snapshots[0].document,selector:'#does-not-exist',action:'click'}}),/preview_target_missing/);
   const perfStart=performance.now();for(let i=0;i<10;i++)await Promise.all(workers.map((w,j)=>call(w,'preview_read',{pageId:opened[j].id},'perf-'+i+'-'+j)));record('20 scoped reads across two hidden Worker pages', {elapsedMs:performance.now()-perfStart});
   await Promise.all(workers.map((w,i)=>call(w,'preview_act',{pageId:opened[i].id,document:snapshots[i].document,selector:'role=textbox[name="任务输入"]',action:'fill',value:'任务 '+i},'fill-'+i)));
   for(let i=0;i<2;i++){const p=await waitPage(url+'/worker-'+i);assert.equal(await p.getByLabel('任务输入').inputValue(),'任务 '+i);}
@@ -1040,24 +1190,27 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   record('two actual Worker MCP endpoints control distinct hidden WCVs using pinned injected engine');
   await assert.rejects(call(workers[0],'preview_read',{pageId:opened[1].id},'wrong-page'),/preview_scope_denied/);
   await call(workers[0],'preview_show',{pageId:opened[0].id},'show-task-page');
-  await host.getByRole('button',{name:'用户接手',exact:true}).click();
-  await assert.rejects(call(workers[0],'preview_act',{pageId:opened[0].id,document:snapshots[0].document,selector:'#business',action:'click'},'blocked-user-control'),/preview_user_control/);
-  await host.getByRole('button',{name:'交还 AI',exact:true}).click();
+  await host.getByRole('status').filter({hasText:'AI 正在操作此页'}).waitFor();
+  assert.equal(await host.getByRole('button',{name:'用户接手',exact:true}).count(),0);
+  await assert.rejects(host.evaluate(page=>window.homerBrowserPreview.control({threadId:page.threadId,pageId:page.id,action:'close'}),opened[0]),/preview_user_control/);
   await call(workers[0],'preview_act',{pageId:opened[0].id,document:snapshots[0].document,selector:'#business',action:'click'},'click-business');
   const taskPage=await waitPage(url+'/worker-0');assert.equal(await taskPage.locator('#business').textContent(),'已完成点击');
   const aria=await call(workers[0],'preview_read',{pageId:opened[0].id},'snapshot-refs');assert.match(aria.content,/ref=/);
   const buttonRef=aria.content.split("\n").find(line=>line.includes('button "已完成点击"'))?.match(/\[ref=([^\]]+)\]/)?.[1];assert.ok(buttonRef,aria.content);await call(workers[0],'preview_act',{pageId:opened[0].id,document:aria.document,selector:'aria-ref='+buttonRef,action:'click'},'click-aria-reference');
   await call(workers[0],'preview_act',{pageId:opened[0].id,document:aria.document,selector:'role=combobox[name=\"任务选项\"]',action:'select',value:'b'},'select-option');assert.equal(await taskPage.getByLabel('任务选项').inputValue(),'b');
-  await taskPage.screenshot({path:join(out,'product-worker-page.png')});record('user takeover/resume gates real MCP writes; trusted CDP click and ARIA targets work');
+  await taskPage.screenshot({path:join(out,'product-worker-page.png')});record('native lock blocks manual close and preserves trusted CDP click and ARIA targets');
   await taskPage.evaluate(()=>history.pushState({},'', '/spa'));const spa=await call(workers[0],'preview_read',{pageId:opened[0].id},'read-spa');assert(spa.document>aria.document);await assert.rejects(call(workers[0],'preview_act',{pageId:opened[0].id,document:aria.document,selector:'#business',action:'click'},'stale-spa'),/preview_document_changed/);
   await call(workers[0],'preview_navigate',{pageId:opened[0].id,document:spa.document,url:url+'/next'},'navigate');
   await assert.rejects(call(workers[0],'preview_act',{pageId:opened[0].id,document:aria.document,selector:'#business',action:'click'},'stale-doc'),/preview_document_changed/);
   await call(workers[1],'preview_close',{pageId:opened[1].id},'close-page');
   await assert.rejects(call(workers[1],'preview_read',{pageId:opened[1].id},'read-closed'),/preview_page_unavailable/);record('navigation invalidates stale document; closed page cannot be read');
+  await call(workers[0],'preview_show',{pageId:opened[0].id,control:'request-user'},'request-user');
+  const handedOff=await call(workers[0],'preview_read',{pageId:opened[0].id},'read-after-handoff');
+  await assert.rejects(call(workers[0],'preview_act',{pageId:opened[0].id,document:handedOff.document,selector:'#business',action:'click'},'blocked-after-handoff'),/preview_user_control/);
   await host.getByRole('button',{name:'批注',exact:true}).click();await taskPage.locator('#target').click();
   await taskPage.getByRole('textbox',{name:'网页元素批注'}).fill('接续这一个任务页面');await taskPage.getByRole('button',{name:'保存',exact:true}).click();await host.locator('.annotation-chip').filter({hasText:'接续这一个任务页面'}).waitFor();
   await input.fill('接续任务页');await host.locator('.composer-area button[type="submit"]').click();await until(()=>!!claimed);
-  assert.equal(claimed.id,opened[0].id);assert.match(claimed.owner,/^main:/);await assert.rejects(call(workers[0],'preview_read',{pageId:opened[0].id},'old-owner-after-claim'),/preview_scope_denied/);await host.getByRole('button',{name:'用户接手',exact:true}).click();const main=f.engines.find(p=>p.options.role!=='worker');await call(main,'preview_open',{pageId:claimed.id},'reopen-same-request');await assert.rejects(call(main,'preview_act',{pageId:claimed.id,document:claimed.document,selector:'#business',action:'click'},'still-user-control'),/preview_user_control/);
+  assert.equal(claimed.id,opened[0].id);assert.match(claimed.owner,/^main:/);await assert.rejects(call(workers[0],'preview_read',{pageId:opened[0].id},'old-owner-after-claim'),/preview_scope_denied/);const main=f.engines.find(p=>p.options.role!=='worker');await call(main,'preview_open',{pageId:claimed.id},'reopen-same-request');await assert.rejects(call(main,'preview_act',{pageId:claimed.id,document:claimed.document,selector:'#business',action:'click'},'needs-fresh-read'),/preview_user_control/);
   record('a real submitted annotation lets the new Main request claim the same DOM; former Worker loses access');
   await taskPage.evaluate(()=>{window.open(location.origin+'/popup');});let popup;await until(async()=>{const view=await call(main,'preview_read',{pageId:claimed.id},'find-popup-'+Date.now());popup=view.relatedPages.find(p=>p.url.endsWith('/popup'));return !!popup;});
   const popupPage=await call(main,'preview_read',{pageId:popup.pageId},'read-popup');assert.equal(popupPage.owner,claimed.owner);assert.equal(popupPage.agentAssigned,true);const popupContent=await waitPage(popupPage.url);assert.equal(await popupContent.evaluate(()=>window.opener.location.href),taskPage.url());const popupSecurity=await electron.evaluate(async({webContents},{url,parentUrl})=>{const child=webContents.getAllWebContents().find(c=>c.getURL()===url),parent=webContents.getAllWebContents().find(c=>c.getURL()===parentUrl),prefs=child.getLastWebPreferences();return{sandbox:prefs.sandbox,contextIsolation:prefs.contextIsolation,nodeIntegration:prefs.nodeIntegration,sameSession:child.session===parent.session,bridge:await child.executeJavaScriptInIsolatedWorld(999,[{code:"typeof globalThis.homerAnnotationBridge?.read==='function'"}])}},{url:popupPage.url,parentUrl:taskPage.url()});assert.deepEqual(popupSecurity,{sandbox:true,contextIsolation:true,nodeIntegration:false,sameSession:true,bridge:true});await assert.rejects(call(workers[0],'preview_read',{pageId:popup.pageId},'old-owner-popup'),/preview_scope_denied/);record('popup after claim inherits current owner and assignment, excluding former Worker');claimRelease();

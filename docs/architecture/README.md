@@ -1,5 +1,7 @@
 # Homer 核心架构
 
+2026-11-25 [Preview 网页自动交接实施方案](preview-architecture.md#preview-网页自动交接实施方案)已接入源码，并与网页批注截图通过隔离组合验证。宿主与媒体 49 项、macOS Electron 专项 6 项通过，已核对原生整窗截图。实体输入、辅助功能、Windows、日常安装版和真实模型待验。
+
 2026-11-24 Preview 的[源码语法着色](preview-architecture.md#源码预览语法着色方案)已复用现有 `highlight.js` 和主题，叠加[目标行定位](preview-architecture.md#文件链接的源码行定位)。隔离 macOS Electron 宽窄窗及宿主权限、快照回归通过。本机 0.1.24（build 312）早于两项能力，安装版待验。
 
 2026-11-25 [工作状态与 Preview 三栏](preview-architecture.md#工作状态与-preview-三栏)已接入固定 300 CSS px 与 700 CSS px 下限，隔离 Chrome 及 macOS Electron 验证通过，安装版和移动真机待验。

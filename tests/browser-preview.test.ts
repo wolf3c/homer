@@ -42,7 +42,8 @@ test('Main preview calls authenticate native identity, bind source and never rep
    return{status:'completed',text:'Done'};
   });
   await f.app.start();await f.app.message('Work on the report','browser-source');
-  assert.equal(requests.length,1);const req=requests[0];
+  assert.deepEqual(requests.map(request=>request.action),['open','turn-ended']);const req=requests[0];
+  assert.equal(requests[1].owner.turnId,req.owner.turnId);
   assert.equal(req.owner.threadId,f.app.store.meta('mainThread'));assert.match(req.owner.owner,/^main:/);
   assert.equal(req.input.source.requestId,'browser-source');assert.equal(req.input.source.url,'https://example.com/report');
  }finally{await f.close();}
@@ -62,17 +63,26 @@ test('two Worker MCP endpoints retain distinct page owners on one conversation',
  }finally{await f.close();}
 });
 test('UI opens and sent references validate real message/request provenance without replacing original links',async()=>{
+ const pageId='page-00000000-0000-4000-8000-000000000000',claims:unknown[]=[];
  const f=fixture();f.app.bindBrowserPreview(async(owner,action,input)=>({owner,action,input}));
  try{
+  f.setScript(async main=>{
+   const result=await call(main,'preview_open',{pageId},'claim-'+main.turnId);
+   assert.equal(result.error,undefined);
+   claims.push(result.result.input.claim);
+   return {status:'completed',text:'Checked'};
+  });
   await f.app.start();await f.app.message('Synthetic source','known-request');
   const threadId=f.app.store.meta('mainThread')!,message=f.app.history.list(threadId).find(m=>m.role==='user')!;
   const source={kind:'browser' as const,messageId:message.id,url:'https://example.com/',title:'Selected link'};
   assert((await f.app.openBrowserPreview({threadId,source}))as object);
   await assert.rejects(f.app.openBrowserPreview({threadId:'other-thread',source}),/preview_unavailable/);
   await assert.rejects(f.app.openBrowserPreview({threadId,source:{...source,messageId:'forged-message'}}),/preview_source_mismatch/);
-  await f.app.submitMessage({requestId:'annotated-source',text:'请按备注修改',resourceReference:{kind:'web',source,annotations:[note],page:{id:'page-00000000-0000-4000-8000-000000000000',url:'https://example.com/next',title:'Navigated'}}});
+  await f.app.submitMessage({requestId:'annotated-source',text:'请按备注修改',resourceReference:{kind:'web',source,annotations:[note],page:{id:pageId,url:'https://example.com/next',title:'Navigated'}}});
   await until(()=>f.inputs.some(text=>text.includes('Navigated')));
   assert(f.inputs.some(text=>text.includes('用户批注：检查提交后的结果')));
+  await f.app.idle();
+  assert.deepEqual(claims,[undefined,{url:'https://example.com/next'}]);
   await assert.rejects(async()=>f.app.submitMessage({requestId:'bad-reference',text:'x',resourceReference:{kind:'web',source:{kind:'browser',requestId:'missing-request',url:source.url,title:source.title},annotations:[note]}}),/preview_source_mismatch/);
  }finally{await f.close();}
 });
@@ -208,7 +218,8 @@ test('a scheduled background turn opens and reads a Preview URL without a histor
   assert.equal(results[0].result.historyReference,'unavailable');
   assert.equal(results[0].result.pageId,'synthetic-background-page');
   assert.equal(results[1].error,undefined);
-  assert.deepEqual(requests.map(request=>request.action),['open','read']);
+  assert.deepEqual(requests.map(request=>request.action),['open','read','turn-ended']);
+  assert.equal(requests[2].owner.turnId,requests[0].owner.turnId);
   assert.equal(requests[0].owner.requestId,undefined);
   assert.ok(requests[0].owner.turnId);
  }finally{await f.close();}

@@ -108,6 +108,7 @@ type MainContext = {
   // Current-turn observations only, never scheduling or authorization inputs.
   nativeActivity?:{receiptFinals?:Map<string,string>;turnId?:string;ended?:true;unavailable?:true;compactions:Map<string,'started'|'completed'>;summary?:string;retryObserved?:true;connectionIssue?:true};
   nativeStartAttempted?:boolean;
+  browserTurnId?:string;
   processId?: string;
   processStatus?: 'completed' | 'failed' | 'interrupted' | 'unknown';
   processEndEventId?: string;
@@ -150,6 +151,7 @@ export type EngineFactory = (
 const terminal = (r: Run) =>
   ["succeeded", "failed", "cancelled", "interrupted"].includes(r.status);
 type WorkerSlot = {
+  browserTurnId?:string;
   lease?:string;
   closing?:Promise<boolean>;
   id: string;
@@ -334,11 +336,11 @@ export class Homer {
     const transport=this.browserTransport,engine=slot?.engine??this.main,context=this.mainContext;
     if(!transport||!engine)throw Error('preview_unavailable');
     const current=()=>{if(this.closing)return false;if(slot){try{return this.workers.get(slot.id)===slot&&!slot.stopping&&(this.tasks.guard(this.workerActor(slot)),true);}catch{return false;}}return this.main===engine&&this.mainContext===context&&!!context&&!context.stopRequested&&!context.terminalConfirmed;};
-    await this.scheduleCalls.authenticate(engine,name,value,meta,current,true);
+    const {turnId}=await this.scheduleCalls.authenticate(engine,name,value,meta,current,true);
     const definition=BROWSER_PREVIEW_TOOLS.find(t=>t.name===name);if(!definition)throw Error('preview_action_denied');validateToolArguments(value,definition.inputSchema);
     const input=object(value),threadId=this.store.meta('mainThread')!,run=slot?this.tasks.run(slot.id):undefined;
-    const actor={threadId,owner:run?'worker:'+run.workerId+':'+run.version:'main:'+threadId,requestId:run?run.sourceRequestId??undefined:context?.requestId,runId:run?.id,turnId:engine.turnId};
-    const guard=()=>{if(!current())throw Error('preview_call_expired');};guard();
+    const actor={threadId,owner:run?'worker:'+run.workerId+':'+run.version:'main:'+threadId,requestId:run?run.sourceRequestId??undefined:context?.requestId,runId:run?.id,turnId};
+    const guard=()=>{if(!current()||engine.turnId!==turnId||engine.turnActive===false)throw Error('preview_call_expired');};guard();
     const action=name.slice('preview_'.length);
     if(action==='open'){
       if([input.url,input.pageId,input.attachment].filter(x=>x!==undefined).length!==1)throw Error('preview_open_target_required');
@@ -347,6 +349,10 @@ export class Homer {
       if(input.attachment!==undefined){const a=object(input.attachment),ref={assetId:string(a.assetId,100),revision:Number(a.revision)};this.authorizeAttachment(ref,run??context);const file=this.readAttachment({...ref,messageId:string(a.messageId,100)});if(file.mime.split(';')[0]?.trim()!=='text/html')throw Error('preview_html_required');input.source={kind:'attachment',...ref,messageId:a.messageId,sha256:file.sha256,title:file.filename};}
     }else if(action==='navigate')input.url=this.browserUrl(input.url);
     if(action==='act'&&['fill','select'].includes(String(input.action))&&typeof input.value!=='string')throw Error('preview_value_required');
+    if(['act','navigate','close'].includes(action)||action==='open'&&input.source){
+      const holder=slot??context;
+      if(holder)holder.browserTurnId=turnId;
+    }
     const result=await transport(actor,action,input);guard();
     if(action==='screenshot'){const image=result as {data:string;mime:string};return{mediaContent:[{type:'image',mimeType:image.mime,data:image.data}]};}
     if(action==='close')return{pageId:input.pageId,closed:true};
@@ -2138,6 +2144,8 @@ export class Homer {
       }
       const approvalOwner=context.generation?.generationId??context.processId;
       if(approvalOwner)this.mainApprovals.end(approvalOwner);
+      const threadId=this.store.meta('mainThread'),turnId=context.browserTurnId;
+      if(threadId&&turnId)void this.browserTransport?.({threadId,owner:'main:'+threadId,turnId},'turn-ended',{}).catch(()=>{});
       this.mainContext = undefined;
       this.invalidateState();
       if(context.event&&!context.workerInput)this.receptionTimings?.mark('round_end',{processId:context.processId,kind:'internal'},context.processStatus??'completed');
@@ -3364,6 +3372,9 @@ export class Homer {
         this.workers.delete(run.id);this.tasks.endSegment(run.id,run.epoch,result,closed);
       }
     }finally{
+      const threadId=this.store.meta('mainThread'),turnId=slot?.browserTurnId;
+      if(slot)slot.browserTurnId=undefined;
+      if(threadId&&turnId)void this.browserTransport?.({threadId,owner:'worker:'+run.workerId+':'+run.version,turnId},'turn-ended',{}).catch(()=>{});
       preparation.end();
       await pendingEndpoint?.close();
       if(slot)this.pauseClock(slot);

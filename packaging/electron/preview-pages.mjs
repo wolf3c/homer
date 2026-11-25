@@ -1,4 +1,4 @@
-import{WebContentsView,session,protocol,shell}from'electron';
+import{WebContentsView,session,protocol,shell,dialog}from'electron';
 import{constants,openSync,readSync,closeSync,fstatSync,readFileSync,writeFileSync,renameSync,mkdirSync,readdirSync,lstatSync,realpathSync,rmSync}from'node:fs';
 import{mkdtemp,writeFile,rm}from'node:fs/promises';
 import{isAbsolute,join,posix}from'node:path';
@@ -7,7 +7,8 @@ import{previewAutomation}from'./preview-automation.mjs';
 
 export function registerPreviewScheme(){protocol.registerSchemesAsPrivileged([{scheme:'homer-preview',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);}
 export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,uiCaller,fetchAttachment,fetchMessageFile,actOnMessageFile,fileCanOpen=()=>false,openFilesDirectory,permissionFile,permissionEvent}){
- const pages=new Map(),pending=new Map();let selected;
+ const pages=new Map(),pending=new Map();let selected,cover,layoutFrame,layoutRevision=0;
+ const locked=p=>!!p.lockTurn;
  function clearExpiredOpenFiles(){
   if(!openFilesDirectory)return;
   try{
@@ -61,7 +62,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  const browserSession=session.fromPartition('persist:homer-preview');
  const localSession=session.fromPartition('homer-local-preview');
  const preferences={session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false};
- const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.fileError?p.source.title:p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.resource?{resource:p.resource}:{}),...(p.error?{error:p.error}:{}),...(p.fileError?{fileError:p.fileError}:{}),...(p.locationDenied?{locationDenied:true}:{}),...(p.locationApproval?{locationApproval:p.locationApproval}:{})});
+ const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.fileError?p.source.title:p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,locked:locked(p),agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.resource?{resource:p.resource}:{}),...(p.error?{error:p.error}:{}),...(p.fileError?{fileError:p.fileError}:{}),...(p.locationDenied?{locationDenied:true}:{}),...(p.locationApproval?{locationApproval:p.locationApproval}:{})});
  const changed=()=>{const w=window();if(w&&!w.isDestroyed())w.webContents.send('homer:preview:changed');};
  const page=id=>{const p=pages.get(id);if(!p||p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');return p;};
  const sendState=p=>p.view.webContents.send('homer:preview:annotation-state',{document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations});
@@ -83,32 +84,91 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  }
  const expirePermissions=p=>{for(const request of permissions.values())if(request.page===p)finishPermission(request,false,true);};
  const settle=(p,error)=>{expirePermissions(p);p.locationDenied=false;for(const [id,call]of pending)if(call.page===p){clearTimeout(call.timer);pending.delete(id);call.resolve({changeId:id,error,document:p.document,active:false,revision:0,epoch:0,notes:[]});}};
- function close(id){const p=pages.get(id);if(!p)return;p.closed=true;settle(p,'preview_page_unavailable');if(selected===id)selected=undefined;const w=window();if(w&&!w.isDestroyed())w.contentView.removeChildView(p.view);if(!p.view.webContents.isDestroyed())p.view.webContents.close();pages.delete(id);changed();}
+ function updateCover(){
+  const w=window(),p=pages.get(selected);
+  if(!w||w.isDestroyed())return;
+  if(!p||!locked(p)){cover?.setVisible(false);return;}
+  if(!cover){
+   cover=new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+   cover.setBackgroundColor('#00000000');
+   cover.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+   cover.webContents.on('will-navigate',event=>event.preventDefault());
+   const html=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+   html,body{height:100%;margin:0;overflow:hidden;touch-action:none;overscroll-behavior:none}body{box-sizing:border-box;display:grid;align-content:end;justify-items:center;gap:4px;padding:18px;text-align:center;background:rgb(35 47 37 / .19);color:#20251d;font:14px system-ui;-webkit-text-stroke:2px white;paint-order:stroke fill}
+   @media(hover:hover){body:hover{background:rgb(35 47 37 / .36)}}strong{font-size:20px}</style>
+   <body aria-hidden="true"><strong id="label">AI 正在操作此页</strong><span id="detail">可以查看。AI 操作结束后可使用此页。</span></body></html>`;
+   void cover.webContents.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(html)).then(updateCover,()=>{});
+  }
+  w.contentView.addChildView(cover);
+  cover.setBounds(p.view.getBounds());
+  cover.setVisible(true);
+  if(!cover.webContents.isLoading()){
+   const text=p.resultUnknown?['操作结果待核对','正在等待已发出的操作结束。']:['AI 正在操作此页','可以查看。AI 操作结束后可使用此页。'];
+   void cover.webContents.executeJavaScript(`[label.textContent,detail.textContent]=${JSON.stringify(text)}`).catch(()=>{});
+  }
+  if(p.view.webContents.isFocused())w.webContents.focus();
+ }
+ function acquire(p,turn){
+  if(!turn||p.releasing||p.lockTurn&&p.lockTurn!==turn||p.manualTurn===turn||p.annotations?.active)throw Error('preview_user_control');
+  if(!p.lockTurn){p.lockTurn=turn;p.control='agent';updateCover();changed();}
+ }
+ function release(p,manual=false){
+  if(manual&&p.lockTurn){p.manualTurn=p.lockTurn;p.claimRequest=undefined;}
+  if(p.releasing)return p.releasing;
+  p.operation++;
+  const done=()=>{
+   if(p.resultUnknown&&p.lockTurn){p.manualTurn=p.lockTurn;p.claimRequest=undefined;}
+   p.lockTurn=undefined;p.releasing=false;p.control='user';p.readTurn=undefined;
+   updateCover();changed();
+  };
+  if(!p.inFlightWrite){p.inFlight=undefined;p.busy=false;return Promise.resolve(done());}
+  return p.releasing=p.inFlight.then(done,done);
+ }
+ async function waitForWork(p,work,write,turn){
+  p.inFlight=work;p.inFlightWrite=write;p.busy=true;
+  let timedOut=false;
+  const clear=()=>{
+   if(p.inFlight===work){p.busy=false;p.inFlight=undefined;p.inFlightWrite=false;p.pendingTimedOutWrite=false;p.locationContext=undefined;}
+   if(write&&timedOut&&p.lockTurn===turn&&!p.releasing)void release(p,true);
+  };
+  void work.then(clear,clear);
+  let timer;
+  try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>{
+   if(write){
+    timedOut=true;p.pendingTimedOutWrite=true;p.operation++;p.resultUnknown=true;p.error='网页操作结果未确认，请先核对当前页面。';updateCover();changed();
+   }
+   reject(Error('preview_result_unconfirmed'));
+  },15000);})]);}
+  finally{clearTimeout(timer);}
+ }
+ function close(id){const p=pages.get(id);if(!p)return;p.closed=true;settle(p,'preview_page_unavailable');if(selected===id)selected=undefined;const w=window();if(w&&!w.isDestroyed())w.contentView.removeChildView(p.view);if(!p.view.webContents.isDestroyed())p.view.webContents.close();pages.delete(id);updateCover();changed();}
  function present(id,bounds){
-  if(!bounds){if(selected===id){page(id).view.setVisible(false);selected=undefined;}return;}
+  if(!bounds){if(selected===id){page(id).view.setVisible(false);selected=undefined;updateCover();}return;}
   const p=page(id),w=window();if(!w||w.isDestroyed())throw Error('preview_unavailable');
   const area=w.getContentBounds(),scale=w.webContents.getZoomFactor();const x=Math.max(0,Math.round(bounds.x*scale)),y=Math.max(0,Math.round(bounds.y*scale));
   const width=Math.max(0,Math.min(area.width-x,Math.round(bounds.width*scale))),height=Math.max(0,Math.min(area.height-y,Math.round(bounds.height*scale)));
   if(!width||!height)return present(id,null);
   for(const other of pages.values())other.view.setVisible(other===p);
-  p.view.setBounds({x,y,width,height});selected=id;
+  p.view.setBounds({x,y,width,height});selected=id;updateCover();
  }
  function make({threadId,owner,source,url},options={}){
   const id='page-'+randomUUID();
   const view=new WebContentsView({...options,webPreferences:{...options.webPreferences,...preferences,...(source.kind==='message-file'?{session:localSession}:{})}});
   const p={id,threadId,owner,source,view,document:0,operation:0,control:'user',closed:false,busy:false};pages.set(id,p);window().contentView.addChildView(view);
+  view.webContents.on('before-input-event',event=>{if(locked(p))event.preventDefault();});
+  view.webContents.on('focus',()=>{if(selected===id&&locked(p))window()?.webContents.focus();});
   view.webContents.on('before-mouse-event',(_event,input)=>{
    if(selected===id&&input.type==='mouseDown')window().webContents.send('homer:preview:native-pointer',id);
   });
   const area=window().getContentBounds();view.setBounds({x:0,y:0,width:Math.max(320,area.width),height:Math.max(240,area.height)});view.setVisible(false);
   view.webContents.on('did-start-navigation',details=>{if(details.isMainFrame&&!details.isSameDocument){p.document++;p.loading=true;p.runtime=undefined;p.annotations=undefined;settle(p,'preview_document_changed');changed();}});
   view.webContents.on('did-finish-load',()=>{
-   p.loading=false;p.error=undefined;changed();
+   p.loading=false;if(!p.resultUnknown)p.error=undefined;changed();
   });
   view.webContents.on('did-navigate-in-page',(_event,_url,isMainFrame)=>{if(isMainFrame){p.document++;p.annotations=undefined;settle(p,'preview_document_changed');if(p.runtime)sendState(p);changed();}});
   view.webContents.on('page-title-updated',()=>changed());
-  view.webContents.on('did-fail-load',(_,code,description,_url,isMainFrame)=>{if(isMainFrame&&code!==-3){p.loading=false;p.error=description;changed();}});
-  view.webContents.on('render-process-gone',()=>{p.error='网页进程已退出，请核对未完成操作后重新加载。';p.control='user';settle(p,'preview_page_unavailable');changed();});
+  view.webContents.on('did-fail-load',(_,code,description,_url,isMainFrame)=>{if(isMainFrame&&code!==-3){p.loading=false;if(!p.resultUnknown)p.error=description;changed();}});
+  view.webContents.on('render-process-gone',()=>{if(!p.resultUnknown)p.error='网页进程已退出，请核对未完成操作后重新加载。';void release(p,true);settle(p,'preview_page_unavailable');changed();});
   view.webContents.once('destroyed',()=>close(id));
   view.webContents.setWindowOpenHandler(({url})=>{
    if(p.source.kind==='message-file')return{action:'deny'};
@@ -207,10 +267,10 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   event.returnValue=forward();
  });
  ipcMain.handle('homer:preview:annotation-read',event=>{const p=contentCaller(event);return {document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations};});
- ipcMain.handle('homer:preview:annotation-begin',async event=>{const p=contentCaller(event);p.control='user';await p.inFlight?.catch(()=>{});changed();});
+ ipcMain.handle('homer:preview:annotation-begin',async event=>{const p=contentCaller(event);if(locked(p))throw Error('preview_user_control');p.control='user';await p.inFlight?.catch(()=>{});changed();});
  ipcMain.handle('homer:preview:annotation-capture',async(event,document)=>{
   const p=contentCaller(event);
-  const current=()=>p.id===selected&&!p.closed&&!p.loading&&!p.lockTurn&&p.control==='user'&&p.document===document&&p.annotations?.active;
+  const current=()=>p.id===selected&&!p.closed&&!p.loading&&!locked(p)&&p.control==='user'&&p.document===document&&p.annotations?.active;
   if(!current())throw Error('preview_document_changed');
   const image=await p.view.webContents.capturePage(undefined,{stayHidden:true});
   if(!current()||image.isEmpty())throw Error('preview_document_changed');
@@ -294,13 +354,24 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   if(method==='location-grants')return [...grants].sort();
   if(method==='revoke-location'){if(grants.has(input))saveGrant(input,false);return [...grants].sort();}
   const p=page(input?.pageId);if(method!=='reply'&&p.threadId!==input.threadId)throw Error('preview_scope_denied');
-  if(method==='present')return present(p.id,input.bounds);
+  if(method==='present'){
+   const {processId,routingId}=event.senderFrame,frame=processId+':'+routingId;
+   if(layoutFrame!==frame){layoutFrame=frame;layoutRevision=0;}
+   if(!Number.isSafeInteger(input.revision)||input.revision<=layoutRevision)return false;
+   layoutRevision=input.revision;
+   present(p.id,input.bounds);return true;
+  }
   if(method==='control'){
    const a=input.action;
+   if(locked(p)){
+    if(a!=='close'||!p.pendingTimedOutWrite)throw Error('preview_user_control');
+    const lock=p.lockTurn;
+    const {response}=await dialog.showMessageBox(window(),{type:'warning',message:'关闭结果未确认的网页？',detail:'未保存内容可能丢失。已经提交到网站的操作仍需核对。',buttons:['取消','关闭网页'],defaultId:0,cancelId:0});
+    if(response!==1||p.closed||p.lockTurn&&p.lockTurn!==lock)throw Error('preview_user_control');
+   }
    if(['back','forward','reload'].includes(a)){p.control='user';await p.inFlight?.catch(()=>{});}
    if(a==='close')return close(p.id);
    if(a==='takeover'){p.control='user';await p.inFlight?.catch(()=>{});}
-   else if(a==='resume'){p.control='agent';p.taskPaused=false;p.annotations={...p.annotations,active:false};sendState(p);}
    else if(a==='back'&&p.view.webContents.navigationHistory.canGoBack())p.view.webContents.navigationHistory.goBack();
    else if(a==='forward'&&p.view.webContents.navigationHistory.canGoForward())p.view.webContents.navigationHistory.goForward();
    else if(a==='reload')p.view.webContents.reload();
@@ -308,7 +379,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    changed();return;
   }
   if(method==='annotations'){
-   if(input.state.document!==p.document||p.loading)return;
+   if(input.state.document!==p.document||p.loading||locked(p)&&input.state.active)return;
    p.annotations=input.state;if(input.state.active)p.control='user';await annotations(p);return;
   }
   const call=pending.get(input.changeId);if(!call||call.page!==p)return;
@@ -317,6 +388,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   call.resolve(input.state.document===p.document?{...input.state,changeId:input.changeId}:{changeId:input.changeId,error:'preview_document_changed'});
  });
  return {async execute(actor,action,input){
+  const turn=actor.turnId;
   if(action==='reveal-file'||action==='open-file'){
    if(typeof input.path!=='string'||!isAbsolute(input.path))throw Error('preview_system_action_unavailable');
    if(input.page!==undefined){
@@ -348,33 +420,58 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
   }
   if(action==='open'){
    if(input.pageId){const p=page(input.pageId);if(p.threadId!==actor.threadId)throw Error('preview_scope_denied');
-    if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.busy)throw Error('preview_page_busy');expirePermissions(p);p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='agent';p.taskPaused=false;p.annotations={...p.annotations,active:false};sendState(p);changed();}
+    if(input.claim?.url===p.view.webContents.getURL()&&actor.requestId&&p.claimRequest!==actor.requestId){if(p.inFlight||locked(p)||p.manualTurn===turn)throw Error('preview_page_busy');expirePermissions(p);p.agentAssigned=true;p.claimRequest=actor.requestId;p.owner=actor.owner;p.control='user';p.readTurn=undefined;p.taskPaused=false;p.annotations={...p.annotations,active:false};sendState(p);changed();}
     if(p.owner!==actor.owner)throw Error('preview_scope_denied');return publicPage(p);}
    const existing=[...pages.values()].find(p=>p.threadId===actor.threadId&&p.owner===actor.owner&&p.resource===input.resource&&Object.keys(p.source).length===Object.keys(input.source).length&&Object.keys(p.source).every(key=>p.source[key]===input.source[key])&&(!input.url||input.url===p.openingUrl||input.url===p.view.webContents.getURL()));
-   if(existing){if(input.source.kind==='message-file'&&!existing.loading)existing.view.webContents.reload();return publicPage(existing);}
-   const p=make({...actor,source:input.source,url:input.url});p.control=input.user?'user':'agent';p.agentAssigned=!input.user;p.loading=true;
+   if(existing){if(input.user&&input.source.kind==='message-file'&&!existing.loading&&!locked(existing)&&!existing.inFlight)existing.view.webContents.reload();return publicPage(existing);}
+   const p=make({...actor,source:input.source,url:input.url});if(!input.user)acquire(p,turn);p.agentAssigned=!input.user;p.loading=true;
    p.resource=input.resource;
    const target=input.url??(input.source.kind==='message-file'?'homer-preview://'+p.id+'/local/index.html':input.source.kind==='attachment'?'homer-preview://'+p.id+'/attachment/'+(p.resource??'index.html'):input.source.url);
    p.openingUrl=target;
    const loaded=p.view.webContents.loadURL(target).catch(error=>{
-    if(!p.closed){p.loading=false;p.error=error.message;changed();}
+    if(!p.closed){p.loading=false;if(!p.resultUnknown)p.error=error.message;changed();}
    }).finally(()=>{p.openingUrl=undefined;});
    if(input.user&&input.show!==false)window().webContents.send('homer:preview:show',publicPage(p));
-   else if(!input.user)await loaded;
+   else if(!input.user)await waitForWork(p,loaded,true,turn);
    return publicPage(p);
   }
-  if(action==='pause'){for(const p of pages.values())if(p.owner===actor.owner&&p.threadId===actor.threadId){expirePermissions(p);p.taskPaused=true;p.control='user';changed();}return;}
+  if(action==='pause'||action==='turn-ended'){
+   for(const p of pages.values())if(p.owner===actor.owner&&p.threadId===actor.threadId&&locked(p)&&(!actor.turnId||p.lockTurn===turn)){
+    if(action==='pause'){expirePermissions(p);p.taskPaused=true;}
+    void release(p,action==='pause');
+   }
+   return;
+  }
   const p=page(input.pageId);if(p.threadId!==actor.threadId||p.owner!==actor.owner)throw Error('preview_scope_denied');
-  if(action==='show'){window().webContents.send('homer:preview:show',publicPage(p));return publicPage(p);}
+  if(action==='show'){
+   if(input.control){
+    if(!turn||p.releasing||p.lockTurn&&p.lockTurn!==turn||!p.agentAssigned)throw Error('preview_user_control');
+    if(input.control==='request-user'){p.manualTurn=turn;p.claimRequest=undefined;p.taskPaused=false;}
+    if(p.lockTurn||input.control==='request-user')await release(p);
+    page(p.id);
+    if(input.control==='release')return publicPage(p);
+   }
+   window().webContents.send('homer:preview:show',publicPage(p));return publicPage(p);
+  }
   if(p.loading){if(action==='read')return{...publicPage(p),content:'页面正在加载，请稍后重新读取。',offset:0,total:0,truncated:false};if(action==='act')throw Error('preview_page_loading');}
   const permissionPending=[...permissions.values()].some(request=>request.page===p);
   if(permissionPending&&!['read','screenshot'].includes(action))throw Error('preview_user_control');
-  if(action==='close'){if(p.control!=='agent')throw Error('preview_user_control');return close(p.id);}
-  if(p.busy)throw Error('preview_page_busy');const operation=++p.operation,document=input.document??p.document;
-  const guard=()=>{if(p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');if(operation!==p.operation)throw Error('preview_result_unconfirmed');if(!['read','screenshot'].includes(action)&&(p.control!=='agent'||p.locationApproval))throw Error('preview_user_control');if(document!==p.document)throw Error('preview_document_changed');};
-  guard();if(p.busy)throw Error('preview_page_busy');p.busy=true;
+  if(p.inFlight)throw Error('preview_page_busy');
+  const write=['act','navigate','close'].includes(action);
+  const document=input.document??p.document;
+  if(document!==p.document)throw Error('preview_document_changed');
+  if(write){
+   if(!p.agentAssigned)throw Error('preview_user_control');
+   if(p.manualTurn&&(p.readTurn!==turn||p.readDocument!==document||!actor.requestId||p.claimRequest!==actor.requestId))throw Error('preview_user_control');
+   acquire(p,turn);
+   p.taskPaused=false;
+  }
+  if(action==='close')return close(p.id);
+  const operation=++p.operation;
+  const guard=()=>{if(p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');if(operation!==p.operation)throw Error('preview_result_unconfirmed');if(write&&(p.lockTurn!==turn||p.releasing||p.locationApproval))throw Error('preview_user_control');if(document!==p.document)throw Error('preview_document_changed');};
+  guard();p.busy=true;
   const work=(async()=>{
-   if(action==='read'){const result=await automation.read(p.view.webContents,input);guard();const related=[...pages.values()].filter(other=>other!==p&&other.owner===actor.owner&&other.threadId===actor.threadId);return {...publicPage(p),...result,relatedPages:related.slice(0,20).map(other=>({pageId:other.id,url:other.view.webContents.getURL(),title:other.view.webContents.getTitle(),control:other.control})),relatedPagesTruncated:related.length>20};}
+   if(action==='read'){const result=await automation.read(p.view.webContents,input);guard();p.readTurn=turn;p.readDocument=document;const related=[...pages.values()].filter(other=>other!==p&&other.owner===actor.owner&&other.threadId===actor.threadId);return {...publicPage(p),...result,relatedPages:related.slice(0,20).map(other=>({pageId:other.id,url:other.view.webContents.getURL(),title:other.view.webContents.getTitle(),control:other.control})),relatedPagesTruncated:related.length>20};}
    if(action==='screenshot'){const image=await p.view.webContents.capturePage(undefined,{stayHidden:true});guard();return {...publicPage(p),mime:'image/png',data:image.toPNG().toString('base64')};}
    if(action==='act'){
     if(input.action==='click'&&input.requestLocationApproval===true&&actor.turnId)p.locationContext={requestId:actor.requestId,turnId:actor.turnId,runId:actor.runId};
@@ -384,8 +481,18 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    if(action==='navigate'){await p.view.webContents.loadURL(input.url);return publicPage(p);}
    throw Error('preview_action_denied');
   })();
-  let timer;p.inFlight=Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>{p.operation++;p.control='user';p.error='网页操作结果未确认，请先核对当前页面。';changed();reject(Error('preview_result_unconfirmed'));},15000);})]);
-  try{return await p.inFlight;}finally{clearTimeout(timer);p.locationContext=undefined;p.busy=false;p.inFlight=undefined;}
+  return waitForWork(p,work.then(result=>{
+   if(write&&operation===p.operation){
+    p.manualTurn=undefined;
+    if(p.resultUnknown){p.resultUnknown=false;p.error=undefined;updateCover();changed();}
+   }
+   return result;
+  }),write,turn);
  },expirePermissions(){for(const request of permissions.values())finishPermission(request,false,true);},
- close(){for(const id of [...pages.keys()])close(id);browserSession.protocol.unhandle('homer-preview');}};
+ releaseAll(){for(const p of pages.values())if(locked(p))void release(p,true);},
+ close(){
+  for(const id of [...pages.keys()])close(id);
+  if(cover&&!cover.webContents.isDestroyed())cover.webContents.close();
+  browserSession.protocol.unhandle('homer-preview');
+ }};
 }

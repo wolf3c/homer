@@ -4,7 +4,7 @@ import{referenceKey,referencesOf,type PreviewSource,type PreviewRequest,type Pre
 import{useAnnotationDraft,type AnnotationDraft}from'./annotation-draft';
 import{connectionFetch}from'./web-connection-client';
 import './browser-preview.css';
-import{ArrowLeft,ArrowRight,RotateCw,Hand,Play,MapPin,Clock,X,ChevronRight}from'lucide-react';
+import{ArrowLeft,ArrowRight,RotateCw,MapPin,Clock,X,ChevronRight}from'lucide-react';
 import{TooltipIconButton}from'./vendor/assistant-ui/attachment-icon-button';
 import{PreviewToolbar}from'./preview-toolbar';
 import{AnnotationButton}from'./annotation-button';
@@ -28,6 +28,7 @@ export function useBrowserPages(threadId:string){
 type LocationPanel={scope:string;session:symbol;grants?:string[];history?:boolean;busy?:boolean;notice?:string};
 const locationLabel=(type:string)=>type==='geolocation-approximate'?'近似位置':'位置';
 type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean,htmlNotes?:undefined,capture?:BrowserCaptureRegion)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
+let layoutRevision=0;
 export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true,onLocationApproval}:Props){
  const enabled=referenceEnabled&&!page.resource&&(page.source.kind!=='browser'||!!(page.source.requestId||page.source.messageId));
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
@@ -83,8 +84,8 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
    const covered=[...document.querySelectorAll<HTMLElement>('[role="dialog"]:not(#canvas-panel,[data-preview-local-quote]),[role="alertdialog"],[role="menu"]')].some(el=>el!==morePopup&&el.getClientRects().length>0);
    const top=Math.max(r.top,Math.ceil(morePopup?.getBoundingClientRect().bottom??r.top));
    const bounds=suspended||covered||!r.width||r.bottom<=top?null:{x:r.x,y:top,width:r.width,height:r.bottom-top};
-   void bridge.present({pageId:page.id,threadId:page.threadId,bounds}).then(()=>{
-    if(!disposed&&bounds&&panel&&locationPanel.current===panel&&!panel.dataset.ready&&node.getBoundingClientRect().top===r.top){
+   void bridge.present({pageId:page.id,threadId:page.threadId,revision:++layoutRevision,bounds}).then(applied=>{
+    if(applied&&!disposed&&bounds&&panel&&locationPanel.current===panel&&!panel.dataset.ready&&node.getBoundingClientRect().top===r.top){
      panel.dataset.ready='true';
      if(document.activeElement===button||document.activeElement===document.body)panel.focus();
     }
@@ -104,9 +105,9 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
   window.addEventListener('resize',schedule);window.addEventListener('scroll',schedule,true);
   return()=>{disposed=true;cancelAnimationFrame(frame);observer.disconnect();portals.disconnect();window.removeEventListener('resize',schedule);window.removeEventListener('scroll',schedule,true);};
  },[page.id,page.threadId,suspended,morePopup]);
- useLayoutEffect(()=>()=>{void window.homerBrowserPreview?.present({pageId:page.id,threadId:page.threadId,bounds:null}).catch(()=>{});},[page.id,page.threadId]);
- async function control(action:'takeover'|'resume'|'back'|'forward'|'reload'){
-  try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');if(action==='resume')setActive(false);return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
+ useLayoutEffect(()=>()=>{void window.homerBrowserPreview?.present({pageId:page.id,threadId:page.threadId,revision:++layoutRevision,bounds:null}).catch(()=>{});},[page.id,page.threadId]);
+ async function control(action:'takeover'|'back'|'forward'|'reload'){
+  try{await window.homerBrowserPreview?.control({pageId:page.id,threadId:page.threadId,action});setNotice('');return true;}catch(e){setNotice(e instanceof Error?e.message:'网页操作未确认。');return false;}
  }
  const locationBridge=window.homerBrowserPreview;
  const url=new URL(page.url||'about:blank');
@@ -184,9 +185,8 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  const siteGrants=shown?.grants?.filter(key=>key.split(' ')[0]===origin);
  const grants=shown?.history?shown.grants:siteGrants;
  const siteButton=(canManage||settings)&&<button type="button" className="aui-button-icon" ref={locationButton} title="网站定位权限" aria-label="网站定位权限" aria-expanded={!!shown} aria-controls={shown?locationId:undefined} onClick={toggleLocation}><MapPin size={16} aria-hidden/></button>;
- return <div className="browser-preview" data-location-open={shown?'true':undefined}><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} identityStart={siteButton} identityEnd={approval&&<button type="button" className="aui-button-icon browser-location-pending" title="查看定位审批" aria-label="查看定位审批" onClick={()=>{dismissLocation();onLocationApproval?.(approval);}}><Clock size={16} aria-hidden/><span>待审批</span></button>} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
-  <AnnotationButton disabled={!enabled||page.loading||syncing} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
-  {page.agentAssigned&&<TooltipIconButton side="top" aria-label={page.control==='agent'?'用户接手':'交还 AI'} tooltip={page.control==='agent'?'暂停 AI 写入，由你操作':'结束用户接手，允许原任务继续操作此页'} onClick={()=>void control(page.control==='agent'?'takeover':'resume')}>{page.control==='agent'?<Hand size={16} aria-hidden/>:<Play size={16} aria-hidden/>}</TooltipIconButton>}
+ return <div className="browser-preview" data-location-open={shown?'true':undefined}><PreviewToolbar title={page.title} detail={page.loading?domain+' · 加载中':domain} identityStart={siteButton} identityEnd={approval&&<button type="button" className="aui-button-icon browser-location-pending" title="查看定位审批" aria-label="查看定位审批" onClick={()=>{dismissLocation();onLocationApproval?.(approval);}}><Clock size={16} aria-hidden/><span>待审批</span></button>} leading={<>{([{action:'back',label:'后退',Icon:ArrowLeft},{action:'forward',label:'前进',Icon:ArrowRight},{action:'reload',label:'重新加载',Icon:RotateCw}]as const).map(({action,label,Icon})=><TooltipIconButton side="top" key={action} disabled={page.locked} aria-label={label} tooltip={label} onClick={()=>void control(action)}><Icon size={16} aria-hidden/></TooltipIconButton>)}</>}>
+  <AnnotationButton disabled={!enabled||page.loading||syncing||page.locked} aria-busy={syncing} active={active} aria-label="批注" tooltip={active?'退出网页批注':'选择网页元素批注'} onClick={()=>void control('takeover').then(ok=>{if(ok)setActive(value=>!value);})}/>
   {items.length>0&&<PreviewMoreMenu key={JSON.stringify([page.id,page.document])} nativePageId={page.id} onPopup={setMorePopup} items={items} onAction={input=>{
    void runPreviewMore(input,()=>latest.current.isCurrent()&&latest.current.page.id===stamp.pageId&&latest.current.page.document===stamp.document,setNotice);
   }}/>}
@@ -208,7 +208,7 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
   </footer>}
  </section>}
  {(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
- <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容">{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;
+ <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容"><span className="sr-only" role="status">{page.locked?(page.error||"AI 正在操作此页"):""}</span>{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;
 }
 export function AttachmentBrowserPreview(props:Omit<Props,'page'>&{threadId:string;source:PreviewSource;onFileError?:(code:string)=>void}){
  const [page,setPage]=useState<BrowserPage>(),[error,setError]=useState('');const{pages}=useBrowserPages(props.threadId);

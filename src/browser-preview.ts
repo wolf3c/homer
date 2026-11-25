@@ -1,7 +1,7 @@
 import type{PreviewAnnotation,PreviewSource,PreviewScreenshot}from'./preview-reference.js';
 
 // Page state is owned by Electron, annotation notes by the existing composer.
-export type BrowserPage={id:string;threadId:string;owner:string;url:string;title:string;document:number;control:'user'|'agent';agentAssigned?:boolean;source:PreviewSource;resource?:string;loading?:boolean;error?:string;fileError?:string;locationDenied?:true;locationApproval?:string};
+export type BrowserPage={id:string;threadId:string;owner:string;url:string;title:string;document:number;control:'user'|'agent';locked?:boolean;agentAssigned?:boolean;source:PreviewSource;resource?:string;loading?:boolean;error?:string;fileError?:string;locationDenied?:true;locationApproval?:string};
 export type PreviewLinkResult={page:BrowserPage}|{messageId:string;destination:string;title:string}|{attachment:{messageId:string;assetId:string;revision:number;resource?:string;sha256?:string;title:string}};
 export type BrowserAnnotationState={document:number;active:boolean;revision:number;epoch:number;notes:PreviewAnnotation[];focusId?:string;focusRequest?:string;historyNote?:PreviewAnnotation};
 export type BrowserCaptureImage={data:string;hash:string;width:number;height:number};
@@ -32,8 +32,8 @@ export type BrowserPreviewBridge={
  list(threadId:string):Promise<BrowserPage[]>;
  locationGrants?():Promise<string[]>;
  revokeLocation?(key:string):Promise<string[]>;
- present(input:{pageId:string;threadId:string;bounds:{x:number;y:number;width:number;height:number}|null}):Promise<void>;
- control(input:{pageId:string;threadId:string;action:'takeover'|'resume'|'close'|'back'|'forward'|'reload'}):Promise<void>;
+ present(input:{pageId:string;threadId:string;revision:number;bounds:{x:number;y:number;width:number;height:number}|null}):Promise<boolean>;
+ control(input:{pageId:string;threadId:string;action:'takeover'|'close'|'back'|'forward'|'reload'}):Promise<void>;
  annotations(input:{pageId:string;threadId:string;state:BrowserAnnotationState}):Promise<void>;
  reply(input:{pageId:string;changeId:string;state:BrowserAnnotationReply}):Promise<void>;
  onChanged(listener:()=>void):()=>void;
