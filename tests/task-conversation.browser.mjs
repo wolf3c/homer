@@ -92,11 +92,20 @@ try{
    };
    const archivedTitle='归档事项'+ '合成标题用于检查窄屏换行'.repeat(4);
    const c=create(archivedTitle,'request-2');
+   const secondTitleTaskName='合成多标题第二事项';
+   const secondTitleTask=create(secondTitleTaskName,'request-3');
    db.prepare("UPDATE tasks SET historyState='archived',state='paused' WHERE id=?").run(c);
    const publish=(body,taskId)=>f.attach(body,[],{taskId,taskVersion:1}).messageId;
    const title=id=>'#message-'+id+' .message-task-open';
    const messageA=publish('合成事项入口 A',a), continuation=publish('连续事项入口 A',a);
    const messageC=publish('历史归档事项入口',c);
+   const addTitles=messages=>messages.map(message=>message.id===messageC?{...message,taskSources:[
+    {title:archivedTitle,target:{taskId:c,version:1},previewVerified:true},
+    {title:archivedTitle,target:{taskId:secondTitleTask,version:1},previewVerified:true},
+    {title:'证据不足的历史事项标题'.repeat(6),target:{taskId:'legacy',version:1}},
+   ]}:message);
+   const stateWithTasks=f.bridge.history.state;
+   f.bridge.history.state=async()=>{const state=await stateWithTasks();return {...state,messages:addTitles(state.messages)};};
    let denyOriginal=false,originalReads=0;
    const historyPage=f.bridge.history.page;
    f.bridge.history.page=async input=>{
@@ -107,7 +116,8 @@ try{
       throw Error('history_message_not_found');
      }
     }
-    return historyPage(input);
+    const result=await historyPage(input);
+    return {...result,messages:addTitles(result.messages)};
    };
    const originalSummary=f.bridge.taskOverview.summary;
    let summaryMode='mismatch';
@@ -185,6 +195,45 @@ try{
    await click('.canvas-collapse');
    await closed();
    await focused(title(messageA));
+   const secondTitle='#message-'+messageC+' .message-task-open:nth-child(2)';
+   const checkTitles=async (selector,buttonCount)=>{
+    check(await page.evaluate(`(()=>{
+     const row=document.querySelector(${JSON.stringify(selector)}),group=row.querySelector('.message-task-title');
+     const bubble=row.querySelector('.assistant-message-bubble').getBoundingClientRect();
+     const titles=Array.from(group.children);
+     return titles.length===3&&group.querySelectorAll('button').length===${buttonCount}&&
+      titles.every((title,i)=>{
+       const box=title.getBoundingClientRect(),label=title.querySelector('span')??title;
+       return Math.abs(box.left-bubble.left)<1&&box.right<=bubble.right+1&&
+        (i===0||titles[i-1].getBoundingClientRect().bottom<=box.top)&&
+        getComputedStyle(label).textOverflow==='ellipsis'&&label.scrollWidth>label.clientWidth&&
+        label.textContent===title.title;
+      });
+    })()`),'three independently truncated titles share the actual bubble width');
+   };
+   await checkTitles('#message-'+messageC,2);
+   await page.screenshot('message-task-titles-'+width+'.png');
+   if(width===390)await page.command('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
+   await focus(title(messageC));
+   await key('Tab',9);
+   await focused(secondTitle);
+   if(width===390){
+    const point=await page.evaluate(`(()=>{const button=document.querySelector(${JSON.stringify(secondTitle)}),r=button.getBoundingClientRect();
+     return {x:r.left+r.width/2,y:r.top+5,height:r.height};})()`);
+    check(point.height===44,'each touch title has its own 44px row');
+    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:point.x,y:point.y}]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+   }else await key('Enter',13);
+   await exists(taskReader(secondTitleTask));
+   await click('.canvas-collapse');
+   await closed();
+   await focused(secondTitle);
+   await key('Enter',13);
+   await exists(taskReader(secondTitleTask));
+   if(width===390)await page.command('Emulation.setTouchEmulationEnabled',{enabled:false});
+   await click('.canvas-tab-close[aria-label="关闭'+secondTitleTaskName+'"]');
+   await click('.canvas-collapse');
+   await closed();
    await click(title(messageC)+' svg');
    await page.until(()=>document.querySelector('.history-navigation')?.textContent.includes('暂时无法打开事项'),7000);
    check(!(await page.evaluate(()=>document.querySelector('#canvas-panel'))),'wrong summary identity cannot open a task');
@@ -221,6 +270,8 @@ try{
    const original=taskReader(c)+' #task-message-'+messageC+' .message-actions button[aria-label="在主对话查看"]';
    const bubble='#message-'+messageC+' .assistant-message-bubble';
    await exists(original);
+   await checkTitles(taskReader(c)+' #task-message-'+messageC,0);
+   await page.screenshot('message-task-titles-preview-'+width+'.png');
    check(await page.evaluate(`Array.from(document.querySelector(${JSON.stringify(original)}).parentElement.querySelectorAll('button'),button=>button.getAttribute('aria-label')).join(',')==='引用,复制,在主对话查看'`),'the original action sits beside quote and copy');
    await focus(original);
    check(await page.evaluate(`document.activeElement.matches(':focus-visible')`),'the original action has visible keyboard focus');
@@ -522,6 +573,7 @@ try{
    assert.deepEqual(page.errors,[]);
    assert.deepEqual(page.blocked,[]);
   }catch(error){
+   console.error("Browser assertion",error.stack??error);
    const focus=await page.evaluate(`(()=>{const target=document.querySelector(${JSON.stringify(expectedFocus??':focus')});return {active:document.activeElement.outerHTML.slice(0,400),target:target?.outerHTML.slice(0,120),inert:!!target?.closest('[inert]'),visibility:target&&getComputedStyle(target).visibility};})()`);
    console.log(JSON.stringify({width,focus,expectedFocus,errors:page.errors,lastRequests:page.requests.slice(-12)}));
    await page.screenshot('failure-'+width+'.png');

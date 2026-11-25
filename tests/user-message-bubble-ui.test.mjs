@@ -6,6 +6,7 @@ import ts from 'typescript';
 import React from 'react';
 import {buildSync} from 'esbuild';
 import {referencesOf,referenceKey} from '../src/preview-reference.js';
+import {scheduleMessageBody} from '../src/schedule-reference.js';
 import {renderToStaticMarkup} from 'react-dom/server';
 
 // Exercise the production UserMessage boundary without starting a backend.
@@ -26,10 +27,12 @@ function render(metadata){
  const calls={};
  const reference=props=>{(calls.references??=[]).push(props.reference);return React.createElement('aside',null,props.reference.source.title);};
  const exports={};
- Function('require','exports','useAuiState','draftQuotes','MessagePrimitive','Markdown','MediaAttachments','MessageDetails','MessageDaySeparator','MessageTimestamp','InactiveInteractionNotes','QuoteSource','referencesOf','referenceKey','ResourceReferenceBlock','QuestionFlow','ApprovalCard',js)(
-  require,exports,selector=>selector({message:{metadata:{custom:metadata},content:[{type:'text',text:metadata.original?.text??''}]}}),value=>value.quotes??(value.quote?[value.quote]:[]),
+ Function('require','exports','useContext','MessageIdPrefixContext','ScheduleNavigationContext','scheduleMessageBody','useAuiState','draftQuotes','MessagePrimitive','Markdown','MediaAttachments','MessageBubble','MessageDetails','MessageDaySeparator','MessageTimestamp','InactiveInteractionNotes','QuoteSource','referencesOf','referenceKey','ResourceReferenceBlock','QuestionFlow','ApprovalCard',js)(
+  require,exports,context=>context,'message-',undefined,scheduleMessageBody,
+  selector=>selector({message:{metadata:{custom:metadata},content:[{type:'text',text:metadata.original?.text??''}]}}),value=>value.quotes??(value.quote?[value.quote]:[]),
   {Root:props=>React.createElement('article',props),Parts:()=>React.createElement('p',null,metadata.original?.text)},()=>null,
   props=>{calls.media=props;return React.createElement(React.Fragment,null,...(props.references??[]).map((r,i)=>React.createElement(reference,{key:i,reference:r})),props.media.length?React.createElement('figure',null,props.media.map(m=>m.filename).join(', ')):null);},
+  ({side,children})=>React.createElement('div',{className:side+'-message-bubble'},children),
   props=>{calls.details=props;return React.createElement(React.Fragment,null,props.children,props.message.text?React.createElement('button',{'aria-label':'复制'},'复制'):null);},
   props=>{calls.day=props;return null;},props=>{calls.timestamp=props;return null;},
   props=>{calls.inactive=props;return null;},props=>{(calls.quotes??=[]).push(props);return React.createElement('blockquote',null,props.quote.text);},

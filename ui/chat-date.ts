@@ -40,9 +40,9 @@ export function conversationTimestamps(messages: readonly DatedConversationMessa
     if (!isVisibleConversationMessage(message) || !['user', 'assistant'].includes(message.role)) continue;
     const sourceKind = message.process?.sourceKind;
     const participatesInDates = !message.process || sourceKind === 'user';
-    const publishedWorkerReply = message.role === 'assistant' && sourceKind === 'worker' &&
+    const publishedReply = message.role === 'assistant' && (sourceKind === 'worker' || sourceKind === 'scheduled') &&
       message.audience === 'user' && message.text.trim();
-    if (!participatesInDates && !publishedWorkerReply) continue;
+    if (!participatesInDates && !publishedReply) continue;
     const date = realDate(message.createdAt);
     if (!date) continue; // Unknown time never creates a date segment or a fallback time.
     const dayKey = day(date);

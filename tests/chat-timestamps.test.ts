@@ -16,6 +16,7 @@ import { conversationTimestamps, isVisibleConversationMessage } from '../ui/chat
 import { projectConversation } from '../src/conversation-projection.js';
 import { ConversationHistory } from '../src/web-history.js';
 import { withDom } from './helpers/process-dom.mjs';
+import { scheduleMessageBody } from '../src/schedule-reference.js';
 
 const m = <T extends object = Record<never, never>>(id: string, createdAt: unknown, extra: T = {} as T) => ({ id, createdAt, role: 'user', text: '内容', ...extra });
 const at = (value: string) => new Date(value);
@@ -60,8 +61,9 @@ test('missing/invalid time never fabricates time; suppressed assistant and worke
   assert.equal(isVisibleConversationMessage(undefined), false);
 });
 
-test('published Worker replies have their own time without affecting date separators', () => {
+test('published Worker and scheduled replies use creation time without affecting date separators', () => {
   const worker = { role: 'assistant', audience: 'user', process: { sourceKind: 'worker' } };
+  const scheduled = { ...worker, process: { sourceKind: 'scheduled' }, scheduledSource: { scheduledAt: Date.parse('2025-01-01T23:59:00Z') } };
   const publishedAt = '2025-01-02T10:01:00.000Z';
   const times = conversationTimestamps([
     m('previous', '2025-01-01T10:00:00Z'),
@@ -69,14 +71,20 @@ test('published Worker replies have their own time without affecting date separa
     m('internal', publishedAt, { ...worker, audience: 'internal' }),
     m('empty', publishedAt, { ...worker, text: ' ' }),
     m('invalid', undefined, worker),
-    m('scheduled', publishedAt, { ...worker, process: { sourceKind: 'scheduled' } }),
+    m('scheduled', publishedAt, scheduled),
+    m('scheduled-internal', publishedAt, { ...scheduled, audience: 'internal' }),
+    m('scheduled-preview', publishedAt, { ...scheduled, text: '', status: 'running' }),
+    m('scheduled-blank', publishedAt, { ...scheduled, text: ' ' }),
+    m('scheduled-invalid', 'invalid', scheduled),
     m('next', '2025-01-02T10:02:00Z', { role: 'assistant' }),
   ], { now: at(publishedAt), timeZone: 'UTC' });
 
-  assert.deepEqual([...times.keys()], ['previous', 'published', 'next']);
-  assert.equal(times.get('published')?.dateTime, publishedAt);
-  assert.equal(times.get('published')?.time, defaultClock(publishedAt, 'UTC'));
-  assert.equal(times.get('published')?.dayLabel, undefined);
+  assert.deepEqual([...times.keys()], ['previous', 'published', 'scheduled', 'next']);
+  for (const id of ['published', 'scheduled']) {
+    assert.equal(times.get(id)?.dateTime, publishedAt);
+    assert.equal(times.get(id)?.time, defaultClock(publishedAt, 'UTC'));
+    assert.equal(times.get(id)?.dayLabel, undefined);
+  }
   assert.equal(times.get('next')?.dayLabel, '今天');
 });
 
@@ -194,12 +202,15 @@ Function('require', 'exports', ts.transpileModule(readFileSync(actionPath, 'utf8
 const detailsExports: any = {};
 const quotedActions:unknown[]=[];
 Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useState', 'useAui', 'useAuiState', 'useActionBarCopy', 'PreviewActionsContext', 'TaskMessageOriginContext', 'useComposerInputFocus', 'previewQuoteText', 'messageSourceParts', 'sourceQuote', 'sourceMessageText', 'MessageActions', 'MessageTimestamp',
-  declarations('../ui/message-details.tsx', ['MessageDetails', 'RuntimeMessageActions']))(
+  declarations('../ui/message-details.tsx', ['titleWidths', 'MessageBubble', 'MessageDetails', 'RuntimeMessageActions']))(
   require, detailsExports, React.useContext, React.useLayoutEffect, React.useRef, React.useState, AssistantUI.useAui, useAuiState, useActionBarCopy,
   React.createContext({ canQuote: () => true,appendQuote:(quote:unknown)=>quotedActions.push(quote) }), React.createContext(undefined), () => () => {}, previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText, actionExports.MessageActions, timestampExports.MessageTimestamp);
 const processExports: any = {};
 Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);
+const referenceExports: any = {};
+Function('require', 'exports', 'XIcon', declarations('../ui/reference-card.tsx', ['ReferenceCard']))(
+  require, referenceExports, require('lucide-react').XIcon);
 const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource','messageTaskTitles','singleReplyTask','continuesReplyTask']);
 // Keep the current production quote renderer in this rich-content boundary.
 // Only its stylesheet is omitted; installed primitives and icons stay real.
@@ -217,18 +228,19 @@ const artifacts = React.createContext({ files });
 const processes = React.createContext(new Map());
 const calls: any[] = [];
 const taskNavigation = React.createContext<((id:string)=>void)|undefined>(undefined);
-Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'MessageCirclePlus', 'referencesOf', 'ProcessMessagesContext', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', 'MessageIdPrefixContext', 'ScheduleNavigationContext', 'TaskPreviewNavigationContext', 'ListTodoIcon', 'Clock3', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;exports.continuesReplyTask=continuesReplyTask;')(
+Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageBubble', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'ReferenceCard', 'MessageCirclePlus', 'referencesOf', 'ProcessMessagesContext', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', 'MessageIdPrefixContext', 'ScheduleNavigationContext', 'TaskPreviewNavigationContext', 'ListTodoIcon', 'Clock3', 'scheduleMessageBody', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;exports.continuesReplyTask=continuesReplyTask;')(
   require, wrappers, useAuiState, React.useContext,React.useState,React.useRef,React.useEffect,locateSourceQuote, (v: any) => v.quotes ?? [], MessagePrimitive,
   () => h(MessagePrimitive.Parts, { children: ({ part }: any) => part.type === 'text' ? h('p', null, part.text) : null }),
   (props: any) => { calls.push(['media', props]); return props.media?.length ? h('figure', null, '附件') : null; },
+  detailsExports.MessageBubble,
   (props: any) => { calls.push(['details', props]); return h(detailsExports.MessageDetails, props); },
   (props: any) => { calls.push(['inactive', props]); return h('aside', null, '失效待答记录'); },
   artifacts, () => true,
   (props: any) => { calls.push(['process', props]); return h('section', { 'data-working': true }, 'Working/Worked', props.children); },
   () => null, () => null,
   (props: any) => { calls.push(['files', props]); return h('aside', null, '成果'); },
-  timestampExports.MessageDaySeparator, timestampExports.MessageTimestamp, isVisibleConversationMessage, quoteExports.QuoteBlock,
-  MessageCirclePlus, referencesOf, processes, processExports.useProcessParts, messageSourceParts, React.createContext(() => {}), React.createContext("message-"), React.createContext(undefined), taskNavigation, require("lucide-react").ListTodoIcon, require("lucide-react").Clock3);
+  timestampExports.MessageDaySeparator, timestampExports.MessageTimestamp, isVisibleConversationMessage, quoteExports.QuoteBlock, referenceExports.ReferenceCard,
+  MessageCirclePlus, referencesOf, processes, processExports.useProcessParts, messageSourceParts, React.createContext(() => {}), React.createContext("message-"), React.createContext(undefined), taskNavigation, require("lucide-react").ListTodoIcon, require("lucide-react").Clock3, scheduleMessageBody);
 
 
 function ConversationHarness({ source, openTask }: { source: any[]; openTask?: (id:string)=>void }) {
@@ -265,7 +277,10 @@ test('each reply displays its verified task names directly above its own bubble'
     m('empty', 4000, { role: 'assistant', text: '', taskSources: [task('extra', '没有对应气泡')] }),
     m('single', 5000, { role: 'assistant', text: '单项回复', taskSources: [task('four', '后台工作')] }),
   ]);
-  assert.deepEqual([...html.matchAll(/<p class="message-task-title">([^<]+)<\/p><div class="message-bubble-row"><div class="assistant-message-bubble">/g)].map(match => match[1]), ['隔离 Chrome 排查、检查附件来源、检查附件来源', '后台工作']);
+  const headers = [...html.matchAll(/<div class="message-task-title">(.*?)<\/div><div class="message-bubble-row"><div class="assistant-message-bubble">/g)];
+  assert.deepEqual(headers.map(([, title]) => [...title!.matchAll(/<span class="message-task-static" title="[^"]+">([^<]+)<\/span>/g)].map(match => match[1])), [
+    ['隔离 Chrome 排查', '检查附件来源', '检查附件来源'], ['后台工作'],
+  ]);
   assert.doesNotMatch(html, /重复来源|没有对应气泡|任务来源|事项 ·/);
   assert.match(html, /保留原正文[\s\S]*aria-label="复制"[\s\S]*aria-label="引用"/);
 });
@@ -281,7 +296,7 @@ test('task title buttons depend on each verified source and remain local to the 
   })];
   const html=renderToStaticMarkup(h(ConversationHarness,{source,openTask:()=>{}}));
   assert.equal((html.match(/class="message-task-open"/g)??[]).length,2);
-  assert.match(html,/<span>已有来源<\/span><\/button>、旧标题、同名事项、<button/);
+  assert.match(html,/<span>已有来源<\/span><\/button><span [^>]+>旧标题<\/span><span [^>]+>同名事项<\/span><button/);
   assert.doesNotMatch(renderConversation(source),/message-task-open/);
 });
 
@@ -293,7 +308,7 @@ test('a reply also names its immutable delegation events when taskSources are ab
     m('delegation', 1000, { role: 'assistant', text: '合成回复正文', process }),
     m('without-answer', 2000, { role: 'assistant', text: '', process }),
   ]);
-  assert.match(html, /<p class="message-task-title">核对合成版本、核对合成界面<\/p><div class="message-bubble-row"><div class="assistant-message-bubble">/);
+  assert.match(html, /<div class="message-task-title"><span [^>]+>核对合成版本<\/span><span [^>]+>核对合成界面<\/span><\/div><div class="message-bubble-row"><div class="assistant-message-bubble">/);
   assert.doesNotMatch(html, /重复交办/);
   assert.match(html, /data-conversation-message="without-answer"/);
   assert.doesNotMatch(html, /合成交办详情/);
@@ -303,11 +318,11 @@ test('a started Worker names its task above the process before an answer and kee
   const process={id:'worker-process',threadId:'thread',sourceKind:'worker',sourceMessageIds:['notice'],turnIds:['turn'],state:'working',status:'running',items:[]};
   const source=m('worker-process',1000,{role:'assistant',text:'',process,taskSources:[{title:'关于荷马显示版本号',target:{taskId:'task',version:1}}]});
   const before=renderConversation([source]);
-  assert.match(before,/<p class="message-task-title">关于荷马显示版本号<\/p><section data-working="true">/);
+  assert.match(before,/<div class="message-task-title"><span [^>]+>关于荷马显示版本号<\/span><\/div><section data-working="true">/);
   assert.doesNotMatch(before,/class="assistant-message-bubble"/);
   const after=renderConversation([{...source,text:'唯一答复',process:{...process,state:'worked',status:'completed'}}]);
   assert.equal((after.match(/class="message-task-title"/g)??[]).length,1);
-  assert.match(after,/<p class="message-task-title">关于荷马显示版本号<\/p><section data-working="true">/);
+  assert.match(after,/<div class="message-task-title"><span [^>]+>关于荷马显示版本号<\/span><\/div><section data-working="true">/);
   assert.equal((after.match(/唯一答复/g)??[]).length,1);
   assert.match(after,/data-conversation-message="worker-process"/);
   const unknown=renderConversation([{...source,taskSources:[],taskSourceUnresolved:true}]);
@@ -323,7 +338,7 @@ test('only exact received Worker snapshots name the process when the event has n
   const event=(key:string,sourceMessageId:string,title:string)=>({id:key,kind:'workerEvent',eventKey:key,event:{eventKind:'reply_received',sourceMessageId,taskId:'task',title,bodySource:'missing',body:'未提供摘要'}});
   const process={sourceKind:'worker',sourceMessageIds:['notice'],turnIds:['turn'],state:'working',status:'running',items:[event('exact','notice','准确事项'),event('other','unrelated','无关事项')]};
   const html=renderConversation([m('worker-snapshot',1000,{role:'assistant',text:'',process})]);
-  assert.match(html,/<p class="message-task-title">准确事项<\/p><section data-working="true">/);
+  assert.match(html,/<div class="message-task-title"><span [^>]+>准确事项<\/span><\/div><section data-working="true">/);
   assert.doesNotMatch(html,/无关事项|未提供摘要/);
 });
 

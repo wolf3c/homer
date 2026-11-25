@@ -15,6 +15,33 @@ import './vendor/assistant-ui/run-activity.css';
 
 export const TaskMessageOriginContext=createContext<{open:(id:string)=>void;pendingId?:string}|undefined>(undefined);
 
+let titleWidths: ResizeObserver | undefined;
+
+export function MessageBubble({side,messageId,fitTitle,children}:{
+  side:'user'|'assistant';messageId:string;fitTitle?:boolean;children:ReactNode;
+}){
+  const ref=useRef<HTMLDivElement>(null);
+  useLayoutEffect(()=>{
+    if(!fitTitle||typeof ResizeObserver==='undefined')return;
+    const bubble=ref.current;
+    const message=bubble?.closest<HTMLElement>('.message');
+    if(!bubble||!message)return;
+    // One observer for titled bubbles. The title stays in its existing flow position.
+    titleWidths??=new ResizeObserver(entries=>{
+      for(const {target,borderBoxSize} of entries){
+        target.closest<HTMLElement>('.message')?.style.setProperty('--message-bubble-width',`${borderBoxSize[0].inlineSize}px`);
+      }
+    });
+    const observer=titleWidths;
+    observer.observe(bubble,{box:'border-box'});
+    return ()=>{
+      observer.unobserve(bubble);
+      message.style.removeProperty('--message-bubble-width');
+    };
+  },[fitTitle]);
+  return <div ref={ref} className={side+'-message-bubble'}>{children}<MessageTimestamp messageId={messageId}/></div>;
+}
+
 const desktopActions='(hover:hover) and (pointer:fine) and (not (any-pointer:coarse))';
 
 export function MessageDetails({ message, runtime = false, children }: { message: import('../src/conversation-projection').DisplayMessage; runtime?: boolean; children?: ReactNode }) {

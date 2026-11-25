@@ -16,7 +16,8 @@ const checks=[],errors=[];let chrome,failure,exit;
 try{
  chrome=await openBrowser(dest,{mockKeychain:true});
  for(const width of [1440,390,320]){
-  const context=await chrome.browser.newContext({viewport:{width,height:960}}),page=await context.newPage();page.on('pageerror',error=>errors.push(String(error)));
+  const context=await chrome.browser.newContext({viewport:{width,height:960},timezoneId:'UTC',hasTouch:width===390,serviceWorkers:'block'}),page=await context.newPage();page.on('pageerror',error=>errors.push(String(error)));
+  await context.route(url=>['http:','https:'].includes(url.protocol)&&url.origin!==fixture.url,route=>route.abort());
   await page.clock.install({time:start});
   let reads=0,listReads=0,detailReads=0,deny=false,paged=false,longList=false,staleCursor=false,empty=false,currentRows=structuredClone(rows),detailText=text,holdDetail,onHeldDetail,holdList,onHeldList;
   await page.route('**/api/schedules/read',async route=>{
@@ -261,6 +262,41 @@ try{
   assert.equal(await mixed.locator('.web-annotation-reference').locator('a,button,summary,[tabindex]').count(),0);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   await page.screenshot({animations:'disabled',path:join(dest,'mixed-reference-cards-'+width+'.png')});
+  const scheduledAt=Date.parse('2026-11-17T23:59:00Z'),createdAt=Date.parse('2026-11-18T00:03:00Z');
+  const message=(id,role,text,createdAt)=>({id,threadId:'composer-review',role,text,status:'completed',createdAt});
+  const scheduled={...message('scheduled-answer','assistant','已整理',createdAt),audience:'user',
+   process:{id:'scheduled-process',sourceKind:'scheduled',sourceMessageIds:[],turnIds:[],state:'worked',status:'completed',items:[]},
+   scheduledSource:{scheduleId:rows[0].scheduleId,title:longTitle,scheduledAt}};
+  fixture.reset({messages:[message('before-midnight','user','上一天',scheduledAt),scheduled,message('after-midnight','user','新一天',createdAt+60000)]});
+  empty=false;
+  await page.reload();
+  const reply=page.locator('#message-scheduled-answer'),time=reply.locator('.assistant-message-bubble > time');
+  await time.waitFor();
+  assert.equal(await time.getAttribute('datetime'),new Date(createdAt).toISOString());
+  assert.equal(await time.textContent(),'00:03');
+  assert.equal(await reply.locator('time').count(),1);
+  assert.deepEqual(await page.locator('.message-day-separator time').evaluateAll(times=>times.map(time=>time.dateTime)),['2026-11-17','2026-11-18']);
+  assert.equal(await reply.evaluate(row=>row.parentElement.querySelector('.message-day-separator')),null);
+  const title=reply.getByRole('button',{name:longTitle,exact:true});
+  await page.waitForFunction(()=>{
+   const row=document.querySelector('#message-scheduled-answer'),bubble=row.querySelector('.assistant-message-bubble').getBoundingClientRect();
+   const button=row.querySelector('.schedule-source'),label=button.querySelector('span'),box=button.getBoundingClientRect();
+   return Math.abs(box.left-bubble.left)<1&&box.right<=bubble.right+1&&label.scrollWidth>label.clientWidth;
+  });
+  if(width===390)assert.equal(await time.evaluate(node=>getComputedStyle(node).opacity),'1');
+  else {
+   await page.mouse.move(1,1);
+   await page.waitForFunction(()=>getComputedStyle(document.querySelector('#message-scheduled-answer time')).opacity==='0');
+   await time.focus();
+   await page.waitForFunction(()=>getComputedStyle(document.activeElement).opacity==='1');
+  }
+  await title.focus();
+  await page.keyboard.press('Enter');
+  await dialog.locator('[data-slot=spec-sheet]').waitFor();
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state:'hidden'});
+  assert.equal(await title.evaluate(node=>node===document.activeElement),true);
+  await page.screenshot({animations:'disabled',path:join(dest,'scheduled-reply-'+width+'.png')});
   checks.push({width,reads,detailReads,relativeTime:true,loadedPagesPreserved:true,dueRefresh:true,foregroundRecovery:true,staleCursorRejected:width===1440,fileTabsPreserved:true,detailKeyboardFocus:true,longText:true,chipDraftRestored:true,exactIdSentOnce:true,stateRefresh:true,pagedDetailRefresh:true,disconnectClears:true,failureNotEmpty:true,exampleInComposer:true,existingDraftPreserved:true});await context.close();
  }
  assert.deepEqual(errors,[]);

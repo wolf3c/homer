@@ -64,7 +64,7 @@ import {HomerMessageQueue} from './homer-message-queue';
 import type {LegacyQueueEditSession} from './queue-draft-recovery';
 import {useQueueOperations} from './queue-operations';
 import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
-import { MessageDetails,TaskMessageOriginContext } from './message-details';
+import { MessageBubble,MessageDetails,TaskMessageOriginContext } from './message-details';
 import { ProcessMessageContent,InactiveInteractionNotes } from './process-nodes';
 import {projectProcessMessage,useProcessParts} from './process-message';
 import {confirmedTerminal} from './process-presentation';
@@ -247,8 +247,8 @@ function UserMessage() {
   const channelName=channelSource?.source==='wechat'?'微信':channelSource?.source==='telegram'?'Telegram':channelSource?.source==='dingtalk'?'钉钉':channelSource?.source;
   const hasText = useAuiState(s => s.message.content.some(part => part.type === 'text' && part.text.trim().length > 0));
   const quotes = draftQuotes(metadata as { quote?: MessageQuote; quotes?: AnnotatedQuote[] });
-  const bubble =
-    <div className={original?.interaction?undefined:"user-message-bubble"} data-kind={original?.interaction?.kind} role={original?.interaction?"group":undefined} aria-label={original?.interaction?(original.interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'):undefined}>
+  const interaction=original?.interaction;
+  const body=<>
     {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
     {scheduleReference&&<ScheduleChip value={scheduleReference} onOpen={openSchedule&& (trigger=>openSchedule(scheduleReference.scheduleId,trigger))}/>}
     {original?.taskReference&&<TaskReferenceSource reference={original.taskReference}/>}
@@ -257,10 +257,12 @@ function UserMessage() {
       {quote.annotation && <div className="markdown"><p style={{whiteSpace:'pre-wrap'}}>{quote.annotation}</p></div>}
     </Fragment>)}
     <MediaAttachments media={(metadata.media as MediaView[])??[]} messageId={String(metadata.messageId)} references={referencesOf(metadata as {resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]})} hideScreenshotDetails webAnnotationsReadOnly/>
-    {original?.interaction?<CompletedInteractionCard item={original.interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
+    {interaction?<CompletedInteractionCard item={interaction}/>:hasText&&<div data-aui-quote-selectable><MessagePrimitive.Parts components={{ Text: Markdown }} /></div>}
     {metadata.inputState==='uncertain'&&<p className="message-state">接收或结束结果待核实，未自动重跑</p>}
-    {!original?.interaction&&<MessageTimestamp messageId={String(metadata.messageId)}/>}
-    </div>;
+    </>;
+  const bubble=interaction
+    ? <div data-kind={interaction.kind} role="group" aria-label={interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'}>{body}</div>
+    : <MessageBubble side="user" messageId={String(metadata.messageId)}>{body}</MessageBubble>;
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={prefix+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} tabIndex={-1} className={"message "+(original?.interaction?"interaction-message":"user-message")} aria-label="你的消息">
     {original?.interaction
       ? <>{bubble}<MessageDetails runtime message={original}/>{!original.text&&<MessageTimestamp messageId={String(metadata.messageId)}/>}</>
@@ -326,18 +328,18 @@ function AssistantMessage() {
   const hasBubble=hasBody||!!original?.source||messageFiles.length>0;
   const completed=!!process&&confirmedTerminal(process)&&process.status==='completed';
   const titles=hasBubble||internal&&process.turnIds.length>0&&!completed ? messageTaskTitles(original) : undefined;
-  const taskTitle=titles&&(titles.size>0||internal)&&<p className="message-task-title">
-    {titles.size?[...titles].map(([key,{title,taskId}],index)=><Fragment key={key}>
-      {index>0?'、':null}{taskId&&openTask?<button type="button" className="message-task-open"
-        onClick={event=>openTask(taskId,event.currentTarget)}><ListTodoIcon size={15} aria-hidden/><span>{title}</span></button>:title}
-    </Fragment>):'事项标题待确认'}
-  </p>;
-  const bubble=hasBubble&&<div className="assistant-message-bubble">
+  const taskTitle=titles&&(titles.size>0||internal)&&<div className="message-task-title">
+    {titles.size?[...titles].map(([key,{title,taskId}])=>taskId&&openTask
+      ? <button key={key} type="button" className="message-task-open" title={title}
+          onClick={event=>openTask(taskId,event.currentTarget)}><ListTodoIcon size={15} aria-hidden/><span>{title}</span></button>
+      : <span key={key} className="message-task-static" title={title}>{title}</span>)
+      : <span className="message-task-static" title="事项标题待确认">事项标题待确认</span>}
+  </div>;
+  const bubble=hasBubble&&<MessageBubble side="assistant" messageId={String(metadata.messageId)} fitTitle={scheduled||!!taskTitle}>
     {hasBody&&<div data-aui-quote-selectable>{parts.renderAnswers(Markdown)}</div>}
     {!!original?.source&&<details><summary>查看原请求</summary>{draftQuotes(original.source).map((quote,i)=><blockquote key={i}><QuoteSource quote={quote} index={i}/>{quote.annotation&&<p>{quote.annotation}</p>}</blockquote>)}<MediaAttachments messageId={original.source.id} media={original.source.media??[]} references={referencesOf(original.source)}/><p style={{whiteSpace:'pre-wrap'}}>{original.source.text}</p></details>}
     <ArtifactFiles files={messageFiles}/>
-    <MessageTimestamp messageId={String(metadata.messageId)}/>
-  </div>;
+  </MessageBubble>;
   return <><MessageDaySeparator messageId={String(metadata.messageId)}/><MessagePrimitive.Root id={prefix+String(metadata.messageId)} data-conversation-message={String(metadata.messageId)} data-message-source={original&&messageSourceParts(original)!==undefined?'model':'host'} data-aui-quote-selectable="false" tabIndex={-1} className="message assistant-message" aria-label="荷马的回复">
     {scheduled?<p className="message-schedule-title">{scheduleId&&openSchedule
       ?<button type="button" className="schedule-source" title={scheduleTitle} aria-haspopup="dialog" onClick={event=>openSchedule(scheduleId,event.currentTarget)}><Clock3 size={15} aria-hidden/><span>{scheduleTitle}</span></button>
