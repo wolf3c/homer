@@ -1223,6 +1223,7 @@ node --import ./tests/fixtures/synthetic-home.mjs --import tsx --test --test-con
 
     mkdir -p .codex/scratch
     preview_run=$(mktemp -d "$PWD/.codex/scratch/preview-image-XXXXXX")
+    node scripts/build-preview-annotation.mjs
     node node_modules/vite/bin/vite.js build ui --config ui/vite.config.ts --configLoader runner --outDir "$preview_run/web"
     HOMER_COMPONENT_BUILD="$preview_run/web" HOMER_BROWSER_EVIDENCE="$preview_run/evidence" node tests/canvas-image-zoom.browser.mjs
 
@@ -1238,6 +1239,8 @@ UI类型检查、官方Canvas两项离线检查、脚本语法和独立Vite构�
 
 2026-11-17 在 HEAD 994fc5f4 与当前工作区组合上复审，标准模式1440／390／320px共25组全部通过，Chrome退出0、无信号、未强制终止、watchdog=false。沙箱内首次启动SIGABRT，未执行功能检查；获准在沙箱外运行独立profile后完成。UI类型检查、Vite构建和官方Canvas／Diff定向离线15/15通过；实际宽窄屏截图已核对。既有watchdog失败仍保留，不推断历史原因；未运行安装版、移动真机、真实屏幕阅读器或全量专项。Diff离线夹具补ResizeObserver桩仅支持合成布局，几何验收由浏览器专项承担。
 
+
+2026-11-25 专项覆盖当前 Preview 的按宽初始显示、标题行缩放组、真实窄侧栏、原图比例、鼠标锚点、触屏合成手势、单次框选和失败重试。合成上传延迟期间按 Esc 保留编辑，拒收后恢复原备注输入，重试保存原图坐标。原有换图、版本、加载失败、标签和消息缩略图断言保留。1440／390／320px 的 32 组检查通过，独立 Chrome 使用 mock-keychain 并正常退出。实体触控板、手机真机及安装版待验。 加载前启用触摸的 390px 用例覆盖缩放后框选、角点和旋转手柄、取消回滚、已有批注编辑与移除，确认全程只上传一次原图，移除最后一条批注后仍保留原图附件。
 
 ## 消息显示简化复审（2026-11-17）
 

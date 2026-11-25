@@ -50,7 +50,6 @@
 .canvas-media audio{display:block;width:100%;max-width:32rem}
 .canvas-media video{display:block;width:100%;height:auto;max-height:65dvh;min-width:0;object-fit:contain;background:#000}
 .html-preview-actions,.image-preview-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;min-width:0}
-.canvas-panel .canvas-image-root{width:100%;max-width:1200px;align-self:center}
 @media(prefers-reduced-motion:reduce){.canvas-panel :is(.html-preview-actions,.image-preview-actions) :is(.html-annotation-toggle,.image-annotation-toggle){transition:none}}
 .canvas-panel [data-slot=canvas-split-body].html-preview-body{padding:0;gap:0;overflow:hidden;min-height:0}
 .canvas-panel .html-preview-body>iframe{border:0;min-height:0;min-width:0;flex:1;height:100%}
@@ -239,3 +238,80 @@
 .canvas-panel .canvas-file-actions button:first-child{background:var(--control);border-color:var(--control);color:var(--surface)}
 .canvas-panel .canvas-file-actions button[aria-disabled=true]{opacity:.65;cursor:wait}
 .canvas-panel:has(.canvas-file-fallback) .preview-toolbar{display:none}
+
+.canvas-panel .preview-toolbar:has(.image-preview-actions){
+ flex-wrap:nowrap;
+}
+.canvas-panel .preview-toolbar:has(.image-preview-actions)>.preview-toolbar-identity{
+ min-width:0;
+ flex:1 0 18px;
+}
+.preview-toolbar:has(.image-preview-actions) :is(.preview-toolbar-actions,.canvas-tab-actions,.image-preview-actions){
+ min-width:0;
+ flex:0 1 auto;
+ flex-wrap:nowrap;
+}
+.image-preview-actions .canvas-image-controls{
+ display:flex;
+ align-items:center;
+ gap:2px;
+ min-width:0;
+ overflow-x:auto;
+ scrollbar-width:none;
+ padding:2px;
+ overscroll-behavior-inline:contain;
+}
+.canvas-image-scale{
+ flex:none;
+ min-width:3em;
+ text-align:center;
+ font:12px/1.5 system-ui;
+}
+.preview-toolbar .canvas-image-controls :is(.image-fit,.image-original-size){width:auto}
+.preview-toolbar .canvas-image-controls [aria-pressed=true]{color:#0064d8}
+.preview-toolbar .canvas-image-controls button:focus-visible{outline-offset:-1px}
+@container canvas-panel (max-width:440px){
+ .preview-toolbar .image-preview-actions :is(.image-fit span,.preview-annotation-label){display:none}
+ .preview-toolbar .image-preview-actions button.image-annotation-toggle{min-width:32px}
+}
+@media(max-width:800px),(pointer:coarse){
+ .preview-toolbar .image-preview-actions .aui-button-icon{min-width:44px;height:44px}
+}
+@container canvas-panel (max-width:260px){
+ .image-preview-actions .canvas-image-controls{scrollbar-width:thin}
+}
+@container canvas-panel (max-width:440px){
+ @media(max-width:800px),(pointer:coarse){
+  .preview-toolbar .image-preview-actions button.image-annotation-toggle{min-width:44px}
+ }
+}
+.canvas-panel .canvas-image-body{
+ overflow:auto;
+ overflow-anchor:none;
+ min-height:0;
+}
+.canvas-image-viewport{
+ flex:none;
+ margin:14px;
+}
+.canvas-image-stage{
+ width:100%;
+ max-width:none;
+ margin-inline:auto;
+ user-select:none;
+}
+.canvas-image-stage[data-pannable]{cursor:grab;touch-action:none}
+.canvas-image-stage[data-dragging]{cursor:grabbing}
+.canvas-panel .canvas-image-stage .canvas-image-root{
+ width:100%;
+ max-width:none;
+ border-width:0;
+ outline:1px solid var(--line);
+}
+.canvas-panel .canvas-image-stage .canvas-image-root [data-slot=image-preview]{min-height:0}
+.canvas-image-stage .image-annotation{
+ width:100%;
+ max-width:none;
+ margin:0;
+}
+.canvas-image-stage .image-annotation .a9s-popup{max-width:calc(100cqw - 40px)}

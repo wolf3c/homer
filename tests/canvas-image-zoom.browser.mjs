@@ -1,4 +1,4 @@
-// Historical filename; now checks unified fit-width preview without zoom controls.
+// Preview zoom, panning and single-region annotations.
 // Real HomerApp/CanvasPanel; synthetic bytes and HTTP only, no account or model.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -9,7 +9,8 @@ import {openBrowser} from './helpers/image-zoom-browser.mjs';
 const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE);
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??process.env.HISTORY_FOLLOWUP_BUILD);
 const specs=[{id:'wide',title:'合成宽图.png',width:2400,height:1100},{id:'long',title:'合成长图.png',width:1000,height:3000},{id:'detail',title:'合成细字截图.png',width:1920,height:1080},{id:'small',title:'合成小图.png',width:160,height:100}];
-const checks=[],requests=[];
+const checks=[],requests=[],uploads=[];
+let rejectUpload;
 function drawImage({id,width,height}){
  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
  const c=canvas.getContext('2d');c.fillStyle='#f6f5f2';c.fillRect(0,0,width,height);
@@ -49,38 +50,270 @@ async function verifyTabInputs(page,width){
  checks.push({width,pointerTabs:true,keyboardTabs:true,programFocus:program,focusAfterClose:true});
 }
 const click=(page,selector)=>page.locator(selector).click();
-async function verifyWindow(page,width){
+async function verifyToolbar(page,width){
+ const controls=page.locator('.canvas-image-controls');
+ const annotate=page.locator('#canvas-panel').getByRole('button',{name:'批注',exact:true});
+ const checkLayout=()=>controls.evaluate(group=>{
+  const bar=group.closest('.preview-toolbar'),row=bar.getBoundingClientRect();
+  const annotation=bar.querySelector('.image-annotation-toggle').getBoundingClientRect();
+  const actions=[...bar.querySelectorAll('.image-annotation-toggle,[data-slot=file-download],[aria-label="更多"]')];
+  return {width:row.width,order:group.getBoundingClientRect().right<=annotation.left,
+   inside:actions.every(e=>{const b=e.getBoundingClientRect();return b.left>=row.left&&b.right<=row.right+1&&b.top>=row.top&&b.bottom<=row.bottom;}),
+   target:annotation.height,groupOverflow:group.scrollWidth>group.clientWidth};
+ });
  const initial=await view(page);
- await page.setViewportSize({width:width===1440?1100:width+40,height:780});await settle(page);
- const resized=await view(page);assert.notEqual(resized.width,initial.width);
- await page.setViewportSize({width,height:900});await settle(page);
- assert.equal(await page.locator('.canvas-image-controls').count(),0);
- checks.push({width,automaticWidthFit:true});
+ if(width===1440){
+  const separator=await page.locator('.preview-separator').boundingBox();
+  await page.mouse.move(separator.x+separator.width/2,separator.y+100);
+  await page.mouse.down();
+  await page.mouse.move(width-185,separator.y+100,{steps:12});
+  await page.mouse.up();
+ }else await page.setViewportSize({width:width+40,height:780});
+ await settle(page);
+ assert.notEqual((await view(page)).width,initial.width);
+ const row=await checkLayout();
+ assert(row.order&&row.inside,JSON.stringify(row));
+ if(width===1440)assert(row.width<220&&row.groupOverflow);
+ else assert(row.target>=44);
+ const fit=page.getByRole('button',{name:'适应窗口',exact:true});
+ await fit.focus();
+ const focus=await fit.evaluate(e=>{
+  const button=e.getBoundingClientRect(),group=e.parentElement.getBoundingClientRect();
+  return {focused:document.activeElement===e,active:document.activeElement?.outerHTML?.slice(0,120),visible:button.left>=group.left-1&&button.right<=group.right+1,button:button.toJSON(),group:group.toJSON()};
+ });
+ assert(focus.focused&&focus.visible,JSON.stringify(focus));
+ if(width!==1440){
+  await page.keyboard.press('Tab');
+  assert(await page.getByRole('button',{name:'100%',exact:true}).evaluate(e=>document.activeElement===e));
+ }
+ await page.screenshot({path:join(destination,'toolbar-'+width+'.png')});
+ if(width===1440){
+  const separator=await page.locator('.preview-separator').boundingBox();
+  await page.mouse.move(separator.x+separator.width/2,separator.y+100);
+  await page.mouse.down();
+  await page.mouse.move(width-initial.panelWidth,separator.y+100,{steps:12});
+  await page.mouse.up();
+ }else await page.setViewportSize({width,height:900});
+ await settle(page);
+ assert(await annotate.isVisible());
+ checks.push({width,toolbar:row,focusVisible:true});
 }
 async function verifyAnnotation(page,width){
  await page.getByRole('tab',{name:specs[2].title,exact:true}).click();
+ const image=page.locator('.image-annotation img'),body=page.locator('.canvas-image-body');
  await page.waitForFunction(()=>document.querySelector('.image-annotation img')?.naturalWidth===1920);
- const src=(await view(page)).src;
- await click(page,'#canvas-panel button[aria-label=批注]');
- await page.waitForSelector('.image-annotation.is-annotating .a9s-annotationlayer');
- assert.equal(await page.locator('.image-annotation img').getAttribute('src'),src);
- const r=await page.locator('.image-annotation img').boundingBox();
- await page.mouse.move(r.x+r.width*.15,r.y+30);await page.mouse.down();await page.mouse.move(r.x+r.width*.65,r.y+90,{steps:8});await page.mouse.up();
- await page.locator('.annotation-comment-form textarea').fill('统一状态验证');await page.locator('.annotation-comment-form button[type=submit]').click();await page.waitForSelector('.annotation-comment-form',{state:'detached'});
- assert.equal(await page.locator('.image-region-number').count(),1);
- await click(page,'#canvas-panel button[aria-label=批注]');
- assert.equal(await page.locator('#canvas-panel button[aria-label=批注]').getAttribute('aria-pressed'),'false');
- assert.equal(await page.locator('.image-region-number').count(),1);
- const normal=await view(page);await openFile(page,specs[2].title);await page.waitForFunction(()=>document.querySelector('.image-annotation img')?.naturalWidth===1920);await settle(page);const reopened=await view(page);
- assert(Math.abs(reopened.width-normal.width)<1);assert.equal(await page.locator('.image-region-number').count(),1);
- checks.push({width,saveAndReopen:true,blobUnchanged:true});
+ await image.evaluate(e=>{window.__previewImage=e;});
+ const annotate=page.locator('#canvas-panel').getByRole('button',{name:'批注',exact:true});
+ const original=page.getByRole('button',{name:'100%',exact:true});
+ const editor=page.locator('.annotation-comment-form');
+ const fit=page.getByRole('button',{name:'适应窗口',exact:true});
+ await fit.click();
+ assert(await image.evaluate(e=>{
+  const img=e.getBoundingClientRect(),viewport=e.closest('.canvas-image-body').getBoundingClientRect();
+  return img.top>=viewport.top&&img.bottom<=viewport.bottom&&img.right<=viewport.right;
+ }));
+ await original.click();
+ assert.equal((await view(page)).width,1920);
+ await body.evaluate(e=>e.scrollTo(100,60));
+ const viewport=await body.boundingBox(),point={x:viewport.x+viewport.width*.40,y:viewport.y+viewport.height*.35};
+ await page.mouse.move(point.x,point.y);
+ const scroll=(await view(page)).scroll;
+ await page.mouse.wheel(0,70);
+ await page.waitForFunction(y=>document.querySelector('.canvas-image-body').scrollTop>y,scroll[1]);
+ const beforeWheel=await view(page);
+ await page.keyboard.down('Control');
+ await page.mouse.wheel(0,-24);
+ await page.keyboard.up('Control');
+ await settle(page);
+ const zoomed=await view(page);
+ assert(zoomed.width>beforeWheel.width);
+ for(const [axis,offset,dimension] of [['x','left','width'],['y','top','height']])
+  assert(Math.abs((point[axis]-beforeWheel[offset])/beforeWheel[dimension]-(point[axis]-zoomed[offset])/zoomed[dimension])<.002);
+ await page.mouse.move(point.x,point.y);await page.mouse.down();
+ await page.mouse.move(point.x-44,point.y-45,{steps:5});await page.mouse.up();
+ const normal=await view(page);
+ assert(normal.scroll[0]>zoomed.scroll[0]&&normal.scroll[1]>zoomed.scroll[1]);
+ const stable=async()=>{
+  const current=await view(page);
+  assert.deepEqual(current.scroll,normal.scroll);
+  for(const key of ['width','height','left','top','src'])assert.equal(current[key],normal[key],key);
+  assert(await image.evaluate(e=>e===window.__previewImage));
+ };
+ const draw=async()=>{
+  await annotate.click();await stable();assert(await original.isDisabled());
+  await page.mouse.move(point.x,point.y);await page.mouse.down();
+  await page.mouse.move(point.x+64,point.y+56,{steps:8});await page.mouse.up();
+  await editor.waitFor();
+ };
+ const restored=async()=>{
+  await editor.waitFor({state:'detached'});
+  assert.equal(await annotate.getAttribute('aria-pressed'),'false');
+  assert(await annotate.evaluate(e=>document.activeElement===e));
+  assert(await original.isEnabled());await stable();
+ };
+ await draw();
+ await editor.getByRole('button',{name:'取消',exact:true}).click();
+ await restored();assert.equal(await page.locator('.image-region-number').count(),0);
+ await draw();
+ await page.keyboard.press('Escape');
+ await restored();
+ await draw();
+ const textarea=editor.locator('textarea');
+ await textarea.fill('放大后的原图坐标');
+ await page.screenshot({path:join(destination,'zoomed-annotation-'+width+'.png')});
+ const save=editor.getByRole('button',{name:'保存',exact:true});
+ if(width===1440){
+  const reached=new Promise(resolve=>{rejectUpload=resolve;});
+  await save.click();
+  const release=await reached;
+  try{
+   await page.keyboard.press('Escape');
+   assert.equal(await editor.getAttribute('aria-busy'),'true');
+   assert.equal(await annotate.getAttribute('aria-pressed'),'true');
+   assert(await page.locator('#canvas-panel').isVisible());
+  }finally{release();}
+  await editor.getByRole('alert').waitFor();
+  assert.equal(await textarea.inputValue(),'放大后的原图坐标');
+  await stable();
+ }
+ await save.click();
+ await restored();assert.equal(await page.locator('.image-region-number').count(),1);
+ const region=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('homer-draft:composer-review')).resourceReferences.find(r=>r.kind==='image').annotations[0].region);
+ const scale=normal.width/1920;
+ for(const [key,expected] of Object.entries({x:(point.x-normal.left)/scale,y:(point.y-normal.top)/scale,width:64/scale,height:56/scale}))
+  assert(Math.abs(region[key]-expected)<2,key+' '+JSON.stringify(region));
+ await annotate.press('Enter');
+ await page.keyboard.press('Enter');await page.keyboard.press('ArrowRight');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+ await editor.waitFor();
+ await textarea.fill('键盘框选');
+ await textarea.press('Enter');
+ await restored();assert.equal(await page.locator('.image-region-number').count(),2);
+ if(width===390)await verifyTouch(page,point);
+ await openFile(page,specs[2].title);await page.waitForFunction(()=>document.querySelector('.image-annotation img')?.naturalWidth===1920);await settle(page);
+ assert((await view(page)).width<1920);assert.equal(await page.locator('.image-region-number').count(),2);
+ checks.push({width,anchoredWheel:true,mousePan:true,exactRegion:region,stableAfterSaveCancelAndEscape:true,keyboardRectangle:true});
+}
+async function verifyTouch(page,{x,y}){
+ const session=await page.context().newCDPSession(page);
+ const send=(type,touchPoints)=>session.send('Input.dispatchTouchEvent',{type,touchPoints});
+ const touch=(id,x,y)=>({id,x,y});
+ await session.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2});
+ try{
+  const before=await view(page);
+  await send('touchStart',[touch(1,x,y)]);
+  await send('touchMove',[touch(1,x-35,y-42)]);
+  await send('touchEnd',[]);
+  const panned=await view(page);
+  assert.deepEqual(panned.scroll,before.scroll.map((value,index)=>value+[35,42][index]));
+  await send('touchStart',[touch(1,x-30,y),touch(2,x+30,y)]);
+  await send('touchMove',[touch(1,x-45,y),touch(2,x+45,y)]);
+  await send('touchEnd',[]);
+  await settle(page);
+  const zoomed=await view(page);
+  assert(Math.abs(zoomed.width/panned.width-1.5)<.01);
+  assert(Math.abs((x-panned.left)/panned.width-(x-zoomed.left)/zoomed.width)<.002);
+  assert(Math.abs((y-panned.top)/panned.height-(y-zoomed.top)/zoomed.height)<.002);
+  checks.push({width:390,syntheticSingleTouchPan:true,syntheticPinch:true});
+ }finally{
+  await session.send('Emulation.setTouchEmulationEnabled',{enabled:false});
+  await session.detach();
+ }
+}
+async function verifyTouchAnnotation(page,fixture,files){
+ const width=390;
+ fixture.reset({
+  messages:[{threadId:'composer-review',status:'completed',createdAt:1700000000000,id:'result-reply',requestId:'result-request',role:'assistant',text:'触屏批注夹具'}],
+  artifacts:[files[2].attachment],features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2},
+ });
+ const session=await page.context().newCDPSession(page);
+ await session.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:2});
+ await page.goto(fixture.url);
+ await openFile(page,specs[2].title);
+ const annotate=page.getByRole('button',{name:'批注',exact:true});
+ const editor=page.locator('.annotation-comment-form');
+ const touch=(type,x,y)=>session.send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[{x,y,id:1}]});
+ async function drag(x,y,dx,dy,hold=false){
+  await touch('touchStart',x,y);
+  for(let i=1;i<=6;i++)await touch('touchMove',x+dx*i/6,y+dy*i/6);
+  // Native selection treats a release within 250ms as a click.
+  if(hold)await page.waitForTimeout(280);
+  await touch('touchEnd');
+ }
+ const shapes=()=>page.locator('.a9s-touch-handle .a9s-handle-buffer').evaluateAll(nodes=>nodes.map(el=>[Number(el.getAttribute('cx')),Number(el.getAttribute('cy'))]));
+ const draft=()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('homer-draft:composer-review')).resourceReferences?.find(r=>r.kind==='image'));
+ const startUploads=uploads.length;
+ await page.getByRole('button',{name:'100%',exact:true}).click();
+ await page.locator('.canvas-image-body').evaluate(e=>e.scrollTo(100,60));
+ const viewport=await page.locator('.canvas-image-body').boundingBox(),x=viewport.x+95,y=viewport.y+210;
+ const normal=await view(page);
+ assert.equal(normal.width,1920);
+ await annotate.click();
+ await drag(x,y,135,115);
+ await editor.locator('textarea').fill('触摸原始批注');
+ await editor.getByRole('button',{name:'保存',exact:true}).click();
+ await editor.waitFor({state:'detached'});
+ const original=await draft();
+ assert.equal(original.annotations.length,1);
+ assert.equal(uploads.length-startUploads,1);
+ const openRegion=async()=>{
+  await annotate.click();
+  await touch('touchStart',x+65,y+60);
+  await touch('touchEnd');
+  await editor.waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.a9s-touch-handle .a9s-handle-buffer').length===5);
+ };
+ await openRegion();
+ const before=await shapes();
+ async function dragHandle(index,dx,dy){
+  const handle=page.locator('.a9s-touch-handle .a9s-handle-buffer').nth(index);
+  const {x,y,width,height}=await handle.boundingBox();
+  assert(await handle.evaluate(el=>{
+   const r=el.getBoundingClientRect();
+   return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===el;
+  }));
+  await drag(x+width/2,y+height/2,dx,dy,true);
+ }
+ // Annotorious renders the rotation handle before the four corner handles.
+ await dragHandle(3,25,20);
+ const resized=await shapes();
+ assert.equal(resized.length,before.length,'touch corner drag must keep the selection active');
+ assert.notDeepEqual(resized,before,'touch corner drag must resize the selected rectangle');
+ await dragHandle(0,43,12);
+ const rotated=await shapes();
+ assert.equal(rotated.length,before.length,'touch rotation must keep the selection active');
+ assert.notDeepEqual(rotated,resized,'touch rotation handle must change the selected rectangle');
+ await page.screenshot({path:join(destination,'touch-adjusted.png')});
+ await editor.getByRole('button',{name:'取消',exact:true}).click();
+ await editor.waitFor({state:'detached'});
+ assert.deepEqual(await draft(),original);
+ assert.deepEqual((await view(page)).scroll,normal.scroll);
+ assert.equal((await view(page)).width,normal.width);
+ await openRegion();
+ assert.deepEqual(await shapes(),before);
+ await editor.locator('textarea').fill('触摸修改后保存');
+ await editor.getByRole('button',{name:'保存',exact:true}).click();
+ await editor.waitFor({state:'detached'});
+ const edited=await draft();
+ assert.deepEqual(edited.annotations,[{...original.annotations[0],comment:'触摸修改后保存'}]);
+ assert.deepEqual(edited.image,original.image);
+ await openRegion();
+ await editor.getByRole('button',{name:'删除此批注'}).click();
+ await editor.waitFor({state:'detached'});
+ assert.equal(await draft(),undefined);
+ assert.equal(await page.locator('.image-region-number').count(),0);
+ assert.equal(await page.locator('.composer-area .aui-attachment-root').count(),1);
+ assert.equal(uploads.length-startUploads,1);
+ checks.push({width,touchEnabledBeforeLoad:true,touchDraw:true,touchResize:true,touchRotate:true,cancelRestoredGeometry:true,editAndDeleteSavedNote:true,originalUploadReused:true});
 }
 async function verifyPlain(page,fixture,files,width){
  await openFile(page,'合成矢量图.svg');await page.waitForFunction(()=>document.querySelector('.canvas-image-root img')?.naturalWidth===600);
- assert.equal(await page.locator('.image-annotation-toggle,.canvas-image-controls').count(),0);
+ assert.equal(await page.locator('.image-annotation-toggle').count(),0);
+ await page.getByRole('button',{name:'100%',exact:true}).click();
+ assert.equal(await page.locator('.canvas-image-root img').evaluate(e=>e.getBoundingClientRect().width),600);
+ await page.getByRole('button',{name:'适应窗口',exact:true}).click();
  assert(await page.locator('.canvas-image-root img').evaluate(e=>e.getBoundingClientRect().width<=innerWidth));
  fixture.update({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:0}});await openFile(page,specs[0].title);
- await page.waitForFunction(()=>document.querySelector('.canvas-image-root img')?.naturalWidth===1200);assert.equal(await page.locator('.image-annotation-toggle,.canvas-image-controls').count(),0);
+ await page.waitForFunction(()=>document.querySelector('.canvas-image-root img')?.naturalWidth===1200);assert.equal(await page.locator('.image-annotation-toggle').count(),0);assert(await page.locator('#canvas-panel').getByRole('button',{name:'放大图片',exact:true}).isEnabled());
  checks.push({width,plainSvgAndNoAnnotationCapability:true});
 }
 async function verifyReplacement(page,fixture,files,width){
@@ -89,13 +322,13 @@ async function verifyReplacement(page,fixture,files,width){
  fixture.update({artifacts:[replacement,...others].map(file=>file.attachment)});await openFile(page,specs[0].title);
  await page.waitForFunction(()=>document.querySelector('.image-annotation img')?.naturalWidth===1200);await settle(page);
  assert.notEqual((await view(page)).src,old);assert.equal(requests.filter(path=>path===replacement.path).length,1);
- await openFile(page,'合成损坏图片.png');await page.getByRole('alert').filter({hasText:'图片加载失败'}).waitFor();assert(await page.locator('.image-annotation-toggle').isDisabled());assert.equal(await page.locator('.canvas-image-controls').count(),0);
+ await openFile(page,'合成损坏图片.png');await page.getByRole('alert').filter({hasText:'此图片无法在当前预览中显示'}).waitFor();assert.equal(await page.locator('.image-annotation-toggle').count(),0);assert.equal(await page.locator('.canvas-image-controls').count(),0);
  checks.push({width,revisionReplaced:true,decodeErrorVisible:true});
 }
 const settle=page=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
 const view=page=>page.locator('.image-annotation img').evaluate(image=>{
  const r=image.getBoundingClientRect(),body=image.closest('[data-slot=canvas-split-body]'),bar=document.querySelector('.preview-toolbar').getBoundingClientRect();
- return{width:r.width,height:r.height,left:r.x,top:r.y,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,bodyWidth:body.clientWidth,barHeight:bar.height,overflow:document.documentElement.scrollWidth>innerWidth,src:image.src};
+ return{width:r.width,height:r.height,left:r.x,top:r.y,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,bodyWidth:body.clientWidth,panelWidth:body.closest('.canvas-panel').clientWidth,scroll:[body.scrollLeft,body.scrollTop],barHeight:bar.height,overflow:document.documentElement.scrollWidth>innerWidth,src:image.src};
 });
 
 async function verifyImage(page,spec,width){
@@ -103,7 +336,7 @@ async function verifyImage(page,spec,width){
  const initial=await view(page),reads=requests.length;
  if(spec.id==='detail')await page.screenshot({path:join(destination,'initial-'+width+'.png')});
  assert.equal(await page.locator('.image-annotation-toggle').getAttribute('aria-pressed'),'false');
- assert.equal(await page.locator('.canvas-image-controls').count(),0);assert(!initial.overflow&&initial.width<=initial.bodyWidth);
+ assert.equal(await page.locator('.canvas-image-controls').count(),1);assert(!initial.overflow&&initial.width<=initial.bodyWidth);
  assert(Math.abs(initial.width/initial.height-spec.width/spec.height)<.001);
  for(const active of[true,false,true,false]){
   await page.locator('.image-annotation-toggle').click();await settle(page);assert.equal(await page.locator('.image-annotation-toggle').getAttribute('aria-pressed'),String(active));
@@ -141,7 +374,7 @@ async function verifyScreen(page,fixture,files,width){
  for(const spec of specs)await verifyImage(page,spec,width);
  if(!process.argv.includes('--layout-only'))await verifyTabInputs(page,width);
 
- await verifyWindow(page,width);await verifyAnnotation(page,width);await verifyReplacement(page,fixture,files,width);await verifyPlain(page,fixture,files,width);
+ await verifyToolbar(page,width);await verifyAnnotation(page,width);await verifyReplacement(page,fixture,files,width);await verifyPlain(page,fixture,files,width);
  assert.deepEqual(fixture.received.messages,[]);assert.deepEqual(fixture.received.denied,[]);
 }
 function traceTabs(){
@@ -174,9 +407,17 @@ try{
  run=await openBrowser(destination,{mockKeychain});result.browser=run.browser.version();
  const context=await run.browser.newContext({viewport:{width:1440,height:900},deviceScaleFactor:1,serviceWorkers:'block'});
  await context.addInitScript(traceTabs);
- await context.route('**/*',route=>{
+ await context.route('**/*',async route=>{
   const url=new URL(route.request().url());
-  if(url.origin===fixture.url&&url.pathname==='/api/uploads'){const h=route.request().headers();return route.fulfill({json:{assetId:'asset-ffffffff-ffff-4fff-8fff-fffffffffff1',revision:1,filename:decodeURIComponent(h['x-homer-filename']),kind:'image',state:'ready',mime:'image/png',size:route.request().postDataBuffer().length,error:null}});}
+  if(url.origin===fixture.url&&url.pathname==='/api/uploads'){
+   const h=route.request().headers();
+   uploads.push(h['x-homer-upload']);
+   if(rejectUpload){
+    const accepted=rejectUpload;rejectUpload=undefined;
+    await new Promise(resolve=>accepted(resolve));
+    return route.fulfill({status:503,json:{error:'synthetic_upload_unconfirmed'}});
+   }
+   return route.fulfill({json:{assetId:'asset-ffffffff-ffff-4fff-8fff-fffffffffff1',revision:1,filename:decodeURIComponent(h['x-homer-filename']),kind:'image',state:'ready',mime:'image/png',size:route.request().postDataBuffer().length,error:null}});}
   if(url.origin===fixture.url||['about:','data:','blob:'].includes(url.protocol))return route.continue();
   blocked.push(url.href);return route.abort();
  });
@@ -197,6 +438,13 @@ try{
   }
   finally{await page.close();}
  }
+ const touchPage=await context.newPage();
+ await touchPage.setViewportSize({width:390,height:900});
+ touchPage.setDefaultTimeout(10000);
+ touchPage.on('pageerror',error=>errors.push({width:390,error:String(error)}));
+ try{await verifyTouchAnnotation(touchPage,fixture,files);}
+ catch(error){await touchPage.screenshot({path:join(destination,'touch-failure.png'),timeout:10000});throw error;}
+ finally{await touchPage.close();}
  assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);passed=true;
 }catch(error){result.failure=String(error.stack??error);}
 finally{

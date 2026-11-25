@@ -105,8 +105,8 @@ async function consumers(chrome){
    await click('.text-annotation-marker');await p.screenshot('text-'+width+'.png');await key('Escape');await until(()=>!document.querySelector('.annotation-comment-form'));
    }
    const beforeImage=await count();
-   await open(1);await click('.image-annotation-toggle');await until(()=>!!document.querySelector('.a9s-annotationlayer'));
-   const draw=async(a,b)=>{const r=await ev(()=>document.querySelector('.image-annotation img').getBoundingClientRect().toJSON()),start={x:r.x+r.width*a,y:r.y+r.height*.15},end={x:r.x+r.width*b,y:r.y+r.height*.6};await p.command('Input.dispatchMouseEvent',{type:'mousePressed',...start,button:'left',clickCount:1});for(let i=1;i<=5;i++)await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:start.x+(end.x-start.x)*i/5,y:start.y+(end.y-start.y)*i/5,button:'left',buttons:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',...end,button:'left',clickCount:1});await until(()=>!!document.querySelector('.annotation-comment-form'));};
+   await open(1);await until(()=>document.querySelector('.image-annotation-toggle')?.disabled===false);
+   const draw=async(a,b)=>{await click('.image-annotation-toggle');const r=await ev(()=>document.querySelector('.image-annotation img').getBoundingClientRect().toJSON()),start={x:r.x+r.width*a,y:r.y+r.height*.15},end={x:r.x+r.width*b,y:r.y+r.height*.6};await p.command('Input.dispatchMouseEvent',{type:'mousePressed',...start,button:'left',clickCount:1});for(let i=1;i<=5;i++)await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:start.x+(end.x-start.x)*i/5,y:start.y+(end.y-start.y)*i/5,button:'left',buttons:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',...end,button:'left',clickCount:1});await until(()=>!!document.querySelector('.annotation-comment-form'));};
    await draw(.1,.35);await fill('图片第一注');await key();assert.equal(await ev(()=>document.querySelector('.annotation-comment-form textarea')?.value.includes('\n')??false),false,'image consumer Enter must save without inserting a newline');await saved(beforeImage+1);
    let notes=(await draft()).resourceReferences.find(r=>r.kind==='image').annotations;const original=structuredClone(notes[0]);
    if(width===1440){
@@ -115,7 +115,7 @@ async function consumers(chrome){
     assert.equal(confirmed.length,34);assert.equal(confirmed[33].assetId,(await draft()).resourceReferences.find(r=>r.kind==='image').image.assetId);
     record('image',width,'33 restored attachments keep order when an annotated original is added');
    }
-   const edit=async()=>{await click('.a9s-annotation[data-id="'+original.id+'"] .a9s-inner');await until(()=>!!document.querySelector('.annotation-comment-form'));};
+   const edit=async()=>{await click('.image-annotation-toggle');await click('.a9s-annotation[data-id="'+original.id+'"] .a9s-inner');await until(()=>!!document.querySelector('.annotation-comment-form'));};
    await edit();await fill('图片两行');await key('Enter',8);assert.equal(await ev(()=>document.querySelector('.annotation-comment-form textarea').value),'图片两行\n');await ime();await invalid(beforeImage+1);await fill('图片已修改');await key();await saved(beforeImage+1);
    notes=(await draft()).resourceReferences.find(r=>r.kind==='image').annotations;assert.equal(notes[0].id,original.id);assert.deepEqual(notes[0].region,original.region);assert.equal(notes[0].comment,'图片已修改');
    await draw(.6,.9);await fill('图片第二注');await key();await saved(beforeImage+2);await edit();await fill('鼠标更新图片');await click('.annotation-comment-form button[type=submit]');await saved(beforeImage+2);

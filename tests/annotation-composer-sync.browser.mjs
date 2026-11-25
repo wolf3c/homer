@@ -99,15 +99,16 @@ try{
     await fc('h1');await fu('!!__q("textarea[placeholder^=What]")');await delay(220);await fc('textarea[placeholder^=What]');await chrome.command('Input.insertText',{text:'网页重新保存'},frame.sessionId);await fe('__all("button").find(b=>b.textContent==="Add").setAttribute("data-test-save","")');await fc('[data-test-save]');await fu('!__q("textarea[placeholder^=What]")');
    }
 
-   await close();await open(4);await until(()=>document.querySelector('#canvas-panel img')?.naturalWidth===240);await click('.image-annotation-toggle');await until(()=>!!document.querySelector('.a9s-annotationlayer'));
+   await close();await open(4);await until(()=>document.querySelector('.image-annotation-toggle')?.disabled===false);
    for(const [i,v] of [[.05,.12,.24,.4],[.36,.12,.55,.4],[.69,.12,.88,.4]].entries()){
+    await click('.image-annotation-toggle');
     const r=await ev(()=>document.querySelector('.image-annotation img').getBoundingClientRect().toJSON()),start={x:r.x+r.width*v[0],y:r.y+r.height*v[1]},end={x:r.x+r.width*v[2],y:r.y+r.height*v[3]};
     await p.command('Input.dispatchMouseEvent',{type:'mousePressed',...start,button:'left',clickCount:1});for(let k=1;k<=6;k++)await p.command('Input.dispatchMouseEvent',{type:'mouseMoved',x:start.x+(end.x-start.x)*k/6,y:start.y+(end.y-start.y)*k/6,button:'left',buttons:1});await p.command('Input.dispatchMouseEvent',{type:'mouseReleased',...end,button:'left',clickCount:1});
     await until(()=>!!document.querySelector('.image-annotation textarea'));await fill('图片备注 '+i);await save();
    }
    assert.equal(uploads.length-uploadStart,1);assert.equal((await draft()).resourceReferences.find(r=>r.kind==='image').annotations.length,3);record('real Annotorious saves three regions while preparing just one original image');
    const imageNotes=(await draft()).resourceReferences.find(r=>r.kind==='image').annotations;
-   const editImage=async id=>{await click('.a9s-annotation[data-id="'+id+'"] .a9s-inner');await until(()=>!!document.querySelector('.image-annotation textarea'));};
+   const editImage=async id=>{if(await ev(()=>document.querySelector('.image-annotation-toggle').getAttribute('aria-pressed')==='false'))await click('.image-annotation-toggle');await click('.a9s-annotation[data-id="'+id+'"] .a9s-inner');await until(()=>!!document.querySelector('.image-annotation textarea'));};
    if(width===1440){
     await editImage(imageNotes[1].id);await fill('图片第二注修改');await save();
     assert.deepEqual((await draft()).resourceReferences.find(r=>r.kind==='image').annotations.map(n=>n.id),imageNotes.map(n=>n.id));

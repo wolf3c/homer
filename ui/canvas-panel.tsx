@@ -28,6 +28,7 @@ import {remarkPreviewMath} from './preview-selection';
 import {PreviewSelectionToolbar} from './preview-selection-toolbar';
 import{BrowserPreview,AttachmentBrowserPreview}from'./browser-preview';
 import{PreviewToolbar}from'./preview-toolbar';
+import{PreviewImageViewport}from'./preview-image-viewport';
 import{attachmentMoreItems,localMoreItems,PreviewMoreMenu,runPreviewMore,type PreviewMoreItem}from'./preview-more';
 import{AnnotationButton}from'./annotation-button';
 import type{BrowserPage}from'../src/browser-preview';
@@ -458,7 +459,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   },[file,sourceRange,showSource,sourceView]);
   const rawText=file&&<SourceCodePreview name={file.name} code={file.text} size={file.blob.size} range={sourceRange}/>;
   const hasFrame=!!webSource||file?.mime==='application/pdf';
-  const isImage=!!file&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
+  const imagePreview=!!file&&file.mime.startsWith('image/');
+  const isImage=imagePreview&&['image/png','image/jpeg','image/webp','image/gif'].includes(file.mime);
   const nativeHtml=isHtml&&!showSource&&window.homerBrowserPreview&&source;
   const fileFallback=!loading&&!readError&&(!!localInfo&&!file||!!file&&
     (!!mediaError||!(isPatch||isHtml||isMarkdown||isText||mediaKind||file.mime.startsWith('image/')||file.mime==='application/pdf')));
@@ -546,12 +548,12 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
     </div>,actions)}
     {actions&&!fileFallback&&createPortal(isHtml&&!showSource&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
-    </div>:isImage&&referencesEnabled&&source?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
+    </div>:imagePreview?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
     {actions&&!fileFallback&&moreItems.length>0&&createPortal(<PreviewMoreMenu items={moreItems} onAction={input=>{
       const epoch=generation.current;
       void runPreviewMore(input,()=>readerCurrent()&&generation.current===epoch,setNotice);
     }}/>,actions)}
-    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml&&!showSource?'html-preview-body':isPatch?'patch-preview-body':undefined}>
+    <CanvasSplitBody ref={body} tabIndex={-1} className={isHtml&&!showSource?'html-preview-body':isPatch?'patch-preview-body':imagePreview&&!fileFallback?'canvas-image-body':undefined}>
     {!fileFallback&&(notice||downloadNotice)&&<p role="status" className="canvas-note">{notice||downloadNotice}</p>}
     {webSource&&<p className="canvas-note canvas-web-narrow-note">网页元素批注暂限桌面使用。</p>}
     {local&&isImage&&file&&file.blob.size>8*1024*1024&&<p role="status" className="canvas-note">图片超过草稿附件的 8 MiB 上限，可预览。</p>}
@@ -587,7 +589,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
       </div>:
       isMarkdown?<div data-preview-text className="markdown canvas-markdown"><ReactMarkdown remarkPlugins={[remarkGfm,remarkMath,remarkPreviewMath]} rehypePlugins={markdownLinePlugin?[markdownLinePlugin,rehypeKatex]:[rehypeKatex]} urlTransform={(url,key)=>key==='href'&&source&&canOpenLinks&&isMessageFileLink(url)?url:defaultUrlTransform(url)} components={previewMarkdownComponents}>{file.text}</ReactMarkdown></div>:
       isText?rawText:
-      file.mime.startsWith('image/')?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation onLoadError={onImageError} initialEnabled={false} readOnly={!!historicImage} key={noteKey} url={file.url} title={source.title} actions={historicImage?undefined:imageActions} control={imageControl}
+      imagePreview?isImage&&referencesEnabled&&source&&imageFile&&imageActions?<Suspense fallback={<p role="status">加载图片批注器…</p>}><ImageAnnotation preview onLoadError={onImageError} initialEnabled={false} readOnly={!!historicImage} key={file.url} url={file.url} title={source.title} actions={imageActions} control={imageControl}
         notes={historicImage?.annotations??(imageReference?.kind==='image'?imageReference.annotations??[{id:'legacy-image-region',region:imageReference.region,comment:imageReference.comment}]:[])}
         onSave={(annotations,size,isCurrent)=>onReference({kind:'image',source,...size,annotations},annotationDraft.imageFile(noteKey,imageFile),isCurrent)}
         onRemove={id=>{
@@ -595,7 +597,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
             return onReference({kind:'image',source,width:imageReference.width,height:imageReference.height,annotations:[]});
           }
           annotationDraft.remove(noteKey,id);
-        }} focusAnnotation={historicImage?undefined:focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<ImageRoot className="canvas-image-root"><ImagePreview onStatusChange={status=>{if(status==='error')onImageError();}} src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot>:
+        }} focusAnnotation={historicImage?undefined:focusId} focusRequest={annotationFocus?.nonce}/></Suspense>:<PreviewImageViewport key={file.url} actions={imageActions}><ImageRoot className="canvas-image-root"><ImagePreview draggable={false} onStatusChange={status=>{if(status==='error')onImageError();}} src={file.url} alt={local?file.name:artifact?.title??'成果图片'}/></ImageRoot></PreviewImageViewport>:
       file.mime==='application/pdf'?<iframe title="PDF 成果" src={file.url}/>:null}
     </>:<p className="canvas-note">从对话中选择网页或成果进行预览。</p>}
     {hasFrame&&<div className="canvas-frame-exit"><p className="canvas-note">预览内部的快捷键由网页处理，可用 Tab 移到“收起预览”按钮。</p><button type="button" onClick={onClose}>收起预览</button></div>}
