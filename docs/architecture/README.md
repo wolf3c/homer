@@ -4,6 +4,8 @@
 
 2026-11-25 [工作状态与 Preview 三栏](preview-architecture.md#工作状态与-preview-三栏)已接入固定 300 CSS px 与 700 CSS px 下限，隔离 Chrome 及 macOS Electron 验证通过，安装版和移动真机待验。
 
+2026-11-25 [网页批注气泡](../superpowers/plans/2026-11-25-web-annotation-bubble.md)已在普通对话中按来源只读展示完整备注。隔离 Chrome 三宽度及本地 HTML Electron 回归通过，安装版及移动真机待验。
+
 2026-11-24 [从工作状态打开事项对话](task-conversation-design.md)。Preview 标签已接入源码，支持可核实归属的历史、独立草稿及共用主队列。精确候选通过 101 项离线和 76 项宽窄屏检查；安装版及真机待验。
 
 2026-11-25 [对话气泡事项标题打开 Preview 的实施方案](../superpowers/plans/2026-11-25-message-task-preview.md)。源码已实现并通过独立复审。隔离 Chrome 99 项通过，安装版与真机待验。

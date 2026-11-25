@@ -1,7 +1,7 @@
 // Requirement-derived synthetic messages, isolated Chrome and in-memory transport.
 // No Homer service, account, model or persistent business data is used.
 import assert from 'node:assert/strict';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {composerFixture} from './fixtures/composer-browser-server.mjs';
 import {isolatedChrome} from './web-history-browser-cdp.mjs';
@@ -10,8 +10,13 @@ const destination=resolve(process.env.HOMER_BROWSER_EVIDENCE??'.codex/scratch/me
 const webDir=resolve(process.env.HOMER_COMPONENT_BUILD??process.env.HISTORY_FOLLOWUP_BUILD??'.codex/scratch/message-actions-20261023/candidate-web');
 mkdirSync(destination,{recursive:true});
 let earlier,releaseBefore;
+const sampleImage=readFileSync('assets/branding/odysseus-20261030/homer-odysseus-256.png');
 const fixture=await composerFixture({
  webDir,beforeDir:webDir,branding:resolve('assets/branding/odysseus-20261030/homer-odysseus-256.png'),
+ resource(req,res,url){
+  if(url.pathname!=='/api/media/web-mixed/asset-00000000-0000-0000-0000-000000000001/1'){res.writeHead(404).end();return;}
+  res.writeHead(200,{'Content-Type':'image/png'}).end(sampleImage);
+ },
  historyBefore:()=>earlier?'group-before':null,
  historyPage:({body,json,revision})=>{
   if(!earlier||body.request.before!=='group-before')return json({error:'fixture_route_not_allowed'},404);
@@ -26,6 +31,13 @@ let chrome;const checks=[];
 const markdown='# 合成回复\n\n**核对** [资料](https://example.com/hidden-target) 与 `x = 1`。\n\n| 项目 | 状态 |\n| --- | --- |\n| 核对 | 完成 |';
 const message=(id,role,text,status='completed')=>({id,role,text,status,threadId:'composer-review',requestId:'request-'+id,createdAt:1700000000000});
 const taskReply=(id,text,taskId)=>({...message(id,'assistant',text),taskSources:[{title:'合成事项',target:{taskId,version:1}}]});
+const pageSource={kind:'message-file',messageId:'web-original',destination:'plan.html',title:'套餐页'};
+const webNote=(element,comment)=>({id:element,element,elementPath:'h1',comment,x:0,y:0});
+const longRemark='保留完整备注。\n\n'+('BillingSubscriptionMigrationCompatibility '.repeat(8))+'末尾要求';
+const webRefs=[
+ {kind:'web',source:pageSource,annotations:[webNote('开始试用',longRemark),webNote('自动续费','说明取消规则。')]},
+ {kind:'web',source:{kind:'browser',url:'https://example.invalid/',title:'入口页'},page:{id:'page-00000000-0000-0000-0000-000000000001',url:'https://plans.example/',title:'套餐页'},annotations:[webNote('企业版','写明回复时间。')]},
+];
 const messages=[
  message('quote-user','user','合成用户原文'),
  taskReply('quote-assistant',markdown,'one'),
@@ -302,6 +314,79 @@ try{
     await wait(()=>!!document.querySelector('#message-group-0'));
     await check('group lead keeps its title when scrolled back into view',()=>getComputedStyle(document.querySelector('#message-group-0 .message-task-title')).clipPath==='none');
     checks.push({width,label:'prepending the same task updates its grouping across the page boundary and preserves the reading anchor'});
+   }
+   const original=message('web-original','assistant','普通引用原文');
+   const image={assetId:'asset-00000000-0000-0000-0000-000000000001',revision:1};
+   const mixed={...message('web-mixed','user','请修改套餐页。'),
+    quotes:[{messageId:original.id,text:original.text,annotation:'沿用原名。'}],
+    resourceReferences:[...webRefs,{kind:'image',source:{kind:'draft-image'},image,width:256,height:256,
+     annotations:[{id:'region',region:{x:0,y:0,width:20,height:20},comment:'保留图注。'}]}],
+    media:[{...image,kind:'image',state:'ready',mime:'image/png',size:sampleImage.length,filename:'截图.png'},
+     {assetId:'asset-00000000-0000-0000-0000-000000000002',revision:1,kind:'file',state:'ready',mime:'text/csv',size:10,filename:'套餐名称.csv'}],
+   };
+   const legacy={...message('web-legacy','user','先处理历史备注。'),resourceReference:{...webRefs[0],annotations:webRefs[0].annotations.map(note=>({...note,id:'legacy-note'}))}};
+   fixture.reset({messages:[original,legacy,mixed],features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2}});
+   await page.command('Page.reload');
+   const mixedRow='#message-web-mixed';
+   await wait(()=>!!document.querySelector('#message-web-mixed'));
+   await check('web annotations use separate static groups in the ordinary bubble',()=>{
+    const groups=[...document.querySelectorAll('#message-web-mixed .web-annotation-reference')];
+    return groups.length===2&&groups.every(group=>group.querySelector('.web-annotation-title')?.textContent==='套餐页'&&!group.querySelector('a, button, summary, [tabindex]'))&&groups[0].querySelectorAll('ol > li').length===2&&groups[1].querySelectorAll('ol > li').length===1&&groups[1].querySelector('.web-annotation-host')?.textContent==='plans.example';
+   });
+   const shown=await page.evaluate(()=>[...document.querySelectorAll('#message-web-mixed .web-annotation-reference li')].map(item=>[
+    item.querySelector('.web-annotation-element').textContent,item.querySelector('.web-annotation-comment').textContent,
+   ]));
+   assert.deepEqual(shown,[['开始试用',longRemark],['自动续费','说明取消规则。'],['企业版','写明回复时间。']]);
+   await check('legacy and current web notes retain selectable text, list semantics and wrapping',()=>{
+    const legacy=document.querySelector('#message-web-legacy .web-annotation-reference');
+    const lists=[...document.querySelectorAll('#message-web-mixed .web-annotation-reference ol')];
+    const note=lists[0].querySelector('.web-annotation-comment');
+    const range=document.createRange(),selection=window.getSelection();
+    range.selectNodeContents(note);selection.removeAllRanges();selection.addRange(range);
+    const selected=selection.toString()===note.textContent;selection.removeAllRanges();
+    return legacy?.querySelectorAll('ol > li').length===2&&legacy.querySelector('.web-annotation-title')?.textContent==='套餐页'&&
+     lists.every(list=>list.getAttribute('role')==='list')&&selected&&getComputedStyle(note).whiteSpace==='pre-wrap'&&
+     document.querySelector('.thread-viewport').scrollWidth<=document.querySelector('.thread-viewport').clientWidth&&
+     lists.every(list=>list.scrollWidth<=list.clientWidth+1);
+   });
+   await check('paired image and ordinary file appear only once beside the web notes',()=>{
+    const row=document.querySelector('#message-web-mixed');
+    return row.querySelectorAll('.message-attachment').length===2&&row.querySelectorAll('.image-reference .message-attachment').length===1&&
+     row.querySelectorAll('.message-attachments .message-attachment').length===1&&row.textContent.includes('套餐名称.csv');
+   });
+   await page.evaluate(()=>window.__copyMode='success');
+   await press(page,mixedRow+' [aria-label="复制"]');
+   await wait(()=>window.__copies.at(-1)?.text==='请修改套餐页。');
+   await page.evaluate(()=>document.querySelector('#message-web-mixed .message-quote-source').scrollIntoView({block:'start'}));
+   await page.screenshot('web-annotations-'+width+'.png');
+   await page.evaluate(()=>document.querySelector('#message-web-mixed .message-quote-source').focus());
+   await key(page,'Tab');
+   await check('Tab skips the static web notes',()=>!document.activeElement.closest('.web-annotation-reference'));
+   await press(page,mixedRow+' .message-quote-source');
+   await wait(()=>document.activeElement?.id==='message-web-original');
+   checks.push({width,label:'ordinary quote keyboard navigation and whole-message copy preserve their behavior'});
+   if(width===1440){
+    earlier=Array.from({length:5},(_,i)=>message('web-older-'+i,'assistant','更早的消息 '+i));
+    releaseBefore=undefined;
+    fixture.reset({messages:[legacy,original,mixed],features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2}});
+    await page.command('Page.reload');
+    await wait(()=>!!document.querySelector('#message-web-legacy .web-annotation-comment'));
+    await page.command('Input.dispatchMouseEvent',{type:'mouseWheel',x:720,y:250,deltaX:0,deltaY:-10000});
+    const deadline=Date.now()+10000;
+    while(!releaseBefore&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.ok(releaseBefore,'reached the older-history request');
+    const position=()=>document.querySelector('#message-web-legacy .web-annotation-comment').getBoundingClientRect().top-document.querySelector('.thread-viewport').getBoundingClientRect().top;
+    await wait(()=>{
+     const remark=document.querySelector('#message-web-legacy .web-annotation-comment').getBoundingClientRect();
+     const viewport=document.querySelector('.thread-viewport').getBoundingClientRect();
+     return remark.top<viewport.bottom&&remark.bottom>viewport.top;
+    });
+    const saved=await page.evaluate(position);
+    releaseBefore();
+    await wait(()=>!!document.querySelector('#message-web-older-4'));
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.ok(Math.abs(await page.evaluate(position)-saved)<=2,'prepending older messages preserves the long annotation reading anchor');
+    checks.push({width,label:'long annotation reading anchor survives history pagination'});
    }
    assert.deepEqual(page.errors,[]);assert.deepEqual(page.blocked,[]);
   }catch(error){writeFileSync(join(destination,'failure-'+width+'.json'),JSON.stringify({error:String(error),state:await page.evaluate(()=>({text:document.querySelector('[contenteditable=true]')?.innerText,composer:document.querySelector('.composer-area')?.innerText,send:document.querySelector('[aria-label="发送消息"]')?.outerHTML})),received:fixture.received,errors:page.errors},null,2));await page.screenshot('failure-'+width+'.png');throw error;}finally{await page.close();}

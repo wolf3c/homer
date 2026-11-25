@@ -5,7 +5,7 @@ import {QuoteBlock} from './vendor/assistant-ui/quote';
 import './image-reference.css';
 import {BrowserPreviewContext} from './browser-preview';
 import type {DraftImageReference,PreviewSource,ResourceReference,PreviewRequest,WindowAXNode,PreviewImageAnnotation} from '../src/preview-reference';
-import {isDraftImageReference,referenceKey} from '../src/preview-reference';
+import {isDraftImageReference,referenceKey,webSourceUrl} from '../src/preview-reference';
 
 export type WebPreviewSource=Extract<PreviewSource,{kind:'web'}>;
 export type {PreviewRequest} from '../src/preview-reference';
@@ -43,10 +43,33 @@ function imageNotes(reference:Extract<ResourceReference,{kind:'image'}>):Preview
 export function ImageReferenceRegions({reference}:{reference:Extract<ResourceReference,{kind:'image'}>}){
  return <div className="image-reference-regions" aria-hidden="true">{imageNotes(reference).map((note,i)=><div key={note.id} className="image-reference-region" style={{left:note.region.x/reference.width*100+'%',top:note.region.y/reference.height*100+'%',width:note.region.width/reference.width*100+'%',height:note.region.height/reference.height*100+'%'}}><span>{i+1}</span></div>)}</div>;
 }
-export function ResourceReferenceBlock({reference,children,hideScreenshotDetails}:{reference:ResourceReference;children?:ReactNode;hideScreenshotDetails?:boolean}){
+export function ResourceReferenceBlock({reference,children,hideScreenshotDetails,webAnnotationsReadOnly}:{reference:ResourceReference;children?:ReactNode;hideScreenshotDetails?:boolean;webAnnotationsReadOnly?:boolean}){
  const browser=useContext(BrowserPreviewContext);
  const coordinates=(r:{x:number;y:number;width:number;height:number})=>`${Math.round(r.x)}, ${Math.round(r.y)} · ${Math.round(r.width)} × ${Math.round(r.height)}`;
  const source=reference.source,title=source.kind==='draft-image'?'截图':source.title;
+ if(webAnnotationsReadOnly&&reference.kind==='web'){
+  const {page,annotations}=reference;
+  const pageTitle=page?.title??title;
+  const host=(page?webSourceUrl(page.url)?.host:undefined)??('url' in source?webSourceUrl(source.url)?.host:undefined);
+  const multiple=annotations.length>1;
+  return <section className="preview-reference web-annotation-reference" aria-label={'网页批注 · '+pageTitle}>
+   <header className="web-annotation-source">
+    <GlobeIcon size={15} aria-hidden="true"/>
+    <div><div className="web-annotation-title">{pageTitle}</div>
+     {host&&host!==pageTitle&&<div className="web-annotation-host">{host}</div>}
+    </div>
+    {multiple&&<span className="web-annotation-count">{annotations.length} 条批注</span>}
+   </header>
+   <ol role="list">
+    {annotations.map(({id,element,comment},index)=><li key={id+':'+index}>
+     {multiple&&<span className="web-annotation-index" aria-hidden="true">{index+1}</span>}
+     <div><div className="web-annotation-element">{element}</div>
+      <p className="web-annotation-comment">{comment}</p>
+     </div>
+    </li>)}
+   </ol>
+  </section>;
+ }
  if(reference.kind==='image'&&imageNotes(reference).length){
   const notes=imageNotes(reference);
   const screenshot=isDraftImageReference(reference);

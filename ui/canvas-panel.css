@@ -71,6 +71,21 @@
 
 .preview-reference{position:relative;min-width:0;margin:8px 12px;font-size:13px;overflow-wrap:anywhere}
 .preview-reference-source{display:block;color:var(--muted);margin-bottom:4px}
+.web-annotation-reference{margin:0;background:var(--quote);border:1px solid var(--strong-line);border-radius:9px;line-height:1.5}
+.web-annotation-source,.web-annotation-reference li{display:flex;align-items:flex-start;gap:8px}
+.web-annotation-source{padding:9px 11px;border-bottom:1px solid var(--line)}
+.web-annotation-source>svg{flex:none;margin-top:2px;color:var(--muted)}
+.web-annotation-source>div,.web-annotation-reference li>div{flex:1;min-width:0}
+.web-annotation-title{font-weight:650}
+.web-annotation-host,.web-annotation-count,.web-annotation-element{font-size:12px;color:var(--muted)}
+.web-annotation-count{flex:none;white-space:nowrap}
+.web-annotation-reference ol{list-style:none;margin:0;padding:0 11px}
+.web-annotation-reference li{padding:9px 0 10px}
+.web-annotation-reference li+li{border-top:1px solid var(--line)}
+.web-annotation-index{flex:none;min-width:18px;padding:0 2px;background:var(--soft-hover);border-radius:4px;text-align:center;font-size:11px;line-height:18px}
+.web-annotation-element{padding-left:7px;border-left:2px solid var(--strong-line)}
+.web-annotation-comment{margin:4px 0 0;font-size:14px;line-height:1.55}
+.web-annotation-element,.web-annotation-comment{white-space:pre-wrap}
 .preview-reference [data-slot=quote-block-text].resource-annotations-text{display:block;white-space:pre-wrap;-webkit-line-clamp:unset;line-clamp:unset;max-height:220px;overflow:auto;font-style:normal}
 .text-annotation-editor{max-width:var(--available-width);max-height:var(--available-height);overflow:auto;overscroll-behavior:contain;border:0;border-radius:16px;padding:0;background:transparent}
 
