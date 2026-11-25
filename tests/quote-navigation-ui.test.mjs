@@ -18,7 +18,7 @@ const ReferenceCard=component('ui/reference-card.tsx','ReferenceCard',{XIcon:'sv
 const nodes=t=>t?.type===ReferenceCard?nodes(ReferenceCard(t.props)):!t||typeof t!=='object'?[]:Array.isArray(t)?t.flatMap(nodes):[t,...nodes(t.props?.children)];
 function actions({allowed=true,disabled=false,message={id:'source',text:'**原文** [资料](https://example.com/hidden)'}}={}){
  const quotes=[],notices=[];let focused=0,cleared=0;
- const Component=component('ui/message-details.tsx','RuntimeMessageActions',{useContext:()=>({canQuote:()=>allowed,appendQuote:q=>quotes.push(q)}),PreviewActionsContext:{},useAuiState:fn=>fn({thread:{isDisabled:disabled}}),useComposerInputFocus:()=>()=>focused++,useActionBarCopy:()=>({copy(){},isCopied:false}),previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,MessageActions:'actions',MessageTimestamp:'time',window:{getSelection:()=>({removeAllRanges(){cleared++;}})}});
+ const Component=component('ui/message-details.tsx','RuntimeMessageActions',{TaskMessageOriginContext:null,useContext:context=>context&&({canQuote:()=>allowed,appendQuote:q=>quotes.push(q)}),PreviewActionsContext:{},useAuiState:fn=>fn({thread:{isDisabled:disabled}}),useComposerInputFocus:()=>()=>focused++,useActionBarCopy:()=>({copy(){},isCopied:false}),previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText,MessageActions:'actions',MessageTimestamp:'time',window:{getSelection:()=>({removeAllRanges(){cleared++;}})}});
  const tree=Component({message,write:async()=>{},busy:false,notice:'',onNotice:n=>notices.push(n)});
  return {bar:nodes(tree).find(n=>n.type==='actions'),quotes,notices,get focused(){return focused;},get cleared(){return cleared;}};
 }

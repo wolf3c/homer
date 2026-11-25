@@ -27,7 +27,7 @@ try{
    await page.evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
    await page.command('Input.insertText',{text:value});
   };
-  let releaseSummary,releaseBrowser,releaseEarlier;
+  let releaseSummary,releaseBrowser,releaseEarlier,releaseOriginal;
   try{
    f.store.setMeta('mainAgentId','main:synthetic');
    const create=(name,requestId)=>f.tasks.createTask({agentId:'main:synthetic',threadId:thread,sourceRequestId:requestId},
@@ -62,6 +62,7 @@ try{
     updateSyntheticPublicText(f,'node-'+index,'合成事项答复 '+index);
     db.prepare("UPDATE conversation_messages SET audience='internal' WHERE id=?").run('node-'+index);
    }
+   db.prepare('UPDATE conversation_messages SET text=? WHERE id=?').run(Array.from({length:45},(_,i)=>'历史原文第 '+(i+1)+' 段').join('\n\n'),'user-9');
    const file=f.attach('',[{filename:'合成纪要.md',content:'# 合成文件正文'}],{taskId:a,taskVersion:1});
    let disposition='stale',releaseUpload,releaseDiscard;
    const discarded=[];
@@ -96,6 +97,18 @@ try{
    const title=id=>'#message-'+id+' .message-task-open';
    const messageA=publish('合成事项入口 A',a), continuation=publish('连续事项入口 A',a);
    const messageC=publish('历史归档事项入口',c);
+   let denyOriginal=false,originalReads=0;
+   const historyPage=f.bridge.history.page;
+   f.bridge.history.page=async input=>{
+    if(!input.request.taskId&&input.request.around==='user-9'){
+     originalReads++;
+     if(denyOriginal){
+      await new Promise(resolve=>{releaseOriginal=resolve;});
+      throw Error('history_message_not_found');
+     }
+    }
+    return historyPage(input);
+   };
    const originalSummary=f.bridge.taskOverview.summary;
    let summaryMode='mismatch';
    f.bridge.taskOverview.summary=async id=>{
@@ -205,10 +218,25 @@ try{
     }
     await page.command('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
    }
-   await exists(taskReader(c)+' .task-message-origin button');
-   await click(taskReader(c)+' .task-message-origin button');
+   const original=taskReader(c)+' #task-message-'+messageC+' .message-actions button[aria-label="在主对话查看"]';
+   const bubble='#message-'+messageC+' .assistant-message-bubble';
+   await exists(original);
+   check(await page.evaluate(`Array.from(document.querySelector(${JSON.stringify(original)}).parentElement.querySelectorAll('button'),button=>button.getAttribute('aria-label')).join(',')==='引用,复制,在主对话查看'`),'the original action sits beside quote and copy');
+   await focus(original);
+   check(await page.evaluate(`document.activeElement.matches(':focus-visible')`),'the original action has visible keyboard focus');
+   await page.screenshot('task-origin-action-'+width+'.png');
+   await key('Enter',13);
    if(width<700)await closed();
    await focused('#message-'+messageC);
+   const highlighted=`document.querySelector(${JSON.stringify(bubble)})?.getAnimations().find(animation=>animation.id==='task-original')?.playState==='running'`;
+   await page.until(highlighted,7000);
+   check(true,'the original bubble is highlighted');
+   await page.screenshot('task-origin-highlight-'+width+'.png');
+   if(width===1440){
+    await page.evaluate(`window.firstOriginHighlight=document.querySelector(${JSON.stringify(bubble)}).getAnimations().find(animation=>animation.id==='task-original')`);
+    await click(original);
+    await page.until(`window.firstOriginHighlight.playState==='idle' && document.querySelector(${JSON.stringify(bubble)})?.getAnimations().some(animation=>animation.id==='task-original')`,7000);
+   }
    if(width<700)await click('.conversation-header button[aria-label="预览"]');
    await exists(panel);
    await click('.canvas-tab-close[aria-label="关闭'+archivedTitle+'"]');
@@ -289,6 +317,8 @@ try{
    });
    for(let attempt=0;!releaseUpload&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
    check(!!releaseUpload&&uploaded.length===1,'the upload has one original identity');
+   const attachmentActions=`#task-message-${file.messageId} .message-actions button`;
+   check(await page.evaluate(`Array.from(document.querySelectorAll(${JSON.stringify(attachmentActions)}),button=>button.getAttribute('aria-label')).join(',')==='在主对话查看'`),'an attachment-only message keeps its original action');
    const fileButton=`.task-conversation [data-conversation-message="${file.messageId}"] [data-slot="file-list-item"]`;
    const found=await page.evaluate(`!!document.querySelector(${JSON.stringify(fileButton)})`);
    if(found)await click(fileButton);
@@ -351,6 +381,49 @@ try{
    check(await page.evaluate(()=>!!document.querySelector('#task-message-node-9')),'older task history crosses scoped scans');
    const actualIds=await page.evaluate(()=>Array.from(document.querySelectorAll('.task-conversation [data-conversation-message]')).map(row=>row.dataset.conversationMessage));
    check(actualIds.length===new Set(actualIds).size,'older rows render once');
+   const historicalOriginal='#task-message-user-9 .message-actions button[aria-label="在主对话查看"]';
+   denyOriginal=true;
+   await focus(historicalOriginal);
+   await key('Enter',13);
+   await page.until(`document.querySelector(${JSON.stringify(historicalOriginal)})?.getAttribute('aria-busy')==='true'`,7000);
+   check(await text('.task-origin-status')==='正在查找原消息…','slow history read announces progress');
+   await key('Enter',13);
+   for(let attempt=0;!releaseOriginal&&attempt<70;attempt++)await new Promise(resolve=>setTimeout(resolve,30));
+   assert.ok(releaseOriginal);
+   releaseOriginal();
+   await page.until(()=>document.querySelector('.task-origin-status')?.textContent==='暂时无法在主对话查看这条消息。',7000);
+   await focused(historicalOriginal);
+   check(await text(draft)==='事项 A 草稿','unavailable original keeps Preview, focus and draft');
+   await page.screenshot('task-origin-unavailable-'+width+'.png');
+   denyOriginal=false;
+   await page.command('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+   if(width===1440)await key('Enter',13);
+   else{
+    await page.command('Emulation.setTouchEmulationEnabled',{enabled:true});
+    const position=await page.evaluate(`(()=>{const button=document.querySelector(${JSON.stringify(historicalOriginal)});button.scrollIntoView({block:'nearest'});const box=button.getBoundingClientRect();return {x:box.x+box.width/2,y:box.y+box.height/2,width:box.width,height:box.height};})()`);
+    check(position.width>=44&&position.height>=44,'touch target is at least 44 CSS pixels');
+    await page.command('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:position.x,y:position.y}]});
+    await page.command('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await closed();
+   }
+   await focused('#message-user-9');
+   check(originalReads===2,'pending repeat is coalesced and retry reads main history once');
+   await page.until(()=>{
+    const row=document.querySelector('#message-user-9')?.getBoundingClientRect();
+    const view=document.querySelector('.preview-main-panel .thread-viewport').getBoundingClientRect();
+    const animations=document.querySelector('#message-user-9 .user-message-bubble')?.getAnimations();
+    return row&&row.height>view.height&&row.top>=view.top&&row.top<view.top+70
+      &&animations?.some(animation=>animation.id==='task-original'&&animation.effect.getKeyframes().length===2);
+   },7000);
+   check(true,'the start of a long original stays visible with the reduced-motion highlight');
+   await page.screenshot('task-origin-history-'+width+'.png');
+   if(width<700){
+    await page.command('Emulation.setTouchEmulationEnabled',{enabled:false});
+    await click('.conversation-header button[aria-label="预览"]');
+    await exists(draft);
+   }
+   check(await text(draft)==='事项 A 草稿','return to Preview keeps its draft');
+   await page.command('Emulation.setEmulatedMedia',{features:[]});
    f.history.revokeMessage(thread,'node-60');
    await page.until(()=>!document.querySelector('#task-message-node-60'),7000);
    check(await text(draft)==='事项 A 草稿','withdrawal refresh leaves draft untouched');
@@ -442,7 +515,7 @@ try{
    console.log(JSON.stringify({width,focus,expectedFocus,errors:page.errors,lastRequests:page.requests.slice(-12)}));
    await page.screenshot('failure-'+width+'.png');
    throw error;
-  }finally{releaseSummary?.();releaseBrowser?.();releaseEarlier?.();await page.close();await f.close();}
+  }finally{releaseSummary?.();releaseBrowser?.();releaseEarlier?.();releaseOriginal?.();await page.close();await f.close();}
  }
  console.log(JSON.stringify({checks,widths:[1440,390,320]}));
 }finally{const result=await chrome.close();console.log(JSON.stringify({chrome:result}));assert.equal(result.code,0);assert.equal(result.watchdog,false);}

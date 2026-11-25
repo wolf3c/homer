@@ -1,9 +1,10 @@
-import { useContext,useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext,useContext,useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {PreviewActionsContext} from './preview-reference';
 import {useAuiState} from '@assistant-ui/react';
 import {useComposerInputFocus} from './homer-composer-input';
 import type { ConversationMessage } from '../src/web-history';
 import './message-details.css';
+import {MessageSquareReply} from 'lucide-react';
 import {useActionBarCopy} from '@assistant-ui/core/react';
 import {previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText} from '../src/message-quote';
 import {MessageActions} from './vendor/assistant-ui/message-actions';
@@ -11,6 +12,8 @@ import {MessageTimestamp} from './message-timestamps';
 import {webSourceUrl} from '../src/preview-reference';
 import {Sources} from './vendor/assistant-ui/sources';
 import './vendor/assistant-ui/run-activity.css';
+
+export const TaskMessageOriginContext=createContext<{open:(id:string)=>void;pendingId?:string}|undefined>(undefined);
 
 const desktopActions='(hover:hover) and (pointer:fine) and (not (any-pointer:coarse))';
 
@@ -66,10 +69,11 @@ export function MessageDetails({ message, runtime = false, children }: { message
       if(current.current===id){copying.current = false; setBusy(false);}
     }
   }
+  const openOrigin=useContext(TaskMessageOriginContext);
   const sources = !!message.sources?.length && <MessageSources key={JSON.stringify([message.threadId,message.id])} sources={message.sources}/>;
-  const actions = !!message.text && (runtime
-    ? <RuntimeMessageActions message={message} write={copy} busy={busy} notice={notice} onNotice={setNotice} showTimestamp={!children}/>
-    : <><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>);
+  const actions = runtime
+    ? (message.text||openOrigin)&&<RuntimeMessageActions message={message} write={copy} busy={busy} notice={notice} onNotice={setNotice} showTimestamp={!children}/>
+    : !!message.text&&<><MessageActions className="message-actions" aria-label="消息操作" copied={notice==='已复制'} copying={busy} onCopy={()=>void copy(message.text).catch(()=>{})}><MessageTimestamp messageId={message.id}/></MessageActions>{notice&&<p className={'message-action-notice'+(notice==='已复制'?' sr-only':'')} role="status">{notice}</p>}</>;
   return children ? <><div ref={rowRef} className="message-bubble-row">{children}{actions}</div>{sources}</> : <>{sources}{actions}</>;
 }
 function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sources']>}){
@@ -80,6 +84,8 @@ function MessageSources({sources}:{sources:NonNullable<ConversationMessage['sour
 }
 function RuntimeMessageActions({message,write,busy,notice,onNotice,showTimestamp=true}:{message:import('../src/conversation-projection').DisplayMessage;write:(text:string)=>Promise<void>;busy:boolean;notice:string;onNotice:(text:string)=>void;showTimestamp?:boolean}){
   const {canQuote,appendQuote}=useContext(PreviewActionsContext);
+  const openOrigin=useContext(TaskMessageOriginContext);
+  const originLabel='在主对话查看';
   const disabled=useAuiState(s=>s.thread.isDisabled),focusInput=useComposerInputFocus();
   const {copy,isCopied}=useActionBarCopy({copyToClipboard:()=>write(sourceMessageText(message))});
   function quote(){
@@ -93,5 +99,8 @@ function RuntimeMessageActions({message,write,busy,notice,onNotice,showTimestamp
   }
   const feedback=notice||(!busy&&isCopied?'已复制':'');
   // Keep the writer synchronous in the user gesture and allow streaming copy.
-  return <><MessageActions className="message-actions" aria-label="消息操作" copied={!busy&&isCopied} copying={busy} onCopy={copy} onQuote={quote} quoteDisabled={disabled}>{showTimestamp&&<MessageTimestamp messageId={message.id}/>}</MessageActions>{feedback&&<p className={'message-action-notice'+(feedback==='已复制'?' sr-only':'')} role="status">{feedback}</p>}</>;
+  return <><MessageActions className="message-actions" aria-label="消息操作" copied={!busy&&isCopied} copying={busy} onCopy={message.text?copy:undefined} onQuote={message.text?quote:undefined} quoteDisabled={disabled}>
+    {openOrigin&&<button type="button" className="aui-message-action task-message-origin-action" aria-label={originLabel} title={originLabel}
+      aria-busy={openOrigin.pendingId===message.id||undefined} onClick={()=>openOrigin.open(message.id)}><MessageSquareReply aria-hidden="true"/></button>}
+    {showTimestamp&&message.text&&<MessageTimestamp messageId={message.id}/>}</MessageActions>{feedback&&<p className={'message-action-notice'+(feedback==='已复制'?' sr-only':'')} role="status">{feedback}</p>}</>;
 }

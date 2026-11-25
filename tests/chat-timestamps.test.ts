@@ -193,10 +193,10 @@ Function('require', 'exports', ts.transpileModule(readFileSync(actionPath, 'utf8
 }).outputText)(require, actionExports);
 const detailsExports: any = {};
 const quotedActions:unknown[]=[];
-Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useState', 'useAui', 'useAuiState', 'useActionBarCopy', 'PreviewActionsContext', 'useComposerInputFocus', 'previewQuoteText', 'messageSourceParts', 'sourceQuote', 'sourceMessageText', 'MessageActions', 'MessageTimestamp',
+Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useState', 'useAui', 'useAuiState', 'useActionBarCopy', 'PreviewActionsContext', 'TaskMessageOriginContext', 'useComposerInputFocus', 'previewQuoteText', 'messageSourceParts', 'sourceQuote', 'sourceMessageText', 'MessageActions', 'MessageTimestamp',
   declarations('../ui/message-details.tsx', ['MessageDetails', 'RuntimeMessageActions']))(
   require, detailsExports, React.useContext, React.useLayoutEffect, React.useRef, React.useState, AssistantUI.useAui, useAuiState, useActionBarCopy,
-  React.createContext({ canQuote: () => true,appendQuote:(quote:unknown)=>quotedActions.push(quote) }), () => () => {}, previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText, actionExports.MessageActions, timestampExports.MessageTimestamp);
+  React.createContext({ canQuote: () => true,appendQuote:(quote:unknown)=>quotedActions.push(quote) }), React.createContext(undefined), () => () => {}, previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText, actionExports.MessageActions, timestampExports.MessageTimestamp);
 const processExports: any = {};
 Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);

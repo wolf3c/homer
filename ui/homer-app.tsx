@@ -64,7 +64,7 @@ import {HomerMessageQueue} from './homer-message-queue';
 import type {LegacyQueueEditSession} from './queue-draft-recovery';
 import {useQueueOperations} from './queue-operations';
 import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
-import { MessageDetails } from './message-details';
+import { MessageDetails,TaskMessageOriginContext } from './message-details';
 import { ProcessMessageContent,InactiveInteractionNotes } from './process-nodes';
 import {projectProcessMessage,useProcessParts} from './process-message';
 import {confirmedTerminal} from './process-presentation';
@@ -203,6 +203,7 @@ function ArtifactFiles({files}:{files:WebArtifact[]}){
   return <FileList files={files} label="本条答复的成果文件" selectedId={selectedId} controlsId="canvas-panel" onOpen={(file,trigger)=>open(file,trigger)}/>;
 }
 type PositionClaim=()=>((write:()=>void)=>boolean);
+type TaskMessageOrigin={generation:number;source?:HTMLElement;onUnavailable:()=>void};
 const MessageIdPrefixContext=createContext('message-');
 const QuoteNavigationContext=createContext<(quote:MessageQuote)=>void>(()=>{});
 function QuoteSource({quote,index}:{quote:MessageQuote;index:number}){
@@ -1379,7 +1380,7 @@ function runtimeConversationMessage(message:WebState['messages'][number],notes?:
 
 type TaskReaderProps={
   page:Pick<import('../src/web-history-pages').HistoryPage,'messages'|'artifacts'>;view:React.RefObject<HTMLDivElement|null>;
-  locate:(id:string,quote?:MessageQuote)=>void; original:(id:string)=>void;task:OverviewTask;
+  locate:(id:string,quote?:MessageQuote)=>void; original:(id:string,source:HTMLElement,onUnavailable:()=>void)=>Promise<void>|void;task:OverviewTask;
   state:WebState;connected:boolean;onSend:(input:ConversationInput)=>Promise<void>;submitScoped:SubmitScoped;checkScoped:()=>void;taskUploads:TaskUploads;
   scopeReceipts:ReadonlyMap<string,ScopedReceipt>;refresh:()=>void;onScroll:()=>void;onRows:()=>void;
   openFile:(file:CanvasArtifact,trigger?:HTMLElement,focus?:{key:string;id:string})=>void;
@@ -1391,6 +1392,23 @@ function TaskReader({page,view,locate,original,task,state,connected,onSend,submi
  const annotationDraft=useMemo(()=>createAnnotationDraft(),[]);
  const focus=useRef<((atEnd?:boolean)=>void)|null>(null);
  const composer=useRef<PreviewComposer|null>(null);
+ const [originStatus,setOriginStatus]=useState<{text:string;pendingId?:string}>();
+ const originAttempt=useRef<{id:string;pending:boolean}>(null);
+ function openOrigin(id:string){
+  if(!view.current||(originAttempt.current?.pending&&originAttempt.current.id===id))return;
+  const attempt={id,pending:true};
+  originAttempt.current=attempt;
+  setOriginStatus(undefined);
+  const request=original(id,view.current,()=>{
+   if(originAttempt.current===attempt)setOriginStatus({text:'暂时无法在主对话查看这条消息。'});
+  });
+  if(!request){attempt.pending=false;return;}
+  setOriginStatus({text:'正在查找原消息…',pendingId:id});
+  void request.finally(()=>{
+   attempt.pending=false;
+   if(originAttempt.current===attempt)setOriginStatus(status=>status?.pendingId?undefined:status);
+  });
+ }
  const browser=useContext(BrowserPreviewContext);
  const resources=page.artifacts??[];
  const messageMap=useMemo(()=>new Map(page.messages.map(m=>[m.id,m])),[page.messages]);
@@ -1404,10 +1422,11 @@ function TaskReader({page,view,locate,original,task,state,connected,onSend,submi
   <BrowserPreviewContext.Provider value={localPreview}><PreviewActionsContext.Provider value={{
    canQuote:()=>composer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>composer.current?.openQuote(snapshot,trigger)??false,
    quoteNotice:message=>composer.current?.quoteNotice(message),appendQuote:quote=>composer.current?.appendQuote(quote)}}>
+   {originStatus&&<p className="task-history-notice task-origin-status" role="status">{originStatus.text}</p>}
    <div className="thread-viewport" ref={view} tabIndex={0} role="region" aria-label="事项消息" onScroll={onScroll}
     onClick={event=>{const link=(event.target as Element).closest<HTMLAnchorElement>('a[href^="#message-"]');if(link){event.preventDefault();locate(decodeURIComponent(link.hash.slice(9)));}}}>
     <div className="messages"><MessageTimestamps messages={page.messages}>
-     <TaskMessageRows original={original} onRows={onRows}/>
+     <TaskMessageOriginContext.Provider value={{open:openOrigin,pendingId:originStatus?.pendingId}}><TaskMessageRows onRows={onRows}/></TaskMessageOriginContext.Provider>
     </MessageTimestamps></div>
    </div>
    <MainComposer state={state} connected={connected} stopping={null} onStop={()=>{}} onSend={onSend}
@@ -1418,13 +1437,12 @@ function TaskReader({page,view,locate,original,task,state,connected,onSend,submi
   </PreviewActionsContext.Provider></BrowserPreviewContext.Provider></ArtifactsContext.Provider></ProcessMessagesContext.Provider>
   </QuoteNavigationContext.Provider></MessageIdPrefixContext.Provider></ComposerInputFocusContext.Provider></AssistantRuntimeProvider>;
 }
-function TaskMessageRows({original,onRows}:{original:(id:string)=>void;onRows:()=>void}){
+function TaskMessageRows({onRows}:{onRows:()=>void}){
  const rows=useAuiState(state=>state.thread.messages),messages=useContext(ProcessMessagesContext);
  const shown=rows.flatMap((row,index)=>messages.has(row.id)?[{id:row.id,index}]:[]);
  useLayoutEffect(()=>{if(shown.length===messages.size)onRows();},[rows,messages,onRows]);
  return shown.map(({id,index})=><div key={id}>
   <ThreadPrimitive.MessageByIndex index={index} components={{UserMessage,AssistantMessage}}/>
-  <div className="task-message-origin"><button type="button" onClick={()=>original(id)}>在主对话查看</button></div>
  </div>);
 }
 function VirtualMessage({id,index,measure}:{id:string;index:number;measure:(element:HTMLDivElement|null)=>void}){
@@ -1538,11 +1556,12 @@ function HomerApp() {
   useEffect(()=>()=>{activeReads.current.disposed=true;for(const timer of activeReads.current.timers)clearTimeout(timer);for(const controller of activeReads.current.controllers)controller.abort();},[]);
   const history=useRef(new HistoryWindow()),viewport=useRef<HTMLDivElement>(null),userScroll=useRef(0);
   const [pageBusy,setPageBusy]=useState(false),[pageNotice,setPageNotice]=useState('');
-  const pageRead=useRef(0);
+  const pageRead=useRef(0),originHighlight=useRef<Animation|undefined>(undefined);
+  useEffect(()=>()=>originHighlight.current?.cancel(),[]);
   const anchor=useRef<{id:string;top:number;version:number;next?:{id:string;top:number}}|null>(null);
   const [isAtBottom,setIsAtBottom]=useState(false),[hasNewContent,setHasNewContent]=useState(false);
   const reader=useRef<{gesture:boolean;top:number;height:number;viewHeight:number;frame?:number;initializedThread?:string;connected:boolean;
-    pending?:{kind:'latest'|'initialize'|'around'|'preserve';positioned?:boolean;scope:string;navigation:number;user:number;recent?:HistoryWindow['recent'];id?:string;quote?:MessageQuote};
+    pending?:{kind:'latest'|'initialize'|'around'|'preserve';positioned?:boolean;focused?:boolean;scope:string;navigation:number;user:number;recent?:HistoryWindow['recent'];id?:string;quote?:MessageQuote;origin?:TaskMessageOrigin};
     summary:Map<string,{source:object;signature:string}>;
   }>({gesture:false,top:0,height:0,viewHeight:0,connected:false,summary:new Map()});
   const navigation=useRef(0),beforeAttempt=useRef(''),protection=useRef(''),messageList=useRef<HTMLDivElement>(null);
@@ -1675,12 +1694,15 @@ function HomerApp() {
     for(const file of next.artifacts??[]){const key='artifact:'+file.id,signature=file.sha256;summary.set(key,{source:file,signature});if(!previous.has(key)||previous.get(key)!.signature!==signature)changed=true;}
     reader.current.summary=summary;if(baseline)setHasNewContent(false);else if(changed)setHasNewContent(true);
   }
-  async function loadPage(direction:'before'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>,allowReplyOwner=false){
+  function currentOrigin(origin:TaskMessageOrigin){
+    return origin.generation===previewScope.current.generation&&(!origin.source||origin.source.isConnected);
+  }
+  async function loadPage(direction:'before'|'around',id?:string,quote?:MessageQuote,positionCommit?:ReturnType<PositionClaim>,allowReplyOwner=false,origin?:TaskMessageOrigin){
     if(pageBusy&&direction!=='around')return;const cache=history.current,epoch=cache.epoch,position=direction==='around'?id:cache.before;if(!position)return;
     const commit=positionCommit??claimPosition(),viewNavigation=navigation.current,read=++pageRead.current;setPageBusy(true);setPageNotice('');
     try{
       const page=await post('/api/history/page',{readEpoch:epoch,request:{[direction]:position}});
-      if(viewNavigation!==navigation.current)return;
+      if(viewNavigation!==navigation.current||origin&&!currentOrigin(origin))return;
       const pins=readingPins();
       if(direction==='around'){
         const messages:WebState['messages']=page.messages;
@@ -1688,9 +1710,9 @@ function HomerApp() {
         if(!target)throw Error('history_message_not_found');
         id=target;
       }
-      if(!cache.add(page,epoch,direction,pins)){setPageNotice('读取期间记录已更新，请重新加载这一页。');return;}
-      commit(()=>{reader.current.pending={kind:direction==='around'?'around':'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:direction==='around'?id:anchor.current?.id,quote};publishHistory();});
-    }catch(e){if(viewNavigation!==navigation.current)return;const code=e instanceof Error?e.message:'';setPageNotice(code==='history_cache_pinned'?'当前选择或焦点需要保留，请取消选择后继续加载。':code==='history_message_not_found'?'原消息不存在于当前对话，成果原答复可从授权入口只读打开。':code==='history_epoch_changed'||code==='history_cursor_expired'?'读取位置已过期，草稿已保留，请回到最新后重试。':'这一页未能读取，已有消息和草稿已保留。');}
+      if(!cache.add(page,epoch,direction,pins)){origin?.onUnavailable();setPageNotice('读取期间记录已更新，请重新加载这一页。');return;}
+      commit(()=>{reader.current.pending={kind:direction==='around'?'around':'preserve',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id:direction==='around'?id:anchor.current?.id,quote,origin};publishHistory();});
+    }catch(e){if(viewNavigation!==navigation.current)return;if(origin){if(currentOrigin(origin))origin.onUnavailable();return;}const code=e instanceof Error?e.message:'';setPageNotice(code==='history_cache_pinned'?'当前选择或焦点需要保留，请取消选择后继续加载。':code==='history_message_not_found'?'原消息不存在于当前对话，成果原答复可从授权入口只读打开。':code==='history_epoch_changed'||code==='history_cursor_expired'?'读取位置已过期，草稿已保留，请回到最新后重试。':'这一页未能读取，已有消息和草稿已保留。');}
     finally{if(read===pageRead.current)setPageBusy(false);}
   }
   function returnLatest(){const owner=tailRead.current;
@@ -1731,10 +1753,10 @@ function HomerApp() {
       });
     }catch{commit(()=>setPageNotice(value=>value.startsWith('后续消息')?value:'原消息已定位；原文暂无法准确定位，摘录与批注已保留。'));}
   }
-  function locateMessage(id:string,quote?:MessageQuote){
+  function locateMessage(id:string,quote?:MessageQuote,origin?:TaskMessageOrigin){
     const commit=claimPosition();
-    if(history.current.messages.some(message=>message.id===id)){reader.current.pending={kind:'around',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id,quote};setState(old=>({...old}));}
-    else void loadPage('around',id,quote,commit);
+    if(history.current.messages.some(message=>message.id===id)){reader.current.pending={kind:'around',scope:positionScope(),navigation:navigation.current,user:userScroll.current,id,quote,origin};setState(old=>({...old}));}
+    else return loadPage('around',id,quote,commit,false,origin);
   }
 
   const [connected, setConnected] = useState(false);
@@ -2046,7 +2068,8 @@ function HomerApp() {
   useLayoutEffect(()=>{
     const pending=reader.current.pending,view=viewport.current;
     if(!view||view.clientHeight<=0||!pending)return;
-    if(pending.scope!==positionScope()||pending.navigation!==navigation.current||pending.user!==userScroll.current){reader.current.pending=undefined;return;}
+    const origin=pending.origin;
+    if(pending.scope!==positionScope()||pending.navigation!==navigation.current||pending.user!==userScroll.current||origin&&!currentOrigin(origin)){reader.current.pending=undefined;return;}
     const target=history.current.messages,actual=runtime.thread.getState().messages;
     const committed=runtimeMessages===actual&&state.messages.length===target.length&&state.messages.every((m,i)=>m===target[i])&&messages.length===actual.length&&messages.every((m,i)=>actual[i]?.id===m.id&&actual[i].metadata.custom===m.metadata?.custom);
     const latest=pending.kind==='latest'||pending.kind==='initialize';
@@ -2054,7 +2077,12 @@ function HomerApp() {
     const index=latest?rows.length-1:rows.findIndex(row=>row.id===pending.id);
     const element=index>=0?document.getElementById('message-'+rows[index].id):null;
     if(index>=0&&!element)return;
-    if(!latest&&pending.id&&index<0){reader.current.pending=undefined;setPageNotice('原阅读位置已变化，可查看最新消息');return;}
+    if(!latest&&pending.id&&index<0){
+      reader.current.pending=undefined;
+      if(origin)origin.onUnavailable();
+      else setPageNotice('原阅读位置已变化，可查看最新消息');
+      return;
+    }
     const wake=()=>{if(reader.current.frame!==undefined)return;
       reader.current.frame=requestAnimationFrame(()=>{reader.current.frame=undefined;
         if(reader.current.pending===pending&&pending.scope===positionScope()&&pending.navigation===navigation.current&&pending.user===userScroll.current)setState(old=>({...old}));
@@ -2062,7 +2090,8 @@ function HomerApp() {
     };
     if(reader.current.frame!==undefined)return;
     const height=element?.getBoundingClientRect().height??0;
-    const offset=pending.kind==='preserve'?anchor.current?.top??0:(view.clientHeight-height)/2;
+    const center=(view.clientHeight-height)/2;
+    const offset=pending.kind==='preserve'?anchor.current?.top??0:origin?Math.max(20,center):center;
     const raw=latest?view.scrollHeight-view.clientHeight:element?view.scrollTop+element.getBoundingClientRect().top-view.getBoundingClientRect().top-offset:view.scrollTop;
     const desired=pending.kind==='preserve'?raw:Math.min(Math.max(0,raw),Math.max(0,view.scrollHeight-view.clientHeight));
     if(!pending.positioned){
@@ -2076,9 +2105,42 @@ function HomerApp() {
     // this commit. Keep the same transaction through measurement/calibration.
     if(Math.abs(view.scrollTop-Math.max(0,desired))>=1){virtualizer.scrollToOffset(Math.max(0,desired));if(pending.kind!=='preserve'||desired<=view.scrollHeight-view.clientHeight+1)wake();return;}
     if(Math.abs((virtualizer.scrollOffset??view.scrollTop)-view.scrollTop)>=1){wake();return;}
-    virtualizer.cancelScroll();reader.current.pending=undefined;
+    virtualizer.cancelScroll();
+    if(origin&&height&&narrowPreview&&canvasOpen){
+      canvasTrigger.current=null;
+      closeCanvas();
+      origin.generation=previewScope.current.generation;
+      origin.source=undefined;
+      pending.positioned=false;
+      return;
+    }
+    if(origin&&height&&element&&!pending.focused){
+      pending.focused=true;
+      element.focus({preventScroll:true});
+      // Focus can remount measured neighbors. Keep the same target through that reflow.
+      wake();
+      return;
+    }
+    reader.current.pending=undefined;
     if(latest){setHasNewContent(false);setPageNotice('');anchor.current=null;captureAnchor();}
-    else if(pending.kind==='around'&&element){(height?element:view).focus({preventScroll:true});setPageNotice(value=>value.startsWith('后续消息')?value:'');captureAnchor();if(pending.quote)void selectQuote(pending.quote,claimPosition());}
+    else if(pending.kind==='around'&&element){
+      if(origin&&!height){origin.onUnavailable();return;}
+      if(!origin)(height?element:view).focus({preventScroll:true});
+      setPageNotice(value=>value.startsWith('后续消息')?value:'');captureAnchor();
+      if(origin){
+        const bubble=element.querySelector('.message-bubble-row > :is(.user-message-bubble,.assistant-message-bubble)')??element;
+        originHighlight.current?.cancel();
+        const colors=window.matchMedia('(forced-colors: active)').matches;
+        const hold=colors?{outline:'2px solid Highlight',outlineOffset:'-2px'}:{backgroundColor:'#fff3d8',boxShadow:'inset 0 0 0 1px #a47c39'};
+        const reduced=colors||window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const appearance=getComputedStyle(bubble);
+        originHighlight.current=bubble.animate(reduced?[hold,hold]:[
+          hold,{...hold,offset:4200/4900,easing:'ease-out'},
+          {backgroundColor:appearance.backgroundColor,boxShadow:appearance.boxShadow},
+        ],{id:'task-original',duration:4900});
+      }
+      if(pending.quote)void selectQuote(pending.quote,claimPosition());
+    }
     else measureReader();
   });
   useEffect(()=>{beforeAttempt.current='';},[connected]);
@@ -2387,7 +2449,8 @@ function HomerApp() {
        const original=(id:string,quote?:MessageQuote)=>{if(narrowPreview){canvasTrigger.current=null;closeCanvas();}locateMessage(id,quote);};
        return <TaskConversation key={historyKey} cache={cache} readEpoch={state.history.readEpoch} threadId={state.threadId} revision={state.history.page.revision} connected={connected}
         onTask={task=>setPreviewTabs(old=>({...old,tabs:old.tabs.map(item=>item.id===tab.id&&'kind'in item&&item.kind==='task'&&(item.task.revision!==task.revision||item.title!==taskName(task).text)?{...item,task,title:taskName(task).text}:item)}))}
-        onOriginal={original} render={(page,view,locate,task,refresh,onScroll,onRows)=><TaskReader key={task.id} page={page} view={view} locate={locate} original={original} task={task} state={state}
+        onOriginal={original} render={(page,view,locate,task,refresh,onScroll,onRows)=><TaskReader key={task.id} page={page} view={view} locate={locate}
+         original={(id,source,onUnavailable)=>locateMessage(id,undefined,{generation:previewScope.current.generation,source,onUnavailable})} task={task} state={state}
          connected={connected} onSend={sendInput} submitScoped={(input,scope)=>scopedSend.current?.send(input,scope)} checkScoped={()=>scopedSend.current?.check()} taskUploads={uploads} scopeReceipts={scopeReceipts} refresh={refresh} onScroll={onScroll} onRows={onRows} openFile={openArtifact} openLink={openBrowserLink}/>}/>;
       }} scheduleContent={connected&&state.history?<ScheduledMessages key={state.history.readEpoch} threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} onDetails={openScheduleDetail} onExample={example=>{
         const composer=previewComposer.current;

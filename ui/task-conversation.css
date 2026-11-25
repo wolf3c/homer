@@ -1,7 +1,7 @@
 .task-conversation{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;overflow:hidden;background:var(--canvas)}
 .task-conversation-toolbar,.task-conversation-history{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 16px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px;flex:none}
 .task-conversation-toolbar{background:var(--surface)}
-.task-conversation :is(.task-conversation-toolbar,.task-conversation-history,.task-history-notice,.task-message-origin,.task-conversation-info) button{background:transparent;color:var(--link);min-height:40px;padding:0 8px}
+.task-conversation :is(.task-conversation-toolbar,.task-conversation-history,.task-history-notice,.task-conversation-info) button{background:transparent;color:var(--link);min-height:40px;padding:0 8px}
 .task-conversation button:hover:not(:disabled){background:var(--soft)}
 .task-conversation-history>button{white-space:nowrap}
 .task-conversation-history>span{padding-block:8px}
@@ -14,7 +14,7 @@
 .task-detail-workers,.task-worker-timeline{list-style:none;margin:0;padding:0}
 .task-detail-workers>li{display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px;padding-block:7px}
 .task-detail-workers>li+li{border-block-start:1px solid var(--line)}
-.task-detail-workers>li>span,.task-history-notice,.task-history-empty,.task-message-origin{font-size:13px;color:var(--muted)}
+.task-detail-workers>li>span,.task-history-notice,.task-history-empty{font-size:13px;color:var(--muted)}
 .task-worker-timeline>li{position:relative;padding-inline-start:18px}
 .task-worker-timeline>li+li{margin-block-start:7px}
 .task-worker-timeline>li::before{content:"";position:absolute;inset-inline-start:0;inset-block-start:calc(.75em - 4px);width:8px;height:8px;border:1px solid var(--muted);border-radius:50%;background:var(--canvas)}
@@ -24,9 +24,11 @@
 }
 .task-history-notice,.task-history-empty{padding:4px 16px;margin:0}
 .task-conversation .message{margin-bottom:4px}
-.task-message-origin{margin:2px 0 11px}
+@media(hover:hover) and (pointer:fine) and (not (any-pointer:coarse)){
+ .task-conversation .message-bubble-row[data-single-line]:has(.task-message-origin-action){--actions-width:112px}
+}
 @media(max-width:800px){
  .task-conversation-history{flex-wrap:wrap;gap:0}
- .task-conversation :is(.task-conversation-toolbar,.task-conversation-history,.task-message-origin) button{min-height:44px}
+ .task-conversation :is(.task-conversation-toolbar,.task-conversation-history) button{min-height:44px}
  .task-conversation .thread-viewport{padding-inline:12px}
 }
