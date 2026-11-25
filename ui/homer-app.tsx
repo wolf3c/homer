@@ -81,19 +81,18 @@ import type { ConversationInput, MessageQuote, AnnotatedQuote, TaskReference } f
 import {scheduleMessageBody} from '../src/schedule-reference';
 import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, homerFeedbackPrompt, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {AttachmentRef,MediaView} from '../src/media-store';
-import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge,type DesktopNotice} from './desktop-permissions';
+import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge,type DesktopNotice,type DesktopUpdateState} from './desktop-permissions';
 import {DesktopFeatureTour} from './desktop-feature-tour';
 import "highlight.js/styles/github.css";
 import "./homer-styles.css";
 import "./desktop-feature-tour.css";
 
-type DesktopUpdateState={status:'idle'|'checking'|'downloading'|'ready'|'error';version?:string;noticeHidden:boolean;error?:string}|null;
 type CaptureScope={threadId:string;requestId:string;epoch:number};
 type CaptureResult={kind:'image';png:Uint8Array<ArrayBuffer>;width:number;height:number;ax?:WindowAXNode[];
   draft?:{id:string;action:'add'|'send';annotations:PreviewImageAnnotation[]}}|{kind:'too-large'|'unavailable'};
 type ScreenshotEdit={scope:CaptureScope;file:File;width:number;height:number;ax?:WindowAXNode[];attachment?:HomerAttachment;reference?:DraftImageReference;focusAnnotation?:string;upload?:HomerAttachment;cancelled?:boolean;committing?:boolean;joining?:boolean;annotations?:PreviewImageAnnotation[];error?:string};
 declare global{interface Window{homerDesktopUpdate?:{
-  state():Promise<DesktopUpdateState>;dismiss():Promise<DesktopUpdateState>;restart():Promise<DesktopUpdateState>;
+  state():Promise<DesktopUpdateState>;check?():Promise<DesktopUpdateState>;dismiss():Promise<DesktopUpdateState>;restart():Promise<DesktopUpdateState>;
   onChange(callback:()=>void):()=>void;
 };homerDesktopCapture?:{setReady(scope:CaptureScope|null,panel?:true):Promise<boolean>;acceptDraft?(id:string):Promise<boolean>;onResult(callback:(scope:CaptureScope,result:CaptureResult)=>void):()=>void}&Partial<CaptureShortcutBridge>;}}
 
@@ -1886,10 +1885,12 @@ function HomerApp() {
     return()=>{disposed=true;unsubscribe();};
   },[]);
   useLayoutEffect(()=>{restoreAnchor();},[desktopUpdate]);
-  function desktopUpdateIntent(action:'dismiss'|'restart',returnFocus=false){
-    const bridge=window.homerDesktopUpdate;if(!bridge)return;
+  function desktopUpdateIntent(action:'check'|'dismiss'|'restart',returnFocus=false){
+    const bridge=window.homerDesktopUpdate;if(!bridge?.[action])return;
     // Main emits the authoritative snapshot; action responses must not overwrite newer events.
-    void bridge[action]().then(value=>{if(returnFocus&&value?.noticeHidden)focusEditor.current?.();}).catch(()=>{captureAnchor();setDesktopUpdate(value=>value?{...value,error:'update_action_unconfirmed'}:value);});
+    void bridge[action]().then(value=>{if(returnFocus&&value?.noticeHidden)focusEditor.current?.();}).catch(()=>{
+      captureAnchor();setDesktopUpdate(value=>value&&value===desktopUpdate?{...value,error:'update_action_unconfirmed'}:value);
+    });
   }
   const [mobileUpdate,setMobileUpdate]=useState<{version:string;openError:boolean}|null>(null);
   useLayoutEffect(()=>{
@@ -2378,7 +2379,7 @@ function HomerApp() {
       <Group className="preview-layout" elementRef={setPreviewLayout} orientation="horizontal" disabled={narrowPreview} defaultLayout={{conversation:50,preview:50}}><Panel id="conversation" className="preview-main-panel" minSize={narrowPreview?'0px':statusDocked?'501px':nativeTitlebar?'241px':'201px'}><div className="conversation-panel">
         <header className="conversation-header">
           <span className="header-name"><img src={homerLogo64} srcSet={`${homerLogo64} 64w, ${homerLogo256} 256w`} sizes="24px" alt="荷马" width={24} height={24} style={{borderRadius:0,objectFit:"contain"}} /><span className="header-brand-label" aria-hidden>荷马</span></span>
-          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} wide={!narrowPreview} pinned={statusPinned} onPinnedChange={setStatusPinned} previewModal={narrowPreview&&canvasOpen} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?(task,trigger)=>void openTaskConversation(task.id,trigger,task):undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
+          <div className="header-actions">{mobileView?<MobileSettings startFeedback={startFeedback}/>:<DesktopSettings desktopUpdate={window.homerDesktopUpdate?.check?desktopUpdate:null} onDesktopUpdate={desktopUpdateIntent} startFeedback={startFeedback} key={state.threadId} ref={accountSettings} onVisibilityChange={setSettingsOpen} onCaptureRecordingChange={setCaptureShortcutRecording}/>}{state.features?.taskOverview&&<TaskStatusPopover state={state} wide={!narrowPreview} pinned={statusPinned} onPinnedChange={setStatusPinned} previewModal={narrowPreview&&canvasOpen} location={taskLocation} onLocated={()=>setTaskLocation(current=>current===taskLocation?undefined:current)} onReference={state.features.taskReference&&connected?value=>previewComposer.current?.selectTask(value)??false:undefined} refreshKey={hostStateFrame.current} connected={connected} asideContainer={statusContainer} onBeforeLayoutChange={captureAnchor} onOpen={state.features.taskConversation?(task,trigger)=>void openTaskConversation(task.id,trigger,task):undefined}/>}<button type="button" aria-label="定时任务" title="定时任务" disabled={!state.history} onClick={event=>openSchedules(event.currentTarget)}><Clock3 size={18}/></button><button type="button" hidden={canvasOpen} aria-expanded={false} aria-controls="canvas-panel" onClick={event=>{canvasTrigger.current=event.currentTarget;updatePreviewScope(true,activePreviewTab?.id??null);captureAnchor();setCanvasOpen(true);}} aria-label="预览" title="预览"><PanelRightIcon size={18}/></button></div>
         </header>
       {desktopUpdate?.status==='ready'&&!desktopUpdate.noticeHidden&&typeof desktopUpdate.version==='string'&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)&&<aside className="mobile-update-notice" aria-label="桌面版本更新"><div className="mobile-update-row"><span role="status">新版本 {desktopUpdate.version} 已准备好</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>desktopUpdateIntent('restart')}>重启并更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={event=>desktopUpdateIntent('dismiss',event.currentTarget.parentNode?.contains(document.activeElement)===true)}>×</button></div>{desktopUpdate.error&&<p role="status">{desktopUpdate.error==='update_busy'?'当前工作尚未结束，请稍后重试。':desktopUpdate.error==='update_unsaved'?'请先保存未提交的编辑，再重试。':['update_service_stopped','update_install_unconfirmed'].includes(desktopUpdate.error)?'服务已停止，更新尚未确认。请重新打开荷马后核对。':desktopUpdate.error==='update_metadata_unconfirmed'?'更新版本信息未确认，请核对安装包。':'未能确认重启更新，请重试。'}</p>}</aside>}
       {mobileUpdate&&<aside className="mobile-update-notice" aria-label="版本更新"><div className="mobile-update-row"><span role="status">有新版本 {mobileUpdate.version}</span><button type="button" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-open')}>前往更新</button><button type="button" aria-label="关闭更新提示" onMouseDown={event=>event.preventDefault()} onClick={()=>updateIntent('update-dismiss')}>×</button></div>{mobileUpdate.openError&&<p role="status">未能打开下载页，请重试。</p>}</aside>}

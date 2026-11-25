@@ -24,7 +24,7 @@ Windows ARM64、32 位、Linux 不纳入本次范围。不能以 Apple Silicon �
 
 不增加更新内容入口、摘要、弹窗、Markdown 渲染或相关状态；原生附带的说明直接忽略。手机合同、手机关闭记录及下载入口不变。
 
-主进程在服务和更新器就绪后错峰发起首次检查，随后约每小时检查一次。原生菜单可手动检查，准备好更新后由用户确认重启。只对正式 stable 身份启用；开发、QA、测试 profile、preparation、localWorkingTree、缺失或未知渠道全部禁用。
+主进程在服务和更新器就绪后错峰发起首次检查，随后约每小时检查一次。原生菜单和桌面设置的关于页可手动检查，准备好更新后由用户确认重启。只对正式 stable 身份启用；开发、QA、测试 profile、preparation、localWorkingTree、缺失或未知渠道全部禁用。
 
 首批只发布所有已启用来源版本都已验证兼容的目标；本次 MVP 不新增通用迁移框架。需要数据迁移、新权限或改变最低系统要求的目标不进入此次发行，先满足上位要求；静态清单不承担来源兼容路由。
 
@@ -99,13 +99,13 @@ Windows 的检查调用须同时消费 checkForUpdates() 及返回结果中的 d
 
 ### 状态与事件
 
-主进程持有一份快照：禁用时为 null；启用时仅包含 status（idle／checking／downloading／ready／error）、必要的 version、noticeHidden 和安全错误码。不持久保存发行响应、已准备版本或关闭记录。
+主进程持有一份快照。禁用时为 null，启用时包含 status（idle／checking／downloading／ready／error）、必要的 version、noticeHidden、安全错误码及原生确认无更新时的 latest。不持久保存发行响应、已准备版本或关闭记录。
 
 | 事件／动作 | 状态及行为 |
 | --- | --- |
 | checking-for-update | checking，菜单显示检查中；自动检查不打扰 |
 | update-available | downloading，不显示“已准备好” |
-| update-not-available | idle；仅手动检查给“已是最新版本”反馈 |
+| update-not-available | idle 并记录 latest，关于页可显示“已是最新版本”。原生菜单发起的检查沿用原生结果提示 |
 | update-downloaded | Mac 保存 releaseName；Windows 先验证事件携带的本地候选，再保存 UpdateDownloadedEvent.version 并进入 ready；验证失败不显示轻提示 |
 | 检查或下载 error | 未进入停止流程时进入 error，旧版继续可用，可手动重查；Windows 停止中报错后等待本次停止证明，已安全停止则按第 6 节退出恢复，不重查 |
 | × | 仍为 ready，noticeHidden=true，菜单保留重启入口 |
@@ -121,12 +121,12 @@ Windows 创建 NsisUpdater 后、任何检查及验签前显式设置 logger=nul
 ### 桥接签名与信任边界
 
 在原 preload 增加 window.homerDesktopUpdate：
-- state()、dismiss()、restart()：无参数，返回 Promise<DesktopUpdateState>，类型与上面唯一快照一致。手动检查仅由原生菜单调用 main 内部动作，不为没有页面入口的检查另增桥接方法。
+- state()、check()、dismiss()、restart() 均无参数，返回主进程快照。关于页通过 check() 调用原生菜单和定时器共用的检查入口，在页面内显示反馈。
 - onChange(callback)：仅通知读取快照，返回取消订阅函数；页面先订阅再读取，清理沿原生命周期，不缓存第二份判断状态。
 
 main 沿 permissionCaller 的主窗口、主 frame、origin、精确页面及异步后重新核对规则；不增加 nonce／新来源协议。未授权网页、子 frame、过期页面和额外参数均拒绝；下载 URL、目标版本、签名和本地路径不从 renderer 传入。
 
-网页只展示原生状态并发用户意图，没有桥接或无有效 ready 状态不显示；普通网页、手机和旧壳保持原行为。
+关于页在版本号旁显示一个更新按钮。检查与下载期间按钮不可重复操作，Windows 返回 null 时恢复可检查状态，只有 update-not-available 才显示“已是最新版本”。准备好后可从同一按钮进入原生重启确认及安全停机。会话提示条收起后仍可使用关于页和原生菜单的重启入口。关于页需要启用原生更新器，普通网页、手机和旧壳沿用原有界面。
 
 ## 5. 仅重启更新的轻提示
 

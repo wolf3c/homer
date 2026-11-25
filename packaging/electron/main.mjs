@@ -626,7 +626,7 @@ function checkUpdate(manual=false){
   const checking=nativeUpdater().checkForUpdates();
   if(windowsUpdater)void Promise.resolve(checking).then(result=>{
    if(result!==null)return result?.downloadPromise;
-   updateState={status:'idle',noticeHidden:false};updateChanged();scheduleUpdateCheck();
+   updateManual=false;updateState={status:'idle',noticeHidden:false};updateChanged();scheduleUpdateCheck();
   }).catch(()=>{});
  }catch{updateCheckFailed();}
 }
@@ -640,7 +640,8 @@ function updateCheckFailed(error){
  if(windowsUpdater&&closed&&(!updateStopping||updateConfirmed())){windowsUpdateFailed();return;}
  if(updateStopping&&allowQuit){allowQuit=false;updateFailed('update_install_unconfirmed');return;}
  if(windowsUpdater)windowsCandidate=undefined;
- updateState={...updateState,status:!windowsUpdater&&updateState.status==='ready'?'ready':'error',error:'update_check_failed'};updateChanged();
+ const code=updateState.status==='downloading'?'update_download_failed':'update_check_failed';
+ updateState={...updateState,status:!windowsUpdater&&updateState.status==='ready'?'ready':'error',error:code};updateChanged();
  if(updateManual)void showError('检查更新未能完成，请稍后从菜单重试。');updateManual=false;
  scheduleUpdateCheck();
 }
@@ -674,7 +675,7 @@ async function setupDesktopUpdate(manifest,test){
   });
   nativeUpdater().on('update-not-available',()=>{
    if(windowsRecovery())return;
-   updateState={status:'idle',noticeHidden:false};updateChanged();
+   updateState={status:'idle',noticeHidden:false,latest:true};updateChanged();
    if(updateManual)void dialog.showMessageBox(window,{type:'info',title:'荷马',message:'已是最新版本',buttons:['返回会话']});
    updateManual=false;scheduleUpdateCheck();
   });
@@ -721,7 +722,8 @@ async function windowsDownloaded(info){
  const candidate={path:info.downloadedFile,version:info.version,sha512:file.sha512,size:file.size};windowsCandidate=candidate;
  const error=await verifyWindowsUpdate(windowsPublishers,candidate.path,candidate);
  if(windowsCandidate!==candidate||windowsRecovery())return;
- updateManual=false;updateState={...updateState,status:error?'error':'ready',version:candidate.version,error:error??undefined};updateChanged();
+ const publishedError=error==='update_check_failed'?'update_integrity_failed':error??undefined;
+ updateManual=false;updateState={...updateState,status:error?'error':'ready',version:candidate.version,error:publishedError};updateChanged();
  if(error)scheduleUpdateCheck();else clearUpdateCheck();
 }
 function windowsUpdateFailed(){
@@ -744,9 +746,10 @@ async function recoverWindowsExit(){
  }catch{}finally{quitPending=false;}
 }
 function registerDesktopUpdate(){
- for(const name of ['state','dismiss','restart'])ipcMain.handle('homer:update:'+name,async(event,...args)=>{
+ for(const name of ['state','check','dismiss','restart'])ipcMain.handle('homer:update:'+name,async(event,...args)=>{
   const frame=event.senderFrame,navigation=permissionNavigation;
   if(args.length||!permissionCaller(event,frame))throw Error('desktop_update_forbidden');
+  if(name==='check')checkUpdate();
   if(name==='dismiss'&&updateState?.status==='ready'){updateState={...updateState,noticeHidden:true};updateChanged();}
   if(name==='restart'&&updateState?.status==='ready'&&updateState.version&&!quitPending){app.quit();}
   if(navigation!==permissionNavigation||!permissionCaller(event,frame))throw Error('desktop_update_forbidden');

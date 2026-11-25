@@ -65,8 +65,10 @@ function DesktopNotificationSettings(){
 }
 
 type SettingsView='closed'|'settings'|'opening-tour'|'tour'|'returning-to-about';
+export type DesktopUpdateState={status:'idle'|'checking'|'downloading'|'ready'|'error';version?:string;noticeHidden:boolean;error?:string;latest?:true}|null;
+type AboutUpdateProps={desktopUpdate?:DesktopUpdateState;onDesktopUpdate?:(action:'check'|'restart')=>void};
 
-export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange,startFeedback}:{ref?:Ref<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>;onVisibilityChange?:(open:boolean)=>void;onCaptureRecordingChange?:(recording:boolean)=>void;startFeedback?:StartFeedback}={}){
+export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange,startFeedback,desktopUpdate,onDesktopUpdate}:{ref?:Ref<{openAccount:()=>void;openMobile:(id:string)=>void;close:()=>void}>;onVisibilityChange?:(open:boolean)=>void;onCaptureRecordingChange?:(recording:boolean)=>void;startFeedback?:StartFeedback}&AboutUpdateProps={}){
  const [view,setView]=useState<SettingsView>('closed');
  const open=view==='settings',active=view!=='closed';
  const entry=useRef<HTMLButtonElement>(null),tab=useRef<HTMLButtonElement>(null),tourEntry=useRef<HTMLButtonElement>(null);
@@ -121,6 +123,7 @@ export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange
       {window.homerDesktopChatApps&&<Tabs.Panel value="chat-apps">{open&&panel==='chat-apps'&&<DesktopChatApps/>}</Tabs.Panel>}
       {aboutLink&&<Tabs.Panel value="about">{open&&panel==='about'&&<DesktopAbout openLink={aboutLink}
        startFeedback={startFeedback} closeSettings={()=>{feedbackClose.current=true;setPairingTarget(undefined);setView('closed');}}
+       desktopUpdate={desktopUpdate} onDesktopUpdate={onDesktopUpdate}
        tourEntry={tourEntry} onTour={tourAvailable?()=>setView('opening-tour'):undefined}/>}</Tabs.Panel>}
      </div>
     </Tabs.Root>
@@ -134,15 +137,42 @@ export function DesktopSettings({ref,onVisibilityChange,onCaptureRecordingChange
  </>;
 }
 
-function DesktopAbout({openLink,startFeedback,closeSettings,tourEntry,onTour}: {
+function DesktopAbout({openLink,startFeedback,closeSettings,tourEntry,onTour,desktopUpdate,onDesktopUpdate}: {
  openLink:(link:AboutLink)=>Promise<void>;startFeedback?:StartFeedback;closeSettings:()=>void;
  tourEntry:Ref<HTMLButtonElement>;onTour?:()=>void;
-}){
+}&AboutUpdateProps){
  const [version,setVersion]=useState('');
  useEffect(()=>{let active=true;void window.homerDesktopSettings?.getVersion?.().then(value=>{if(active)setVersion(value);},()=>{});return()=>{active=false;};},[]);
+ const checking=desktopUpdate?.status==='checking',downloading=desktopUpdate?.status==='downloading';
+ const ready=desktopUpdate?.status==='ready';
+ const stagedVersion=ready&&desktopUpdate.version&&/^\d+\.\d+\.\d+$/.test(desktopUpdate.version)?desktopUpdate.version:undefined;
+ const error=desktopUpdate?.error;
+ const recovery=error==='update_install_unconfirmed'&&desktopUpdate?.status==='error';
+ let label='检查更新',message='';
+ if(checking){label='正在检查更新…';message='正在检查更新';}
+ else if(downloading){label='正在后台下载…';message='发现新版本，下载完成后可重启更新。';}
+ else if(ready){
+  label='重启并更新';
+  message=stagedVersion?`新版本 ${stagedVersion} 已准备好`:'更新版本信息未确认，请核对安装包。';
+  if(stagedVersion&&error)message=error==='update_busy'?'当前工作尚未结束，请稍后重试。'
+   :error==='update_unsaved'?'请先保存未提交的编辑，再重试。':'未能确认重启更新，请重试。';
+ }else if(recovery){
+  label='重试';message='更新尚未确认，请退出后重新打开荷马。';
+ }else if(error||desktopUpdate?.status==='error'){
+  label='重试';message=error==='update_download_failed'?'下载更新失败，请重试。'
+   :error==='update_integrity_failed'||error==='update_signature_unconfirmed'?'未能验证更新包，请重试。':'检查更新失败，请重试。';
+ }else if(desktopUpdate?.latest)message='已是最新版本';
+ const unavailable=checking||downloading||recovery||ready&&!stagedVersion;
  return <div className="desktop-about">
   <h2>关于荷马</h2>
-  {version&&<p className="desktop-about-version">版本 {version}</p>}
+  {version&&<div className="desktop-about-version-area">
+   <div className="desktop-about-version-row">
+    <p className="desktop-about-version">版本 {version}</p>
+    {desktopUpdate&&onDesktopUpdate&&<Button type="button" disabled={unavailable} focusableWhenDisabled
+     onClick={()=>{if(!unavailable)onDesktopUpdate(ready?'restart':'check');}}>{label}</Button>}
+   </div>
+   {desktopUpdate&&<p role="status" className={checking?'sr-only':'desktop-about-update-status'} data-error={!!error||undefined}>{message}</p>}
+  </div>}
   <SettingsAbout openLink={openLink} startFeedback={startFeedback} closeSettings={closeSettings}/>
   {onTour&&<div className="desktop-about-secondary"><Button type="button" ref={tourEntry} onClick={onTour}>特色功能<ChevronRight size={16} aria-hidden/></Button></div>}
  </div>;

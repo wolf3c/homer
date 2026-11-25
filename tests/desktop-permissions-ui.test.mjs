@@ -107,6 +107,27 @@ test('about displays the version supplied by the desktop app',async()=>withDom(a
  assert.equal(reads,0);
  await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='关于'));
  assert.equal(reads,1);assert.match(d.find(n=>n.getAttribute('role')==='tabpanel').textContent,/版本 9\.8\.7/);
+ assert.equal(button(d,'检查更新'),undefined);
+}));
+test('About update action follows the shared native snapshot and keeps dismiss separate from preparation',async()=>withDom(async d=>{
+ const actions=[],onDesktopUpdate=action=>actions.push(action);
+ window.homerDesktopSettings={onOpen:()=>()=>{},openAboutLink:async()=>{},getVersion:async()=>'0.1.25'};
+ const render=(status,rest={})=>d.render(React.createElement(get().DesktopSettings,{desktopUpdate:{status,noticeHidden:false,...rest},onDesktopUpdate}));
+ const statusText=()=>d.find(n=>n.getAttribute('role')==='status').textContent;
+ await render('idle');await d.click(button(d,'设置'));
+ await d.click(d.find(n=>n.getAttribute('role')==='tab'&&n.textContent==='关于'));
+ assert.equal(statusText(),'');await d.click(button(d,'检查更新'));assert.deepEqual(actions,['check']);
+ await render('checking');assert.equal(statusText(),'正在检查更新');assert.ok(button(d,'正在检查更新…').hasAttribute('disabled'));
+ await render('idle',{latest:true});assert.equal(statusText(),'已是最新版本');
+ await render('downloading');assert.equal(statusText(),'发现新版本，下载完成后可重启更新。');assert.ok(button(d,'正在后台下载…').hasAttribute('disabled'));
+ await render('error',{error:'update_download_failed'});assert.equal(statusText(),'下载更新失败，请重试。');
+ await render('error',{error:'update_check_failed'});assert.equal(statusText(),'检查更新失败，请重试。');
+ await render('error',{error:'update_integrity_failed'});assert.equal(statusText(),'未能验证更新包，请重试。');
+ await d.click(button(d,'重试'));assert.deepEqual(actions,['check','check']);
+ await render('ready',{version:'0.1.26',noticeHidden:true});assert.equal(statusText(),'新版本 0.1.26 已准备好');
+ await d.click(button(d,'重启并更新'));assert.deepEqual(actions,['check','check','restart']);
+ await render('ready',{version:'0.1.26',error:'update_busy'});assert.equal(statusText(),'当前工作尚未结束，请稍后重试。');
+ await render('ready',{version:'invalid'});assert.ok(button(d,'重启并更新').hasAttribute('disabled'));
 }));
 test('the screenshot annotation settings introduce capture and let users edit and restore the global shortcut',async()=>withDom(async d=>{
  const changes=[],visibility=[];let reads=0,resetAttempts=0;

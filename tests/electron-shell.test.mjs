@@ -347,13 +347,17 @@ for(const [name,ack,code,signal]of [['no ACK',false,0,null],['nonzero exit',true
  await updateCall(f,'restart');await f.tick();if(ack)f.event({kind:'update-stopped'});f.child.emit('close',code,signal);await f.tick();
  assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
-for(const [name,options,change]of [
- ['tampered bytes',{fileData:Buffer.from('tampered')},{}],['missing file',{fileMissing:true},{}],['directory',{fileDirectory:true},{}],['symlink',{fileSymlink:true},{}],['read failure',{fileError:true},{}],
- ['relative path',{}, {downloadedFile:'installer.exe'}],['missing hash',{}, {files:[{size:installerBytes.length}]}],['wrong size',{}, {files:[{sha512:createHash('sha512').update(installerBytes).digest('base64'),size:1}]}],['multiple files',{}, {files:[{},{}]}],
+for(const [name,options,change,error='update_integrity_failed']of [
+ ['wrong SHA-512',{fileData:Buffer.alloc(installerBytes.length)},{}],
+ ['missing file',{fileMissing:true},{}],['directory',{fileDirectory:true},{}],['symlink',{fileSymlink:true},{}],['read failure',{fileError:true},{}],
+ ['relative path',{}, {downloadedFile:'installer.exe'}],['wrong size',{}, {files:[{sha512:createHash('sha512').update(installerBytes).digest('base64'),size:1}]}],
+ ['missing hash',{}, {files:[{size:installerBytes.length}]},'update_check_failed'],
+ ['multiple files',{}, {files:[{},{}]},'update_check_failed'],
 ])for(const unsigned of [false,true])test('Windows candidate integrity rejects '+name+' unsigned='+unsigned,async()=>{
  const f=await windowsFixture({...options,...(unsigned?{updateConfig:unsignedConfig}:{})});
  f.updater.emit('update-downloaded',windowsUpdate({version:'0.2.0',downloadedFile:'C:\\cache\\installer.exe',...change}));await f.tick();
- assert.equal((await updateCall(f,'state')).status,'error');assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
+ const state=await updateCall(f,'state');assert.equal(state.status,'error');assert.equal(state.error,error);
+ assert.equal(f.nativeCalls.some(c=>c[0]==='install-update'),false);
 });
 test('Windows unsigned update rechecks prepared bytes after stopping and recovers without installation',async()=>{
  const f=await windowsFixture({updateConfig:unsignedConfig,response:options=>options.buttons.includes('重启并更新')?1:0});
@@ -549,6 +553,33 @@ for(const [name,options]of [['missing channel',{manifest:{}}],['QA',{manifest:{.
 test('test profile never configures native updates even with stable metadata',async()=>{
  const f=await fixture(undefined,undefined,undefined,{manifest:stableManifest});assert.equal(f.nativeCalls.some(c=>c[0]==='feed'),false);
 });
+test('About and native menu share one check and only a native no-update event confirms latest',async()=>{
+ const f=await updateFixture(),count=()=>f.nativeCalls.filter(call=>call[0]==='check-update').length;
+ assert.equal((await updateCall(f,'check')).status,'checking');assert.equal(count(),1);
+ f.updater.emit('update-not-available');
+ assert.equal((await updateCall(f,'state')).latest,true);
+ const [check]=await Promise.all([updateCall(f,'check'),updateCall(f,'check')]);updateMenu(f).click();
+ assert.equal(check.status,'checking');assert.equal(check.latest,undefined);assert.equal(count(),2);
+ f.updater.emit('update-available');
+ assert.equal((await updateCall(f,'check')).status,'downloading');assert.equal(count(),2);
+ f.updater.emit('error',Error('private_network_detail'));
+ assert.equal((await updateCall(f,'state')).error,'update_download_failed');
+ assert.equal((await updateCall(f,'check')).status,'checking');assert.equal(count(),3);
+ f.updater.emit('update-not-available');
+ assert.equal((await updateCall(f,'state')).latest,true);assert.equal(f.messages.length,0);
+ updateMenu(f).click();f.updater.emit('update-not-available');await f.tick();
+ assert.ok(f.messages.some(message=>message.message==='已是最新版本'));
+});
+test('disabled updater and Windows null results never confirm latest or start an install',async()=>{
+ const disabled=await updateFixture({manifest:{...stableManifest,publishable:false}});
+ assert.equal(await updateCall(disabled,'check'),null);
+ assert.equal(disabled.nativeCalls.some(call=>call[0]==='check-update'),false);
+ const f=await windowsFixture({nullCheck:true});await updateCall(f,'check');await f.tick();
+ const state=await updateCall(f,'state');
+ assert.equal(state.status,'idle');assert.equal(state.latest,undefined);assert.equal(f.messages.length,0);
+ assert.equal(f.nativeCalls.filter(call=>call[0]==='check-update').length,2);
+ assert.equal(f.nativeCalls.some(call=>call[0]==='install-update'),false);
+});
 test('native preparation is required; dismissal survives page reload and keeps the menu restart',async()=>{
  const f=await updateFixture();f.updater.emit('update-available');assert.equal((await updateCall(f,'state')).status,'downloading');
  await updateCall(f,'restart');assert.equal(f.sent.length,0);
@@ -687,7 +718,7 @@ test('updater failures never expose native errors or report preparation success'
  const malformed=await updateFixture();malformed.updater.emit('update-downloaded',{},'', '<unsafe>');await updateCall(malformed,'restart');await malformed.tick();assert.equal(malformed.sent.length,0);
 });
 test('update bridge rejects extra arguments and stale or foreign frames',async()=>{
- const f=await updateFixture();for(const method of ['state','dismiss','restart']){
+ const f=await updateFixture();for(const method of ['state','check','dismiss','restart']){
   await assert.rejects(()=>updateCall(f,method,'https://foreign.invalid/'),/desktop_update_forbidden/);
   await assert.rejects(()=>f.handlers.get('homer:update:'+method)({...accountEvent(f),senderFrame:{...accountEvent(f).senderFrame}}),/desktop_update_forbidden/);
  }
@@ -1227,10 +1258,10 @@ for(const state of ['detached','frame destroyed','contents destroyed','query','f
 });
 test('update preload exposes only zero-argument actions and removable event-free notifications',async()=>{
  const exposed={},calls=[],listeners=new Map();vm.runInNewContext(readFileSync('packaging/electron/preload.cjs','utf8'),{process:{isMainFrame:true},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed[name]=value},ipcRenderer:{invoke:async(...args)=>{calls.push(args);return null;},on:(channel,fn)=>listeners.set(channel,fn),removeListener:(channel,fn)=>{assert.equal(listeners.get(channel),fn);listeners.delete(channel);}}})});
- const api=exposed.homerDesktopUpdate;assert.deepEqual(Object.keys(api),['state','dismiss','restart','onChange']);let received;
+ const api=exposed.homerDesktopUpdate;assert.deepEqual(Object.keys(api),['state','check','dismiss','restart','onChange']);let received;
  const off=api.onChange((...args)=>{received=args;});listeners.get('homer:update:changed')({sender:'private'},'ignored');assert.deepEqual(received,[]);off();off();assert.equal(listeners.size,0);assert.throws(()=>api.onChange(null),/desktop_update_callback/);
- for(const method of ['state','dismiss','restart']){await api[method]();await assert.rejects(api[method]('forbidden-url'),/desktop_permissions_arguments/);}
- assert.deepEqual(calls,[['homer:update:state'],['homer:update:dismiss'],['homer:update:restart']]);
+ for(const method of ['state','check','dismiss','restart']){await api[method]();await assert.rejects(api[method]('forbidden-url'),/desktop_permissions_arguments/);}
+ assert.deepEqual(calls,[['homer:update:state'],['homer:update:check'],['homer:update:dismiss'],['homer:update:restart']]);
 });
 test('settings preload subscribes before readiness, strips IPC event and disposes exactly its listener',async()=>{
  const listeners=new Map(),calls=[],exposed={};const source=readFileSync('packaging/electron/preload.cjs','utf8');
