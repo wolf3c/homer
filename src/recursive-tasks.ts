@@ -286,7 +286,7 @@ export class RecursiveTasks{
   this.requireMain(actor);
   const {run,taskId}=this.worker(workerId);
   if(this.one('SELECT 1 FROM operations WHERE actorAgentId=? AND scopeId=? AND operationId=?',actor.agentId,taskId,operationId))return;
-  if(run.phase!=='ended'||run.stopRequestedAt!==null||this.stopExitUnconfirmed(run)||!this.workerEffectUnconfirmed(run)||this.workerMessageUnresolved(taskId,workerId))return;
+  if(run.phase!=='ended'||this.stopExitUnconfirmed(run)||!this.workerEffectUnconfirmed(run)||this.workerMessageUnresolved(taskId,workerId))return;
   const task=this.task(taskId);
   this.writable(task);
   return {run,version:task.headVersion};
@@ -305,7 +305,7 @@ export class RecursiveTasks{
     return {...facts,state:'blocked',route:'blocked',reason};
    };
    if(recovery&&(run.id!==recovery.run.id||run.epoch!==recovery.run.epoch||run.threadId!==recovery.run.threadId||
-     run.turnId!==recovery.run.turnId||task.headVersion!==recovery.version||run.phase!=='ended'||run.stopRequestedAt!==null))
+     run.turnId!==recovery.run.turnId||task.headVersion!==recovery.version||run.phase!=='ended'))
     return blocked('worker_not_ready');
    if(this.one("SELECT 1 FROM operations WHERE scopeId=? AND kind='worker_steer' AND json_extract(detailsJson,'$.workerId')=? AND state IN ('accepted','dispatching','uncertain')",task.id,run.workerId))return blocked('operation_uncertain');
    if(run.phase==='uncertain')return blocked('run_stop_unconfirmed');

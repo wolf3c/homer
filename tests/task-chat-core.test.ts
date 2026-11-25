@@ -473,7 +473,7 @@ test('reordered requests retain the actual task and dispatch trigger',()=>{
 
 import {NativeThreadBindings,readWorkerTerminals} from '../src/native-thread-bindings.js';
 
-test('late terminal recovery is equivalent to online completion and cannot steer a competing new Run',async()=>{
+for(const stopped of [false,true])test(`late terminal recovery after ${stopped?'confirmed stop':'normal exit'} cannot steer a competing new Run`,async()=>{
  let reads=0;
  const f=chatFixture({validateActor(){},unconfirmedWorkerEffects:id=>bindings.hasUnconfirmedWorkerEffects(id)});
  const bindings=new NativeThreadBindings(f.store);
@@ -492,7 +492,19 @@ test('late terminal recovery is equivalent to online completion and cannot steer
     item:{type:'CommandExecution',id:'exec-late',status:'failed',exit_code:-1}}},
   ];
   writeFileSync(path,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
-  f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
+  let stopKey:string|undefined,stopReceipt:unknown;
+  if(stopped){
+   const stop=f.tasks.workerStop(f.actor,{operationId:'stop',workerId:worker.workerId});
+   stopKey=stop.operationKey;
+   f.tasks.confirmStop(stopKey,false);
+   assert.equal(f.tasks.workerMessageRecovery(f.actor,worker.workerId,'exit-unconfirmed'),undefined);
+   f.tasks.confirmWorkerExit(run.id,undefined);
+   assert.equal(f.tasks.workerMessageRecovery(f.actor,worker.workerId,'stop-receipt-unconfirmed'),undefined);
+   stopReceipt=f.tasks.confirmStop(stopKey,true);
+  }else{
+   f.tasks.endSegment(run.id,run.epoch,{status:'completed',text:'Prior answer'},true);
+  }
+  const previous=f.tasks.run(run.id);
   const blocked=f.tasks.workerMessage(f.actor,{operationId:'blocked',workerId:worker.workerId,text:'Continue'});
   assert.equal(blocked.reason,'operation_uncertain');
   const releases:Array<()=>void>=[];
@@ -517,6 +529,9 @@ test('late terminal recovery is equivalent to online completion and cannot steer
   assert.equal(second.route,'blocked');assert.equal(second.reason,'worker_not_ready');
   assert.equal(bindings.hasUnconfirmedWorkerEffects(threadId),false);
   assert.equal(f.tasks.runs(task.taskId).length,2);
+  assert.deepEqual(f.tasks.run(run.id),previous);
+  if(stopKey)assert.deepEqual(JSON.parse(f.tasks.operation(stopKey).responseJson!),stopReceipt);
+  assert.deepEqual(f.tasks.workerMessage(f.actor,{operationId:'blocked',workerId:worker.workerId,text:'Continue'}),blocked);
   assert.deepEqual(await tools.call(f.actor,'worker_message',args,'continue-a'),first);
   assert.equal(reads,2);
   const reopened=new Store(f.path);

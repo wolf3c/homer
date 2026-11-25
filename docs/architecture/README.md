@@ -22,6 +22,8 @@
 
 2026-11-21 Worker 续办首轮源码已接入迟到命令终态的按需对账。固定版与宿主的完整隔离回环及定向检查通过，安装版待验。Steer 到 Start 的自动回退留待单独评审。[实施计划与验收](main-worker-chat-architecture.md#worker-续办状态对账与安全恢复)
 
+2026-11-25 Worker 续办源码补齐已确认停止的迟到命令终态对账，隔离回归通过，安装版及原线程续办待验。[停止场景与回归](main-worker-chat-architecture.md#worker-续办状态对账与安全恢复)
+
 2026-11-20 工作区已实现建项与派工分离。Homer 建项保存目标，Worker 按事项编号承接整项或指定分工。两种派工均通过固定 Codex 引擎的本地回环验收。旧 Main 工具表须使用匹配版本或独立新会话。[建项与派工契约](main-worker-chat-architecture.md#新会话的事项标题契约)
 
 2026-11-20，yezi2 6.1.45 已启用线上 V2。本机 Mac（Homer 0.1.19，build 307）登录时的 PKCE 兑换和重启时的配置 GET 均返回精简选型。两次均为 `gpt-6.1-terra`，Main 用 `medium`，Worker 用 `high`。本机日常推理仍使用 ChatGPT 套餐，其他平台暂未验。[线上精简下发验收状态](member-model-selection.md#线上精简下发验收状态)
