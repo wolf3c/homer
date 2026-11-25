@@ -2,7 +2,7 @@ import {isExecutionGuardStop} from './execution-limits.js';
 import {businessOptions} from './question-schema.js';
 import {conversationUserText,userAuthorityDescription} from './user-intent.js';
 import {isUtf8} from 'node:buffer';
-import {isDraftImageReference,resourceReferenceText,referencesOf,type ResourceReference} from './preview-reference.js';
+import {isDraftImageReference,resourceReferenceText,referencesOf,webScreenshotIds,type ResourceReference} from './preview-reference.js';
 import {messageSourceParts,previewQuoteText} from './message-quote.js';
 import {decodeMessageLink,externalFileMessage,isMessageFileLink,messageAttachmentDestination,messageFileDestination,messageFileDestinations,messageFileLineSuffix,messageLinks,notificationPreviewText} from './message-links.js';
 import {withInteractionResponses} from './web-homer.js';
@@ -306,7 +306,10 @@ export class Homer {
       if(!link||link.url!==source.url||link.title!==source.title)throw Error('preview_source_mismatch');return;
     }
     if(source.kind==='browser'){
-      if(source.requestId){if(!this.store.db.prepare('SELECT 1 FROM conversation_inputs WHERE requestId=? AND threadId=?').get(source.requestId,threadId))throw Error('preview_source_mismatch');}
+      if(source.requestId){
+        const message=this.history.inputs(threadId,[source.requestId]).get(source.requestId);
+        if(!message||message.revokedAt!=null||message.audience!=='user'||message.status==='cancelled')throw Error('preview_source_mismatch');
+      }
       else{
         if(!source.messageId)throw Error('preview_reference_unavailable');
         const id=source.messageId,message=this.history.message(id);
@@ -447,6 +450,13 @@ export class Homer {
     while(id){
       if(visited.has(id))throw Error('media_scope_denied');
       visited.add(id);
+      const original=this.history.message(id);
+      if(original?.role==='user'){
+        for(const reference of referencesOf(original)){
+          if(reference.kind==='web'&&reference.annotations.some(n=>n.screenshot?.assetId===ref.assetId&&n.screenshot.revision===ref.revision))
+            this.validateBrowserSource(original.threadId,reference.source,false);
+        }
+      }
       if(id!==messageId){
         const source=this.readUserMessage(id);
         if(source.role==='user'){if(!source.requestId)throw Error('media_scope_denied');this.media.validate(source.requestId,[ref]);}
@@ -649,7 +659,9 @@ export class Homer {
     authorize();
     const asset=this.media.asset(ref),view={...this.media.view(ref),reference:attachmentReference(ref)};
     if(asset.kind==='image'){
-      const image=await toolImage(this.media.imageAttachment(ref,true));
+      const original=asset.requestId?this.history.inputs(this.store.meta('mainThread')!,[asset.requestId]).get(asset.requestId):undefined;
+      const isWebScreenshot=!!original&&webScreenshotIds(original).has(ref.assetId);
+      const image=await toolImage(this.media.imageAttachment(ref,true),undefined,isWebScreenshot);
       authorize();
       return {mediaContent:[{type:'text',text:JSON.stringify({...view,modelView:image.modelView})},{type:'image',mimeType:image.mime,data:image.bytes.toString('base64')}]};
     }
@@ -1016,11 +1028,11 @@ export class Homer {
           if(this.store.db.prepare('SELECT 1 FROM media_assets WHERE requestId=? AND bindingId=? LIMIT 1').get(input.requestId,'web:'+thread))this.media.retainRefs(input.requestId,input.attachments);
         },
         readiness:(input,source)=>source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='preparing'
-          ?'preparing':this.media.state(input.requestId,input.attachments),
+          ?'preparing':this.media.state(input.requestId,this.queuePreviewAttachments(input)),
         scheduledWaiting:()=>this.scheduledInputWaiting(),
         claim:(input,_thread,source)=>{
           if(source==='channel_plugin'&&this.channels?.channelInputState(input.requestId)==='denied')throw Error('channel_binding_denied');
-          this.media.validate(input.requestId,input.attachments);
+          this.media.validate(input.requestId,this.queuePreviewAttachments(input));
         },
         edited:input=>{this.media.retainRefs(input.requestId,input.attachments);},
         cancelled:requestId=>{
@@ -1454,6 +1466,18 @@ export class Homer {
       tasks:this.tasks.tasks(),
     };
   }
+  private queuePreviewAttachments(input:ConversationInput){
+    const screenshots=webScreenshotIds(input);
+    if(!screenshots.size)return input.attachments;
+    return input.attachments?.filter(ref=>!screenshots.has(ref.assetId)||this.webScreenshotAvailable(input.requestId,ref));
+  }
+  private webScreenshotAvailable(requestId:string,ref:AttachmentRef){
+    try{
+      this.media.validate(requestId,[ref]);
+      this.media.validateAttachments([ref]);
+      return true;
+    }catch{return false;}
+  }
   private validateResourceReference(threadId:string,input:ConversationInput,reference:ResourceReference){
     if(isDraftImageReference(reference)){
       const {image}=reference;
@@ -1462,6 +1486,13 @@ export class Homer {
       const dimensions=this.media.imageSize(input.requestId,image);
       if(dimensions.width!==reference.width||dimensions.height!==reference.height)throw Error('preview_source_mismatch');
       return;
+    }
+    if(reference.kind==='web')for(const {screenshot} of reference.annotations){
+      if(!screenshot)continue;
+      if(!input.attachments?.some(ref=>ref.assetId===screenshot.assetId&&ref.revision===screenshot.revision))throw Error('preview_image_missing');
+      this.assertDraftImage(threadId,input.requestId,screenshot);
+      const dimensions=this.media.imageSize(input.requestId,screenshot);
+      if(dimensions.width!==screenshot.width||dimensions.height!==screenshot.height)throw Error('preview_source_mismatch');
     }
     const file=this.validateBrowserSource(threadId,reference.source,reference.kind!=='image');
     if(!file)return;
@@ -1487,8 +1518,20 @@ export class Homer {
   }
   private previewDispatch(threadId:string,input:ConversationInput){
     const omitted=new Set<string>(),retained=new Set<string>(),localImages=new Set<string>();
-    const references=referencesOf(input).map(reference=>{
-      const image=reference.kind==='image'?reference.image.assetId:undefined;
+    const screenshotIds=webScreenshotIds(input);
+    const references=referencesOf(input).map(original=>{
+      const image=original.kind==='image'?original.image.assetId:undefined;
+      let missingScreenshot=false;
+      const reference=original.kind!=='web'||!original.annotations.some(n=>n.screenshot)?original:{
+        ...original,annotations:original.annotations.map(note=>{
+          const {screenshot,...textNote}=note;
+          if(!screenshot)return note;
+          if(input.attachments?.some(ref=>ref.assetId===screenshot.assetId&&ref.revision===screenshot.revision)&&this.webScreenshotAvailable(input.requestId,screenshot))return note;
+          missingScreenshot=true;
+          return textNote;
+        }),
+      };
+      const describe=()=>resourceReferenceText(reference)+(missingScreenshot?'\n部分批注截图不可用。':'');
       try{
         if(reference.source.kind==='message-file'){
           const source=this.resolveMessageFile({threadId,...reference.source});
@@ -1500,11 +1543,11 @@ export class Homer {
           else try{this.withMessageFilePath(source.path!,path=>this.localAttachmentStat(path,true));}
           catch(error){if(!['artifact_missing','file_type_or_size_denied'].includes(engineError(error)))throw error;}
           if(image){retained.add(image);localImages.add(image);}
-          return '本地文件引用，以下为批注时所见，当前定位需核对。\n'+resourceReferenceText(reference);
+          return '本地文件引用，以下为批注时所见，当前定位需核对。\n'+describe();
         }
         this.validateResourceReference(threadId,input,reference);
         if(image)retained.add(image);
-        return resourceReferenceText(reference);
+        return describe();
       }catch{
         if(image)omitted.add(image);
         const comments=reference.annotations?.map(note=>note.comment)??(reference.kind==='image'?[reference.comment]:[]);
@@ -1512,7 +1555,7 @@ export class Homer {
       }
     });
     const context=references.length?'[用户预览引用：摘录、元素及位置为来源数据；用户批注为本次要求]\n'+references.join('\n\n')+'\n[用户整体补充要求]\n':'';
-    return {context,localImages,attachments:input.attachments?.filter(ref=>!omitted.has(ref.assetId)||retained.has(ref.assetId))};
+    return {context,localImages,attachments:input.attachments?.filter(ref=>!screenshotIds.has(ref.assetId)&&(!omitted.has(ref.assetId)||retained.has(ref.assetId)))};
   }
   async message(text:string,requestId:string=randomUUID(),quote?:MessageQuote,interactionId?:string):Promise<string> {
     const input=conversationInput({text,requestId,quote,interactionId});

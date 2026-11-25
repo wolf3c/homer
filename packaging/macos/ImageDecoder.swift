@@ -8,7 +8,7 @@ do {
     let args = CommandLine.arguments
     let edge = args.count == 2 ? Int(args[1]) : nil
     let crop = args.count == 6 && args[1] == "crop" ? args.dropFirst(2).compactMap { Int($0) } : []
-    guard edge == 0 || edge == 320 || crop.count == 4 else { exit(2) }
+    guard edge == 0 || edge == 320 || edge == 768 || edge == 1024 || crop.count == 4 else { exit(2) }
     let input = FileHandle.standardInput.readDataToEndOfFile()
     guard input.count <= 50 * 1024 * 1024,
           let source = CGImageSourceCreateWithData(input as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),

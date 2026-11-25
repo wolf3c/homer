@@ -179,3 +179,16 @@ test('empty message annotations consume no authority budget and populated annota
  assert.equal(conversationUserText({text:'合成文本',quotes:[]}),plain);
  assert.match(conversationUserText({text:'合成文本',quotes:[{messageId:'synthetic-message',text:'原文',annotation:'保留此批注'}]}),/保留此批注/);
 });
+
+test('web screenshots preserve shared attachment identity and per-note image bounds',()=>{
+ const screenshot={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1,width:1600,height:1200,region:{x:1120,y:360,width:480,height:88}};
+ const first={id:'note-1',element:'配送地址',elementPath:'#shipping-address',comment:'输入框右侧被裁掉',x:560,y:180,screenshot};
+ const second={...first,id:'note-2',elementPath:'#shipping-note',comment:'缩短说明',screenshot:{...screenshot,region:{x:1120,y:480,width:360,height:52}}};
+ const ref={kind:'web' as const,source:{kind:'browser' as const,url:'https://example.com/',title:'结算页'},annotations:[first,second]};
+ assert.deepEqual(parseResourceReference(ref),ref);
+ const model=resourceReferenceText(ref);
+ assert.equal(model.split(screenshot.assetId).length,2);
+ assert.match(model,/"region":\{"x":1120,"y":360,"width":480,"height":88\}/);
+ assert.match(model,/"region":\{"x":1120,"y":480,"width":360,"height":52\}/);
+ assert.throws(()=>parseResourceReference({...ref,annotations:[{...first,screenshot:{...screenshot,region:{...screenshot.region,width:481}}}]}),/invalid_resource_reference/);
+});

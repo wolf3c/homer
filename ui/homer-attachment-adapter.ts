@@ -20,6 +20,7 @@ export function createHomerAttachmentAdapter(context:()=>DraftContext,request:ty
  const owner={
   accept:'*',
   uploadId(file:File){return identityFor(file).uploadId;},
+  forget(file:File){identities.delete(file);},
   confirmed(file:File){return !!identities.get(file)?.asset;},
   asset(file:File){return identityFor(file).asset;},
   retryFile(attachment:HomerAttachment){identities.set(attachment.file,attachment.homer);return attachment.file;},

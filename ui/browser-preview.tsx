@@ -1,5 +1,5 @@
 import{createContext,useEffect,useId,useLayoutEffect,useRef,useState}from'react';
-import type{BrowserPage,BrowserPreviewBridge,BrowserAnnotationState,BrowserAnnotationChange,PreviewLinkResult}from'../src/browser-preview';
+import type{BrowserPage,BrowserPreviewBridge,BrowserAnnotationState,BrowserAnnotationChange,BrowserCaptureRegion,PreviewLinkResult}from'../src/browser-preview';
 import{referenceKey,referencesOf,type PreviewSource,type PreviewRequest,type PreviewAnnotation}from'../src/preview-reference';
 import{useAnnotationDraft,type AnnotationDraft}from'./annotation-draft';
 import{connectionFetch}from'./web-connection-client';
@@ -27,7 +27,7 @@ export function useBrowserPages(threadId:string){
 }
 type LocationPanel={scope:string;session:symbol;grants?:string[];history?:boolean;busy?:boolean;notice?:string};
 const locationLabel=(type:string)=>type==='geolocation-approximate'?'近似位置':'位置';
-type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
+type Props={page:BrowserPage;annotationDraft:AnnotationDraft;onReference:(reference:PreviewRequest,file?:File,isCurrent?:()=>boolean,htmlNotes?:undefined,capture?:BrowserCaptureRegion)=>Promise<void>;enabled:boolean;focusId?:string;focusKey?:string;focusRequest?:string;historyNote?:PreviewAnnotation;suspended?:boolean;isCurrent?:()=>boolean;onLocationApproval?:(id:string)=>void};
 export function BrowserPreview({page,annotationDraft,onReference,enabled:referenceEnabled,focusId:requestedFocus,focusKey,focusRequest,historyNote,suspended=false,isCurrent=()=>true,onLocationApproval}:Props){
  const enabled=referenceEnabled&&!page.resource&&(page.source.kind!=='browser'||!!(page.source.requestId||page.source.messageId));
  const draft=useAnnotationDraft(annotationDraft),viewport=useRef<HTMLDivElement>(null),latest=useRef({page,onReference,enabled,isCurrent});latest.current={page,onReference,enabled,isCurrent};
@@ -58,7 +58,11 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
     try{
      if(!current.enabled||!current.isCurrent()||change.document!==current.page.document||change.baseRevision!==before.revision||change.epoch!==before.epoch)throw Error('页面或草稿已变化，输入已保留，请重新保存。');
      const p=current.page;
-     await current.onReference({kind:'web',source:p.source,page:{id:p.id,url:p.url,title:p.title},annotations:change.notes},undefined,()=>latest.current.isCurrent()&&latest.current.page.document===change.document&&annotationDraft.read().epoch===before.epoch);
+     const {capture}=change;
+     const fresh=()=>Date.now()<change.expiresAt&&latest.current.isCurrent()&&latest.current.page.document===change.document&&annotationDraft.read().epoch===before.epoch&&annotationDraft.read().revision===before.revision;
+     const file=capture?annotationDraft.imageFile(JSON.stringify([p.id,p.document,key,capture.hash]),new File([Uint8Array.from(atob(capture.data),char=>char.charCodeAt(0))],'网页批注.png',{type:'image/png'})):undefined;
+     await current.onReference({kind:'web',source:p.source,page:{id:p.id,url:p.url,title:p.title},annotations:change.notes},file,fresh,undefined,capture);
+     if(change.captureFailed)setNotice('批注已保存，截图未附上。');
     }catch(e){error=e instanceof Error?e.message:'草稿保存尚未确认，输入已保留。';setNotice(error);}
     const after=annotationDraft.read(),p=latest.current.page;
     const saved=referencesOf(after).find(r=>r.kind==='web'&&referenceKey(r)===key);

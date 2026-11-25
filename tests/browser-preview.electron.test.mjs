@@ -25,7 +25,7 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
  const scratch=await mkdtemp('/private/tmp/homer-preview-product-'),out=resolve(evidence,linksOnly?'links':modalOnly?'modal':linesOnly?'lines':moreOnly?'more':'.');await mkdir(out,{recursive:true});
  const openFilesDirectory=join(scratch,'exports'),oldExport=join(openFilesDirectory,'snapshot-staled');
  if(moreOnly){await mkdir(oldExport,{recursive:true});await utimes(oldExport,1,1);}
- const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError;
+ const f=fixture();let electron,web,site,electronClosed=false;const checks=[],errors=[];let claimed,claimRelease,watchdog,releaseSlowPage,captureError,webScreenshotRef;
  const slowPage=new Promise(resolve=>{releaseSlowPage=resolve;});
  const record=(name,detail)=>{checks.push({name,detail});console.log('PASS',name);};
  async function call(peer,name,args,id){const role=peer.options.role==='worker'?'worker':'main',argv=peer.options.interactionMcp.args;peer.emit('hostMcpToolStarted',{threadId:peer.threadId,turnId:peer.turnId,itemId:id,tool:name,arguments:args});const response=await mcpCall(argv[argv.indexOf(role)-1],name,args,{callId:id,'x-codex-turn-metadata':{turn_id:peer.turnId}});if(response.error)throw Error(response.error);return response.result;}
@@ -65,7 +65,8 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   const quoteText='合成原文用于核对跨栏批注。'.repeat(10);
   f.setScript(async(main,text)=>{
    if(text.includes('接续任务页')){const pageId=text.match(/page-[a-f0-9-]{36}/)?.[0];assert.ok(pageId);claimed=await call(main,'preview_open',{pageId},'claim-user-reference');await new Promise(resolve=>{claimRelease=resolve;});return{status:'completed',text:'已接续同一页面'};}
-   if(text==='Delegate both pages'){for(const goal of ['Operate page A','Operate page B']){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId});}return{status:'completed',text:'两个合成任务已创建'};}
+   if(text==='Delegate both pages'){for(const [index,goal] of ['Operate page A','Operate page B'].entries()){const {taskId}=await main.call('task_create',{title:goal,goal});await main.call('worker_open',{taskId,...(index===0&&webScreenshotRef?{attachments:[webScreenshotRef]}:{})});}return{status:'completed',text:'两个合成任务已创建'};}
+   if(text.includes('用户批注：补充可核对的数据和下一步行动。')){assert.equal((await f.app.capabilities()).currentInput.nativeImagesSubmitted,0);}
    const final={itemId:'preview-final',phase:'final_answer',text:text.includes('核对本地 HTML 的标题')||text.includes('核对第二处本地文本')||text.includes('测试本地图片批注')?'收到本地批注':text==='Emit Quote'?`${quoteText}\n\n[打开引用验收网页](${url}/quote)`:text==='Emit ZIP'?`[打开交付压缩包](${pathToFileURL(join(f.app.config.workspace,'delivered.zip')).href})`:text==='Emit Linked HTML'?`[打开附件方案](${pathToFileURL(join(f.app.config.workspace,'preview-linked.html')).href})`:text==='Emit HTML'?`HTML 已交付 [preview.html](${pathToFileURL(join(f.app.config.workspace,'preview.html')).href})`:`[打开业务网页](${url}/start)`};
    main.emit('agentMessage',{threadId:main.threadId,turnId:main.turnId,...final,completed:true});
    return{status:'completed',text:final.text,messages:[final]};
@@ -924,12 +925,64 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   await host.locator('.preview-toolbar-navigation').waitFor();assert.equal(await host.getByRole('button',{name:'交还 AI',exact:true}).count(),0);assert.equal(await host.locator('.preview-toolbar-navigation button').count(),3);assert.equal(await host.locator('.preview-toolbar-navigation button svg').count(),3);
   await annotationMode(true);await hoverMatch(page,'#heading');await hoverMatch(page,'#target');await page.screenshot({path:join(out,'web-hover.png')});await annotationMode(false);await page.locator('.annotation-hover-outline').waitFor({state:'detached'});await page.locator('#business').click();assert.equal(await page.locator('#business').innerText(),'已完成点击');await annotationMode(true);await page.locator('#target').click();
   assert.equal(await page.locator('.mode').count(),0);assert.equal(await host.getByRole('button',{name:'批注',exact:true}).getAttribute('aria-pressed'),'true');
+  const annotationInput=page.getByRole('textbox',{name:'网页元素批注'});
+  const saveAnnotation=page.getByRole('button',{name:'保存',exact:true});
+  const composerText=host.locator('.composer-area [contenteditable=true]');
+  await annotationInput.fill('原元素被替换后只保留文字');
+  await page.locator('#target').evaluate(node=>node.replaceWith(node.cloneNode(true)));
+  await saveAnnotation.click();
+  await host.locator('.annotation-chip').filter({hasText:'原元素被替换后只保留文字'}).waitFor();
+  assert.equal(await host.getByRole('button',{name:'移除附件 网页批注.png',exact:true}).count(),0);
+  await page.getByRole('button',{name:'批注 1',exact:true}).click();
+  await page.getByRole('button',{name:'删除此批注',exact:true}).click();
+  await page.locator('#target').click();
+  record('replacement nodes cannot acquire screenshots');
+  const upload=f.app.uploadAttachment.bind(f.app);
+  let uploaded,releaseUpload;
+  const uploadReady=new Promise(resolve=>{uploaded=resolve;});
+  const uploadGate=new Promise(resolve=>{releaseUpload=resolve;});
+  f.app.uploadAttachment=async value=>{
+   const asset=await upload(value);
+   uploaded();
+   await uploadGate;
+   return asset;
+  };
+  const discard=f.app.discardAttachment.bind(f.app);
+  let failedDiscard;
+  f.app.discardAttachment=value=>{
+   f.app.discardAttachment=discard;
+   failedDiscard=value;
+   throw Error('synthetic_discard_failed');
+  };
+  try{
+   await annotationInput.fill('拒绝保存的截图批注');
+   await saveAnnotation.click();
+   await Promise.race([uploadReady,new Promise((_,reject)=>setTimeout(()=>reject(Error('expected_screenshot_upload')),5000))]);
+   await composerText.fill('测'.repeat(24000));
+  }finally{
+   releaseUpload();
+   f.app.uploadAttachment=upload;
+  }
+  await page.getByRole('alert').filter({hasText:'合计过长'}).waitFor();
+  await host.getByRole('button',{name:'移除附件 网页批注.png',exact:true}).waitFor({state:'detached',timeout:4000});
+  assert(failedDiscard?.assetId,'the screenshot was locally removed despite a failed reclaim');
+  assert.equal(await annotationInput.inputValue(),'拒绝保存的截图批注');
+  await composerText.fill('');
+  record('rejected post-upload save leaves no attachment despite failed reclaim');
   await page.getByRole('textbox',{name:'网页元素批注'}).fill('补充可核对的数据和下一步行动。');await page.getByRole('button',{name:'保存',exact:true}).click();
   await host.locator('.annotation-chip').filter({hasText:'补充可核对的数据'}).waitFor();
   await page.locator('#heading').click();await page.getByRole('textbox',{name:'网页元素批注'}).fill('第二条备注');await page.getByRole('button',{name:'保存',exact:true}).click();
+  await host.locator('.annotation-chip').filter({hasText:'第二条备注'}).waitFor();
+  assert.equal(await host.getByRole('button',{name:'移除附件 网页批注.png',exact:true}).count(),1,'identical viewport captures reuse one draft attachment');
   await page.getByRole('button',{name:'批注 2',exact:true}).click();await page.getByRole('textbox',{name:'网页元素批注'}).fill('修改后的第二条');await page.getByRole('button',{name:'保存',exact:true}).click();await host.locator('.annotation-chip').filter({hasText:'修改后的第二条'}).waitFor();
   await page.getByRole('button',{name:'批注 2',exact:true}).click();await page.getByRole('button',{name:'删除此批注',exact:true}).click();await until(async()=>await host.locator('.composer-area .annotation-chip').count()===1);
-  await page.evaluate(()=>scrollTo(0,500));await host.locator('.composer-area .annotation-chip-open').click();await until(async()=>await page.locator('#target').evaluate(e=>e.getBoundingClientRect().top)>=0&&await page.locator('#target').evaluate(e=>e.getBoundingClientRect().bottom)<await page.evaluate(()=>innerHeight));
+  await page.evaluate(()=>scrollTo(0,500));
+  await page.locator('#lower').click();
+  await page.getByRole('textbox',{name:'网页元素批注'}).fill('滚动后的独立视口');
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await host.locator('.annotation-chip').filter({hasText:'滚动后的独立视口'}).waitFor();
+  assert.equal(await host.getByRole('button',{name:'移除附件 网页批注.png',exact:true}).count(),2);
+  await host.locator('.composer-area .annotation-chip-open').filter({hasText:'补充可核对的数据'}).click();await until(async()=>await page.locator('#target').evaluate(e=>e.getBoundingClientRect().top)>=0&&await page.locator('#target').evaluate(e=>e.getBoundingClientRect().bottom)<await page.evaluate(()=>innerHeight));
   record('message link opens real WCV; React Grab and existing composer produce a saved chip');
   await page.getByRole('button',{name:'批注 1',exact:true}).click();await page.screenshot({path:join(out,'product-page-editor.png')});await page.getByRole('button',{name:'取消',exact:true}).click();
   if(process.platform==='darwin'){
@@ -951,8 +1004,31 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   await until(()=>f.inputs.some(text=>text.includes('用户批注：补充可核对的数据和下一步行动。')));
   const accepted=f.app.history.list(f.app.store.meta('mainThread')).find(m=>m.role==='user'&&m.text==='请按网页批注处理');
   assert(accepted);assert.equal(accepted.resourceReferences[0].source.kind,'browser');assert.equal(accepted.resourceReferences[0].page.url,url+'/start');record('actual composer submission passes real service provenance and reaches synthetic Main prompt');
+  const [{screenshot}]=accepted.resourceReferences[0].annotations;
+  assert(screenshot,'the browser save prepares a real viewport attachment');
+  assert(!accepted.attachments.some(ref=>ref.assetId===failedDiscard.assetId));
+  assert.equal(f.app.media.asset(screenshot).hash,f.app.media.asset(failedDiscard).hash,'retry must capture identical PNG bytes using a new asset');
+  assert(!JSON.stringify(accepted.resourceReferences).includes(failedDiscard.assetId));
+  assert.equal(accepted.attachments.length,2,'deleting one note keeps the shared image, and scroll captures a distinct frame');
+  assert.notEqual(accepted.resourceReferences[0].annotations[1].screenshot.assetId,screenshot.assetId);
+  assert.equal(accepted.attachments[0].assetId,screenshot.assetId);
+  assert(screenshot.region.x+screenshot.region.width<=screenshot.width);
+  assert(screenshot.region.y+screenshot.region.height<=screenshot.height);
+  assert(f.inputs.some(text=>text.includes('inspect_attachment')&&text.includes(screenshot.assetId)));
+  webScreenshotRef=accepted.attachments[0];
+  record('web annotation pairs viewport image with coordinates and a model-readable attachment reference');
+
   await f.app.message('Delegate both pages','delegate-browser-fixture');await until(()=>f.engines.filter(p=>p.options.role==='worker'&&p.finish).length===2);
   const workers=f.engines.filter(p=>p.options.role==='worker');
+  const image=await call(workers[0],'inspect_attachment',webScreenshotRef,'view-web-shot');
+  assert((image.content??image.mediaContent).some(c=>c.type==='image'));
+  await assert.rejects(call(workers[1],'inspect_attachment',webScreenshotRef,'wrong-web-shot'),/media_scope_denied/);
+  const screenshotSource=accepted.resourceReferences[0].source;
+  assert.equal(screenshotSource.kind,'browser');assert(screenshotSource.messageId);
+  f.app.history.revokeMessage(f.app.store.meta('mainThread'),screenshotSource.messageId);
+  await assert.rejects(call(workers[0],'inspect_attachment',webScreenshotRef,'revoked-web-shot'),/media_scope_denied/);
+
+  record('only the Worker receiving the actual screenshot attachment can read it');
   const opened=await Promise.all(workers.map((w,i)=>call(w,'preview_open',{url:url+'/worker-'+i},'open-'+i)));
   const snapshots=await Promise.all(workers.map((w,i)=>call(w,'preview_read',{pageId:opened[i].id},'read-'+i)));
   await assert.rejects(electron.evaluate((_,input)=>globalThis.preview.execute(input.actor,'act',input.input),{actor:{owner:opened[0].owner,threadId:opened[0].threadId},input:{pageId:opened[0].id,document:snapshots[0].document,selector:'#does-not-exist',action:'click'}}),/preview_target_missing/);

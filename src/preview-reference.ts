@@ -13,7 +13,8 @@ export type PreviewSource =
  | ({kind:'browser';url:string;title:string}&({requestId:string;messageId?:never}|{messageId:string;requestId?:never}|{messageId?:never;requestId?:never}));
 export type PreviewPageCapture={id:string;url:string;title:string};
 export type PreviewRegion={x:number;y:number;width:number;height:number};
-export type PreviewAnnotation={id:string;element:string;elementPath:string;comment:string;x:number;y:number;boundingBox?:PreviewRegion};
+export type PreviewScreenshot=AttachmentRef&{width:number;height:number;region:PreviewRegion};
+export type PreviewAnnotation={id:string;element:string;elementPath:string;comment:string;x:number;y:number;boundingBox?:PreviewRegion;screenshot?:PreviewScreenshot};
 // Offsets count UTF-16 code units in the renderer's versioned logical text flow.
 export type PreviewTextAnchor={format:'preview-text-v1';representation:'plain'|'markdown';start:number;end:number;exact:string;prefix:string;suffix:string};
 export type PreviewTextAnnotation={id:string;text:string;comment:string;anchor?:PreviewTextAnchor};
@@ -75,10 +76,16 @@ export function parseWindowAX(value:unknown):WindowAXNode[]{
 export function previewAnnotations(value:unknown):PreviewAnnotation[]{
  if(!Array.isArray(value)||!value.length||value.length>20)invalid();
  const notes=(value as unknown[]).map(item=>{
-  const v=object(item);return {id:text(v.id,100),element:text(v.element,200),elementPath:text(v.elementPath,2000),comment:text(v.comment),x:number(v.x),y:number(v.y),...(v.boundingBox?{boundingBox:region(v.boundingBox,true)}:{})};
+  const v=object(item),screenshot=v.screenshot===undefined?undefined:previewScreenshot(v.screenshot);
+  return {id:text(v.id,100),element:text(v.element,200),elementPath:text(v.elementPath,2000),comment:text(v.comment),x:number(v.x),y:number(v.y),...(v.boundingBox?{boundingBox:region(v.boundingBox,true)}:{}),...(screenshot?{screenshot}:{})};
  });
  if(notes.reduce((size,n)=>size+n.comment.length+n.elementPath.length,0)>48000)invalid();
  return notes;
+}
+function previewScreenshot(value:unknown):PreviewScreenshot{
+ const s=object(value),{width,height,image}=imageReference({...s,image:s}),bounds=region(s.region);
+ if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||bounds.x+bounds.width>width||bounds.y+bounds.height>height)invalid();
+ return {...image,width,height,region:bounds};
 }
 function imageReference(v:Record<string,unknown>){
  const width=number(v.width),height=number(v.height),image=object(v.image),assetId=text(image.assetId,50),revision=number(image.revision);
@@ -152,7 +159,18 @@ export function resourceReferenceText(reference:ResourceReference):string{
   const picture=`来源：${origin}\n批注图片附件：${reference.image.assetId}@${reference.image.revision}\n图片尺寸：${reference.width} × ${reference.height}`;
   return reference.annotations?`${picture}\n图片逐区域批注（region 为原图像素位置，comment 为用户备注）：\n${JSON.stringify(reference.annotations.map((note,i)=>({number:i+1,...note})))}`:`${picture}；矩形区域（原图像素）：${JSON.stringify(reference.region)}\n用户批注：${reference.comment}`;
  }
- return `来源：${origin}\n${reference.page?`批注时页面：${reference.page.title}（${reference.page.url}）；页面句柄 ${reference.page.id}（运行期有效，操作前重新读取）\n`:''}网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`;
+ const screenshots=new Map<string,{image:PreviewScreenshot;notes:{number:number;id:string;elementPath:string;region:PreviewRegion;comment:string}[]}>();
+ for(const [index,note] of reference.annotations.entries()){
+  const image=note.screenshot;
+  if(!image)continue;
+  const key=`${image.assetId}@${image.revision}`;
+  let group=screenshots.get(key);
+  if(!group){group={image,notes:[]};screenshots.set(key,group);}
+  group.notes.push({number:index+1,id:note.id,elementPath:note.elementPath,region:image.region,comment:note.comment});
+ }
+ const pictures=[...screenshots].map(([key,{image,notes}])=>
+  `截图附件：${key}\n图片尺寸：${image.width} × ${image.height}\n区域（原图像素，原点在左上角）：${JSON.stringify(notes)}`).join('\n');
+ return `来源：${origin}\n${reference.page?`批注时页面：${reference.page.title}（${reference.page.url}）；页面句柄 ${reference.page.id}（运行期有效，操作前重新读取）\n`:''}网页元素位置为批注时的页面信息，非服务器复现。\n${reference.annotations.map((n,i)=>`${i+1}. ${n.element} ${n.elementPath}\n位置：${JSON.stringify(n.boundingBox??{x:n.x,y:n.y})}\n用户批注：${n.comment}`).join('\n')}`+(pictures?`\n遮挡、裁切、布局等视觉问题请先用 inspect_attachment 读取对应截图。\n${pictures}`:'');
 }
 export function resourceHasComment(reference:ResourceReference|undefined):boolean{
  return !!reference&&(reference.kind==='image'&&!reference.annotations?!!reference.comment.trim():!!reference.annotations?.some(n=>!!n.comment.trim()));
@@ -169,6 +187,9 @@ export function referenceKey(reference:Pick<ResourceReference,'kind'|'source'>&{
 }
 export function referencesOf(value:ResourceReferences):ResourceReference[]{
  return value.resourceReferences??(value.resourceReference?[value.resourceReference]:[]);
+}
+export function webScreenshotIds(input:ResourceReferences){
+ return new Set(referencesOf(input).flatMap(r=>r.kind==='web'?r.annotations.flatMap(n=>n.screenshot?[n.screenshot.assetId]:[]):[]));
 }
 export function parseResourceReferences(value:unknown):ResourceReference[]{
  if(!Array.isArray(value)||!value.length||value.length>20)invalid();

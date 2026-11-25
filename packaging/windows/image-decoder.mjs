@@ -3,7 +3,7 @@ const sharp=createRequire(new URL('./homer/package.json',import.meta.url))('shar
 try{
  const args=process.argv.slice(2),crop=args[0]==='crop',edge=args.at(-1);
  if(crop?args.length!==6||!args.slice(1,5).every(value=>/^[0-9]{1,8}$/.test(value))||!['0','600','1100'].includes(edge):
-  args.length!==1||!['0','320'].includes(edge))throw Error();
+  args.length!==1||!['0','320','768','1024'].includes(edge))throw Error();
  const chunks=[];let length=0;
  for await(const bytes of process.stdin){length+=bytes.length;if(length>50*1024*1024)throw Error();chunks.push(bytes);}
  let image=sharp(Buffer.concat(chunks),{limitInputPixels:40_000_000,animated:false,failOn:'error'}).rotate();

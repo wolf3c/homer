@@ -1,3 +1,4 @@
+import {webScreenshotIds} from './preview-reference.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {validatePreviewIntent} from './user-intent.js';
 import {mainInputProcessingSql} from './main-process.js';
@@ -433,6 +434,11 @@ export class MainInputs {
       }
       const thread = this.store.meta('mainThread')!;
       const oldRefs=this.current(row).input.attachments??[];
+      // Queued edits can remove the image. The image cannot be left in the
+      // message after its web reference is removed and become an ordinary attachment.
+      const webImages=webScreenshotIds(previous);
+      const retainedWebImages=webScreenshotIds(updated);
+      if(updated.attachments?.some(ref=>webImages.has(ref.assetId)&&!retainedWebImages.has(ref.assetId)))throw Error('queue_quote_validation_required');
       // Editors may keep/remove the exact scoped assets; adding assets requires intake.
       if(updated.attachments?.some(ref=>!oldRefs.some(old=>old.assetId===ref.assetId&&old.revision===ref.revision)))throw Error('media_scope_denied');
       const userMessage=this.db.prepare("SELECT id FROM conversation_messages WHERE requestId=? AND threadId=? AND role='user'").get(p.requestId,thread);

@@ -97,6 +97,8 @@
 
 桌面普通重启已在 `41a24f7` 的隔离 macOS App 中用真实 ChatGPT 验证原线程、原回执和不重放边界。旧首启轮退役合入 `4aa2612` 后，隔离 macOS 包 `a9ddfb0` 用真实 ChatGPT 验证首启零模型轮、只取消从未领取的旧输入、未知轮次不重放，以及普通排队消息沿原线程执行一次。见[重启验证](main-worker-chat-architecture.md#重启后原任务怎样继续)与[精简方案基线](homer-simplification-plan.md#1-从现状继续精简)。
 
+2026-11-25 [网页批注随附截图](preview-web-annotation-screenshot.md)已在独立源码候选通过复核，并在 `7b11798` 上通过 49 项宿主与媒体验证及 5 项 macOS Electron 专项。保存时自动截图，相同画面复用，模型按需读图。锁页修正后的组合验证及安装版待验。
+
 Preview [无法预览说明页优化方案](preview-architecture.md#无法预览说明页优化方案)已接入源码并完成独立复审。获准的桌面本地文件优先定位，交付附件按固定版本提供正文操作。隔离 macOS Electron 宽窄界面、固定版本下载和合成系统回执通过，Linux、Windows 的实际系统交接及手机真机待验。
 
 2026-11-25 [桌面本地文件的查看与定位](preview-architecture.md#桌面本地文件的查看与定位)源码候选已移除目录级拦截，按系统权限和原消息、文件身份处理。隔离宿主与 macOS Electron 定向验证见正文，独立复审和实际系统交接待验。

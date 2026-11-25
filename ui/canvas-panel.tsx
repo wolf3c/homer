@@ -1,3 +1,4 @@
+import type {BrowserCaptureRegion} from '../src/browser-preview';
 import {LazyMarkdownImage} from './lazy-media';
 import {MOBILE_DOWNLOAD_LIMIT_NOTICE,mobileDownloadNotice,saveBlob} from './file-download';
 import {MOBILE_PACKET_BYTES} from '../src/mobile-channel';
@@ -154,7 +155,7 @@ const markdownComponents:Components={
  img:LazyMarkdownImage,
  a:({href,children})=><a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
 };
-type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[])=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;taskContent?:(tab:Extract<PreviewTab,{kind:'task'}>)=>ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
+type CanvasPanelProps={annotationDraft:AnnotationDraft;annotationFocus?:{key:string;id:string;nonce:string;history?:PreviewRequest};artifact:CanvasArtifact|null;webSource?:WebPreviewSource;onClose:()=>void;onLocationApproval?:(id:string)=>void;returnFocusTo?:HTMLElement|null|(()=>HTMLElement|false|null);onReference:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:Annotation[],capture?:BrowserCaptureRegion)=>Promise<void>;referencesEnabled?:boolean;threadId?:string;tabs?:readonly PreviewTab[];activeId?:string|null;scheduleContent?:ReactNode;taskContent?:(tab:Extract<PreviewTab,{kind:'task'}>)=>ReactNode;onSelectArtifact?:(id:string)=>void;onCloseArtifact?:(id:string)=>void;onOpenLink?:(source:PreviewSource,href?:string,sourceCurrent?:()=>Promise<boolean>)=>void;isCurrent?:PreviewImportGuard};
 
 export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId='',onSelectArtifact,onCloseArtifact,returnFocusTo,narrow,...readerProps}:CanvasPanelProps&{narrow:boolean}) {
   const {artifact,webSource,onClose}=readerProps;

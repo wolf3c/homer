@@ -1,3 +1,4 @@
+import type {BrowserCaptureRegion} from '../src/browser-preview';
 import {ReferenceCard} from './reference-card';
 import {createContext,useContext,type ReactNode} from 'react';
 import {MessageCirclePlus,FileTextIcon,ImageIcon,GlobeIcon} from 'lucide-react';
@@ -11,7 +12,7 @@ import {isDraftImageReference,referenceKey,webSourceUrl} from '../src/preview-re
 export type WebPreviewSource=Extract<PreviewSource,{kind:'web'}>;
 export type {PreviewRequest} from '../src/preview-reference';
 export type PreviewImportGuard=()=>boolean;
-export type PreviewComposer={selectTask:(value:import('../src/web-history').TaskReference)=>boolean;selectSchedule:(value:import('./conversation-client').ScheduleContext)=>boolean;insertScheduleExample:(text:string,revealInput?:()=>void)=>string|undefined;add:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>Promise<void>;canQuote:()=>boolean;openQuote:(snapshot:import('./message-source-selection').SourceQuoteSelection,trigger?:HTMLElement)=>boolean;quoteNotice:(message:string)=>void;appendQuote:(quote:import('../src/web-history').MessageQuote)=>void};
+export type PreviewComposer={selectTask:(value:import('../src/web-history').TaskReference)=>boolean;selectSchedule:(value:import('./conversation-client').ScheduleContext)=>boolean;insertScheduleExample:(text:string,revealInput?:()=>void)=>string|undefined;add:(reference:PreviewRequest,file?:File,isCurrent?:PreviewImportGuard,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[],capture?:BrowserCaptureRegion)=>Promise<void>;canQuote:()=>boolean;openQuote:(snapshot:import('./message-source-selection').SourceQuoteSelection,trigger?:HTMLElement)=>boolean;quoteNotice:(message:string)=>void;appendQuote:(quote:import('../src/web-history').MessageQuote)=>void};
 export const PreviewActionsContext=createContext<Pick<PreviewComposer,'canQuote'|'openQuote'|'appendQuote'|'quoteNotice'>>({canQuote:()=>false,openQuote:()=>false,quoteNotice:()=>{},appendQuote:()=>{}});
 export function AnnotationChips({references,onOpen,onRemove,preparingKeys=[],noteId}:{references:(PreviewRequest|DraftImageReference)[];preparingKeys?:string[];noteId?:string;onOpen:(reference:PreviewRequest|DraftImageReference,id:string)=>void;onRemove:(key:string,id:string)=>void}){
  return <div className="annotation-chips" aria-label="已保存批注">{references.flatMap(reference=>{
@@ -43,8 +44,8 @@ function imageNotes(reference:Extract<ResourceReference,{kind:'image'}>):Preview
  if(reference.annotations)return reference.annotations;
  return [{id:'legacy',region:reference.region,comment:reference.comment}];
 }
-export function ImageReferenceRegions({reference}:{reference:Extract<ResourceReference,{kind:'image'}>}){
- return <div className="image-reference-regions" aria-hidden="true">{imageNotes(reference).map((note,i)=><div key={note.id} className="image-reference-region" style={{left:note.region.x/reference.width*100+'%',top:note.region.y/reference.height*100+'%',width:note.region.width/reference.width*100+'%',height:note.region.height/reference.height*100+'%'}}><span>{i+1}</span></div>)}</div>;
+export function ImageReferenceRegions({width,height,notes}:{width:number;height:number;notes:readonly {id:string;number:number;region:PreviewImageAnnotation['region']}[]}){
+ return <div className="image-reference-regions" aria-hidden="true">{notes.map(({id,number,region})=><div key={id} className="image-reference-region" style={{left:region.x/width*100+'%',top:region.y/height*100+'%',width:region.width/width*100+'%',height:region.height/height*100+'%'}}><span>{number}</span></div>)}</div>;
 }
 export function ResourceReferenceBlock({reference,children,hideScreenshotDetails,webAnnotationsReadOnly}:{reference:ResourceReference;children?:ReactNode;hideScreenshotDetails?:boolean;webAnnotationsReadOnly?:boolean}){
  const browser=useContext(BrowserPreviewContext);
@@ -78,7 +79,7 @@ export function ResourceReferenceBlock({reference,children,hideScreenshotDetails
   const screenshot=isDraftImageReference(reference);
   return <ReferenceCard className="preview-reference image-reference" aria-label="图片批注">
    <div className={'image-reference-layout'+(children?' has-image':'')}>
-    {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions reference={reference}/></div>}
+    {children&&<div className="image-reference-image" style={{maxWidth:Math.min(reference.height>reference.width?220:320,360*reference.width/reference.height)}}>{children}<ImageReferenceRegions width={reference.width} height={reference.height} notes={notes.map((note,i)=>({...note,number:i+1}))}/></div>}
     <ol className="image-reference-notes" aria-label="图片区域批注">{notes.map(note=><li key={note.id}>{note.comment.length>240||note.comment.split('\n').length>4?<details className="image-reference-long-comment"><summary>{note.comment.slice(0,60).trimEnd()}… <span>全文</span></summary><p className="image-reference-comment">{note.comment}</p></details>:<p className="image-reference-comment">{note.comment}</p>}</li>)}</ol>
    </div>
    {!isDraftImageReference(reference)&&source.kind==='message-file'&&window.homerBrowserPreview&&notes.map((note,i)=><Button key={note.id} type="button" className="annotation-chip-open" onClick={()=>browser.openReference(reference,note.id,true)}>打开批注 {i+1}</Button>)}

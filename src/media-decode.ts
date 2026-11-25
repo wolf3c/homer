@@ -47,16 +47,22 @@ export async function imageThumbnail(bytes:Buffer,mime:string,signal?:AbortSigna
 // Only MCP tool views are bounded here. Stored originals and full-size model
 // inputs keep their existing policy. Reuse the desktop's trusted thumbnail mode
 // once, and avoid any decoder work for an image already within the envelope.
-export async function toolImage(image:{bytes:Buffer;mime:string},signal?:AbortSignal){
+export async function toolImage(image:{bytes:Buffer;mime:string},signal?:AbortSignal,webScreenshot=false){
  if(signal?.aborted)throw Error('media_decode_cancelled');
  const input=image.mime==='image/gif'||image.mime==='image/webp'?await modelImage(image.bytes,image.mime,signal):image;
  const source=imageDimensions(input.bytes,input.mime);
  if(!source||!source.width||!source.height||source.width*source.height>MEDIA_POLICY.maxPixels)throw Error('media_pixel_limit');
  const resized=input.bytes.length>TOOL_IMAGE_BYTES;
- const view=resized?await imageThumbnail(input.bytes,input.mime,signal):{...input,...source};
+ let view={...input,...source};
+ if(resized){
+  for(const edge of webScreenshot?[1024,768,320]:[320]){
+   try{view=await normalizeImage(input.bytes,input.mime,edge,signal,webScreenshot?TOOL_IMAGE_BYTES:undefined);break;}
+   catch(error){if(edge===320||!(error instanceof Error)||error.message!=='media_decode_size_limit')throw error;}
+  }
+ }
  return {bytes:view.bytes,mime:view.mime,modelView:{source,width:view.width,height:view.height,resized,...(resized?{notice:'Downsampled tool view; fine detail may be lost. The original file is unchanged.'}:{})}};
 }
-async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,signal?:AbortSignal){
+async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,signal?:AbortSignal,outputLimit?:number){
  const imageIO=desktopIdentity?verifiedDesktopResources(desktopIdentity).imageDecoder:undefined;
  if(!imageIO&&!ffmpegPath)throw Error('media_decoder_unavailable');
  if(signal?.aborted)throw Error('media_decode_cancelled');
@@ -65,7 +71,7 @@ async function normalizeImage(bytes:Buffer,mime:string,edge:number|undefined,sig
  // Decode one frame and strip metadata. Only thumbnails constrain the long edge.
  // Lossless PNG can exceed the compressed source budget. Bound it by the pixel
  // budget instead: up to 16-bit RGBA plus scanline and compression overhead.
- const maxBytes=edge?512*1024:Math.max(MEDIA_POLICY.imageBytes,(dims?dims.width*dims.height:MEDIA_POLICY.maxPixels)*9+1024*1024);
+ const maxBytes=outputLimit??(edge?512*1024:Math.max(MEDIA_POLICY.imageBytes,(dims?dims.width*dims.height:MEDIA_POLICY.maxPixels)*9+1024*1024));
  const normalized=imageIO?await mediaProcess(process.platform==='win32'?process.execPath:imageIO,process.platform==='win32'?[imageIO,String(edge??0)]:[String(edge??0)],bytes,maxBytes,signal):await mediaProcess(ffmpegPath!,['-v','error','-nostdin','-threads','1','-filter_threads','1','-max_alloc','134217728','-max_pixels',String(MEDIA_POLICY.maxPixels),'-probesize','5000000','-protocol_whitelist','pipe','-i','pipe:0',...(edge?['-vf',`scale=w='min(${edge},iw)':h='min(${edge},ih)':force_original_aspect_ratio=decrease`]:[]),'-frames:v','1','-map_metadata','-1','-f','image2pipe','-vcodec','png','-threads','1','pipe:1'],bytes,maxBytes,signal);
  const output=imageDimensions(normalized,'image/png');if(!output||!output.width||!output.height||output.width*output.height>MEDIA_POLICY.maxPixels||edge&&(output.width>edge||output.height>edge))throw Error('media_pixel_limit');
  return {bytes:normalized,mime:'image/png',transform:imageIO&&process.platform==='win32'?(edge?`sharp-first-frame-fit${edge}-strip-metadata-v1`:'sharp-first-frame-source-size-strip-metadata-v1'):imageIO?(edge?`imageio-first-frame-fit${edge}-strip-metadata-v1`:'imageio-first-frame-source-size-strip-metadata-v1'):edge?`ffmpeg-first-frame-fit${edge}-strip-metadata-v1`:'ffmpeg-first-frame-source-size-strip-metadata-v1',...output};

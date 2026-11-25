@@ -15,7 +15,7 @@ export function withoutDraftImage(draft:ResourceReferences&Pick<AnnotationDraftS
  for(const [key,ref] of Object.entries(imageAssets))if(removedKeys.has(key)||matches(ref)){delete imageAssets[key];removedKeys.add(key);}
  const preparingImages={...draft.preparingImages};
  for(const key of removedKeys)delete preparingImages[key];
- return {resourceReference:undefined,resourceReferences:referencesOf(draft).filter(ref=>!removedKeys.has(referenceKey(ref))&&(ref.kind!=='image'||!matches(ref.image))),imageAssets,preparingImages};
+ return {resourceReference:undefined,resourceReferences:referencesOf(draft).filter(ref=>!removedKeys.has(referenceKey(ref))&&(ref.kind!=='image'||!matches(ref.image))).map(ref=>ref.kind==='web'&&ref.annotations.some(n=>n.screenshot&&matches(n.screenshot))?{...ref,annotations:ref.annotations.map(n=>n.screenshot&&matches(n.screenshot)?{...n,screenshot:undefined}:n)}:ref),imageAssets,preparingImages};
 }
 export function createAnnotationDraft(){
  let state:AnnotationDraftState={revision:0,epoch:0,htmlMetadata:{}};
@@ -36,8 +36,14 @@ export function createAnnotationDraft(){
    const preparingImages={...state.preparingImages};delete preparingImages[key];
    publish({...state,resourceReference:undefined,resourceReferences:at<0?[...refs,next]:refs.map((r,i)=>i===at?next:r),preparingImages,imageAssets:{...state.imageAssets,[key]:asset}});
   },
+  forgetImageFile:(file:File)=>{for(const [key,value] of imageFiles)if(value===file)imageFiles.delete(key);},
   imageKeys:(file:File)=>[...imageFiles].filter(([,value])=>value===file).map(([key])=>key),
-  forgetImage:(asset:AttachmentRef|undefined,keys:string[]=[])=>publish({...state,...withoutDraftImage(state,asset,keys)}),
+  forgetImage:(asset:AttachmentRef|undefined,keys:string[]=[])=>{
+   const next=withoutDraftImage(state,asset,keys);
+   if(JSON.stringify(referencesOf(state))!==JSON.stringify(referencesOf(next))||
+     JSON.stringify(state.imageAssets??{})!==JSON.stringify(next.imageAssets)||
+     JSON.stringify(state.preparingImages??{})!==JSON.stringify(next.preparingImages))publish({...state,...next});
+  },
   clear:()=>{imageFiles.clear();publish({htmlMetadata:{},epoch:state.epoch+1});},
   remove:(key:string,id:string)=>{
    if(state.frozen)return false;

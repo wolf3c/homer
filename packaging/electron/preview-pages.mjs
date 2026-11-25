@@ -208,11 +208,23 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  });
  ipcMain.handle('homer:preview:annotation-read',event=>{const p=contentCaller(event);return {document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations};});
  ipcMain.handle('homer:preview:annotation-begin',async event=>{const p=contentCaller(event);p.control='user';await p.inFlight?.catch(()=>{});changed();});
+ ipcMain.handle('homer:preview:annotation-capture',async(event,document)=>{
+  const p=contentCaller(event);
+  const current=()=>p.id===selected&&!p.closed&&!p.loading&&!p.lockTurn&&p.control==='user'&&p.document===document&&p.annotations?.active;
+  if(!current())throw Error('preview_document_changed');
+  const image=await p.view.webContents.capturePage(undefined,{stayHidden:true});
+  if(!current()||image.isEmpty())throw Error('preview_document_changed');
+  const bytes=image.toPNG();
+  const width=bytes.readUInt32BE(16),height=bytes.readUInt32BE(20);
+  if(bytes.length>8*1024*1024)throw Error('preview_image_too_large');
+  return {data:bytes.toString('base64'),hash:createHash('sha256').update(bytes).digest('hex'),width,height};
+ });
  ipcMain.handle('homer:preview:annotation-save',(event,input)=>{
   const p=contentCaller(event);if(p.control!=='user'||input?.document!==p.document)throw Error('preview_document_changed');
-  if(typeof input.changeId!=='string'||input.changeId.length>100||!Array.isArray(input.notes)||input.notes.length>20||JSON.stringify(input).length>100000)throw Error('invalid_resource_reference');
+  if(typeof input.changeId!=='string'||input.changeId.length>100||!Array.isArray(input.notes)||input.notes.length>20||JSON.stringify(input.notes).length>100000||input.capture&&(!/^[a-f0-9]{64}$/.test(input.capture.hash)||typeof input.capture.data!=='string'||input.capture.data.length>Math.ceil(8*1024*1024/3)*4))throw Error('invalid_resource_reference');
   if(pending.has(input.changeId))throw Error('preview_save_pending');
-  return new Promise(resolve=>{const timer=setTimeout(()=>{pending.delete(input.changeId);resolve({changeId:input.changeId,error:'草稿保存尚未确认，输入已保留。'});},15000);pending.set(input.changeId,{page:p,resolve,timer});window().webContents.send('homer:preview:annotation',{...input,pageId:p.id});});
+  const expiresAt=Date.now()+15000;
+  return new Promise(resolve=>{const timer=setTimeout(()=>{pending.delete(input.changeId);resolve({changeId:input.changeId,error:'草稿保存尚未确认，输入已保留。'});},15000);pending.set(input.changeId,{page:p,resolve,timer});window().webContents.send('homer:preview:annotation',{...input,pageId:p.id,expiresAt});});
  });
  function currentMorePage(threadId,stamp){
   const p=page(stamp?.pageId);

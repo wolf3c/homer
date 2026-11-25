@@ -61,3 +61,53 @@ test('Web image input and message attachment inspection retain source dimensions
   assert.deepEqual(readFileSync(app.media.nativeImages(brokenScope.requestId,broken)[0]!.path),bytes.subarray(0,8));
  }finally{await app.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('request-sourced screenshots lose Worker access on revocation and an expired queued screenshot leaves its note',async()=>{
+ const {fixture,until}=await import('./fixtures/worker-chat-host.js');
+ const f=fixture();
+ let unblock:(()=>void)|undefined;
+ try{
+  await f.app.start();
+  const threadId=f.app.store.meta('mainThread')!;
+  const bytes=await mediaProcess(ffmpegPath!,['-v','error','-f','lavfi','-i','color=c=blue:s=64x32','-frames:v','1','-threads','1','-f','image2pipe','-vcodec','png','pipe:1'],Buffer.alloc(0),1024*1024);
+  const upload=async(requestId:string)=>{
+   const {assetId,revision}=await f.app.uploadAttachment({threadId,requestId,uploadId:requestId,filename:'viewport.png',data:bytes.toString('base64')});
+   return {assetId,revision};
+  };
+  const source={kind:'browser' as const,requestId:'web-origin',url:'https://example.com/',title:'Example'};
+  const input=(requestId:string,image:AttachmentRef,comment:string)=>({requestId,text:'Read annotation',attachments:[image],resourceReference:{kind:'web' as const,source,annotations:[{id:'note',element:'Heading',elementPath:'h1',comment,x:1,y:1,screenshot:{...image,width:64,height:32,region:{x:1,y:1,width:2,height:2}}}]}});
+  await f.app.message('Open a source page','web-origin');
+  const image=await upload('web-screenshot');
+  f.setScript(async(main,text)=>{
+   if(text.includes('Inspect authorized screenshot')){
+    const {taskId}=await main.call('task_create',{title:'Inspect screenshot',goal:'Inspect screenshot'});
+    await main.call('worker_open',{taskId,attachments:[image]});
+   }
+   if(text==='Hold queue')await new Promise<void>(resolve=>{unblock=resolve;});
+   return {status:'completed',text:'Synthetic reply'};
+  });
+  f.app.submitMessage(input('web-screenshot',image,'Inspect authorized screenshot'));
+  await until(()=>f.engines.some(engine=>engine.options.role==='worker'&&engine.finish));
+  const worker=f.engines.find(engine=>engine.options.role==='worker')!;
+  const {mcpCall}=await import('./fixtures/host-mcp-call.js');
+  const args=worker.options.interactionMcp!.args;
+  const inspect=async(id:string)=>{
+   worker.emit('hostMcpToolStarted',{threadId:worker.threadId,turnId:worker.turnId,itemId:id,tool:'inspect_attachment',arguments:image});
+   return mcpCall(args[args.indexOf('worker')-1]!,'inspect_attachment',image,{callId:id,'x-codex-turn-metadata':{turn_id:worker.turnId}});
+  };
+  const granted=await inspect('read-source-frame');
+  assert.equal(granted.error,undefined);
+  assert((granted.result.content??granted.result.mediaContent).some((item:{type:string})=>item.type==='image'));
+
+  const queued=await upload('web-queued');
+  const holding=f.app.message('Hold queue','web-queue-hold');
+  await until(()=>!!unblock);
+  f.app.submitMessage(input('web-queued',queued,'Keep queued screenshot note'));
+  f.app.media.revoke('web-queued');
+  unblock!();
+  await holding;
+  await until(()=>f.inputs.some(text=>text.includes('Keep queued screenshot note')&&text.includes('截图不可用')));
+  assert(f.app.history.revokeMessage(threadId,f.app.history.inputs(threadId,['web-origin']).get('web-origin')!.id));
+  assert.equal((await inspect('revoked-source-frame')).error,'media_scope_denied');
+ }finally{unblock?.();await f.close();}
+});

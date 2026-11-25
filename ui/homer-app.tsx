@@ -1,3 +1,4 @@
+import type {BrowserCaptureRegion} from '../src/browser-preview';
 import {ReferenceCard} from './reference-card';
 import type {WebSendScope} from '../src/web-contract';
 import {TaskConversation,type TaskConversationWindow} from './task-conversation';
@@ -15,8 +16,8 @@ import {createAnnotationDraft,useAnnotationDraft,annotationValidationReferences,
 import {previewIntentTooLong} from '../src/user-intent';
 import {Group,Panel,Separator} from 'react-resizable-panels';
 import {Clock3,ListTodoIcon,MessageCirclePlus,PanelRightIcon} from 'lucide-react';
-import {isDraftImageReference,parseResourceReference,parseResourceReferences,referenceKey,referencesOf,type DraftImageReference,type PreviewImageAnnotation,type ResourceReference,type WindowAXNode} from '../src/preview-reference';
-import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,type PreviewComposer,type PreviewRequest} from './preview-reference';
+import {isDraftImageReference,parseResourceReference,parseResourceReferences,referenceKey,referencesOf,webScreenshotIds,type DraftImageReference,type PreviewImageAnnotation,type ResourceReference,type WindowAXNode} from '../src/preview-reference';
+import {PreviewActionsContext,ResourceReferenceBlock,AnnotationChips,ImageReferenceRegions,type PreviewComposer,type PreviewRequest} from './preview-reference';
 import {TaskStatusPopover} from './task-status';
 import {MobileSettings} from './mobile-settings';
 import type {StartFeedback} from './settings-about';
@@ -170,7 +171,7 @@ function ResourceDownload({path,filename,mimeType,size}:{path:string;filename:st
  }catch(error){setError(error instanceof Error&&error.message==='mobile_file_size_limit'?MOBILE_DOWNLOAD_LIMIT_NOTICE:'下载未完成，请重新连接后重试。');}}
  return <><FileDownload data={new URL(path,location.href).href} sourceType="url" filename={filename} mimeType={mimeType} onClick={event=>{event.preventDefault();void download();}}/>{error&&<span role="status">{error}</span>}</>;
 }
-function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;messageId:string;index:number;ratio?:'auto'|'4:3'}){
+function MediaAttachment({asset,messageId,index,ratio='4:3',regions}:{asset:MediaView;messageId:string;index:number;ratio?:'auto'|'4:3';regions?:ReactNode}){
  const labels:Record<string,string>={received:'等待下载',downloading:'准备中',retryable_failed:'等待重试',failed:'准备失败',expired:'已过期',deleted:'已清理',revoked:'已撤回'};
  const path='/api/media/'+messageId+'/'+asset.assetId+'/'+asset.revision;
  const previewPath=asset.kind==='voice'?path+'?preview=voice':path;
@@ -181,7 +182,7 @@ function MediaAttachment({asset,messageId,index,ratio='4:3'}:{asset:MediaView;me
  const previewStatus=useCallback((status:'loaded'|'error')=>setFailedPath(previous=>status==='error'?previewPath:previous===previewPath?'':previous),[previewPath]);
  const preview=previewable&&<LazyMedia key={previewPath} path={previewPath} kind={asset.kind as 'image'|'video'|'voice'} onError={image?previewError:undefined}>{url=>image?<ImageZoom src={url} alt={asset.filename}><ImagePreview src={url} alt={asset.filename} ratio={ratio} onStatusChange={previewStatus}/></ImageZoom>:asset.kind==='voice'?<audio controls preload="none" src={url} aria-label={'语音附件 '+(index+1)}/>:<video controls preload="metadata" src={url} aria-label={'视频附件 '+(index+1)}/>}</LazyMedia>;
  return <ReferenceCard as="figure" className="message-attachment">
-  {image?<ImageRoot className="homer-image-attachment">{preview}</ImageRoot>:preview}
+  {image?<ImageRoot className="homer-image-attachment">{preview}{!imageFailed&&regions}</ImageRoot>:preview}
   {(!image||imageFailed)&&<figcaption><FileRoot className="homer-media-file"><FileIconDisplay mimeType={asset.mime??undefined}/><FileName title={asset.filename}>{asset.filename}</FileName>{asset.size>0&&<FileSize bytes={asset.size}/>}
    {asset.state==='ready'&&<ResourceDownload key={path} path={path} filename={asset.filename} size={asset.size} mimeType={asset.mime??'application/octet-stream'}/>}</FileRoot>
    {asset.state!=='ready'&&<span role="status"> · {labels[asset.state]??'暂不可用'}{asset.error?'（'+asset.error+'）':''}</span>}</figcaption>}
@@ -193,7 +194,16 @@ function MediaAttachments({media,messageId,references=[],hideScreenshotDetails,w
   const index=reference.kind==='image'&&(reference.annotations?.length??1)>0?media.findIndex((asset,index)=>!paired.has(index)&&asset.kind==='image'&&asset.state==='ready'&&asset.assetId===reference.image.assetId&&asset.revision===reference.image.revision):-1;
   if(index>=0)paired.add(index);
   return <ResourceReferenceBlock key={referenceKey(reference)} reference={reference} hideScreenshotDetails={hideScreenshotDetails} webAnnotationsReadOnly={webAnnotationsReadOnly}>{index>=0&&<MediaAttachment asset={media[index]} index={index} messageId={messageId} ratio="auto"/>}</ResourceReferenceBlock>;
- })}<div className="message-attachments">{media.map((asset,index)=>!paired.has(index)&&<MediaAttachment key={asset.assetId} asset={asset} index={index} messageId={messageId}/>)}</div></>;
+ })}<div className="message-attachments">{media.map((asset,index)=>{
+  if(paired.has(index))return null;
+  const notes=references.flatMap(reference=>reference.kind==='web'?reference.annotations.flatMap(({id,screenshot},i)=>
+    screenshot?.assetId===asset.assetId&&screenshot.revision===asset.revision?[{id,number:i+1,...screenshot}]:[]):[]);
+  const frame=notes[0];
+  if(!frame||asset.kind!=='image'||asset.state!=='ready')return <MediaAttachment key={asset.assetId} asset={asset} index={index} messageId={messageId}/>;
+  return <div key={asset.assetId} className="image-reference-image" style={{maxWidth:Math.min(frame.height>frame.width?220:320,360*frame.width/frame.height)}}>
+    <MediaAttachment asset={asset} index={index} messageId={messageId} ratio="auto" regions={<ImageReferenceRegions width={frame.width} height={frame.height} notes={notes}/>}/>
+  </div>;
+ })}</div></>;
 }
 const ArtifactsContext=createContext<{files:WebArtifact[];selectedId?:string;open:(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>void}>({files:[],open:()=>{}});
 function ArtifactFiles({files}:{files:WebArtifact[]}){
@@ -1084,13 +1094,42 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     if(state.features?.previewReferenceCollections!==2&&annotationValidationReferences(annotationDraft.read()).length){setDraftNotice('请先移除输入草稿中的成果批注，再引用消息。');return false;}
     return true;
   }
+  async function detachWebScreenshot(item:HomerAttachment){
+    const assetId=item.homer.asset?.assetId;
+    const index=composerRuntime.getState().attachments.findIndex(attachment=>attachment.id===item.id||
+      !!assetId&&attachmentAsset(attachment)?.assetId===assetId);
+    if(index>=0){
+      const attached=composerRuntime.getState().attachments[index]!;
+      attachmentOwner.markSubmitted([attached]);
+      await composerRuntime.getAttachmentByIndex(index).remove();
+    }
+    annotationDraft.forgetImageFile(item.file);
+    attachmentOwner.forget(item.file);
+    // The detached image is no longer eligible for sending, even if reclaim fails.
+    await attachmentOwner.remove(item).catch(()=>{});
+  }
+  function releaseWebScreenshots(before:ResourceReference[],after:ResourceReference[]){
+    const previous=webScreenshotIds({resourceReferences:before}),current=webScreenshotIds({resourceReferences:after});
+    const removed=(composerRuntime.getState().attachments as readonly HomerAttachment[]).filter(item=>{
+      const asset=attachmentAsset(item);
+      return asset&&previous.has(asset.assetId)&&!current.has(asset.assetId);
+    });
+    if(!removed.length)return;
+    uploadingRef.current=true;setUploading(true);
+    void Promise.allSettled(removed.map(detachWebScreenshot)).finally(()=>{uploadingRef.current=false;setUploading(false);});
+  }
   async function removeComposerNote(reference:PreviewRequest|ResourceReference,id:string){
+    if(reference.kind==='web'&&(uploading||uploadingRef.current))throw Error('附件正在处理，请稍后重试。');
     if(reference.kind==='image'&&reference.source.kind==='message-file'&&(reference.annotations?.length??1)===1){
       await addReference({kind:'image',source:reference.source,width:reference.width,height:reference.height,annotations:[]});
-    }else annotationDraft.remove(referenceKey(reference),id);
+    }else{
+      const before=referencesOf(annotationDraft.read());
+      annotationDraft.remove(referenceKey(reference),id);
+      if(reference.kind==='web')releaseWebScreenshots(before,referencesOf(annotationDraft.read()));
+    }
     focusInput();
   }
-  async function addReference(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[]){
+  async function addReference(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[],capture?:BrowserCaptureRegion){
     if(restoring||scopedPending||answerRef.current||!state.features?.previewReferenceCollections)throw Error('请先返回普通输入，或刷新支持批注集合的界面。');
     if(state.features?.previewReferenceCollections!==2&&quotesRef.current.length)throw Error('请先移除当前消息引用，再保存成果批注。');
     const requestId=draftRequest.current,epoch=annotationDraft.read().epoch;
@@ -1100,6 +1139,40 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     function merged(next:ResourceReference|undefined,validation=false){return [...(validation?annotationValidationReferences(annotationDraft.read()):referencesOf(annotationDraft.read())).filter(r=>referenceKey(r)!==key),...(next?[next]:[])].sort((a,b)=>{
       const order=referencesOf(annotationDraft.read()).map(referenceKey);const ai=order.indexOf(referenceKey(a)),bi=order.indexOf(referenceKey(b));return (ai<0?order.length:ai)-(bi<0?order.length:bi);
     });}
+    if(reference.kind==='web'&&(uploading||uploadingRef.current))throw Error('附件正在处理，请稍后重试。');
+    if(reference.kind==='web'&&capture&&file){
+      const commit=(value:PreviewRequest,failed=false)=>{
+        const refs=merged(parseResourceReference(value));
+        checkCandidate(refs);
+        if(!current())throw Error('页面或草稿已变化，输入已保留，请重新保存。');
+        annotationDraft.replace(refs);
+        setDraftNotice(failed?'批注已保存，截图未附上。':'');
+      };
+      checkCandidate(merged(parseResourceReference(reference)));
+      if(uploadIssue([file])){commit(reference,true);return;}
+      uploadingRef.current=true;setUploading(true);
+      let staged:HomerAttachment|undefined;
+      try{
+        const inComposer=(ref:AttachmentRef)=>composerRuntime.getState().attachments.some(item=>{
+          const asset=attachmentAsset(item);
+          return asset?.assetId===ref.assetId&&asset.revision===ref.revision;
+        });
+        const cached=attachmentOwner.asset(file);
+        if(cached&&!inComposer(cached))attachmentOwner.forget(file);
+        if(!attachmentOwner.asset(file))for await(const item of attachmentOwner.add({file}))staged=item;
+        const asset=attachmentOwner.asset(file);
+        if(!asset||!current())throw Error('preview_image_unavailable');
+        const {assetId,revision}=asset,{width,height,region}=capture;
+        if(staged)await composerRuntime.addAttachment(file);
+        if(!inComposer(asset))throw Error('preview_image_unavailable');
+        commit({...reference,annotations:reference.annotations.map(note=>note.id===capture.noteId?{...note,screenshot:{assetId,revision,width,height,region}}:note)});
+      }catch{
+        if(staged)await detachWebScreenshot(staged);
+        commit(reference,true);
+      }finally{uploadingRef.current=false;setUploading(false);}
+      return;
+    }
+    if(!current())throw Error('页面或草稿已变化，输入已保留，请重新保存。');
     let next:ResourceReference|undefined;
     if(reference.annotations?.length===0){
       if(reference.kind==='image'&&reference.source.kind==='message-file'){
@@ -1117,7 +1190,10 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
         }
       }
       if(!current())throw Error('草稿已经变化，请重新编辑。');
-      const metadata={...annotationDraft.read().htmlMetadata};delete metadata[key];annotationDraft.replace(merged(undefined),metadata);return;
+      const before=referencesOf(annotationDraft.read()),next=merged(undefined);
+      const metadata={...annotationDraft.read().htmlMetadata};delete metadata[key];annotationDraft.replace(next,metadata);
+      if(reference.kind==='web')releaseWebScreenshots(before,next);
+      return;
     }
     if(reference.kind==='image'){
       if(!file)throw Error('图片来源已失效，请重新打开成果。');
@@ -1142,7 +1218,9 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     checkCandidate(merged(next,true));
     const refs=merged(next).map(parseResourceReference);
     const metadata={...annotationDraft.read().htmlMetadata};if(htmlNotes)metadata[key]=Object.fromEntries(htmlNotes.map(({id,isFixed,selectedText,isMultiSelect,elementBoundingBoxes})=>[id,{isFixed,selectedText,isMultiSelect,elementBoundingBoxes}]));
+    const before=referencesOf(annotationDraft.read());
     annotationDraft.replace(refs,metadata);setDraftNotice('');
+    if(reference.kind==='web')releaseWebScreenshots(before,refs);
   }
   useLayoutEffect(()=>{
     bindFeedback(closeSettings=>{
@@ -1565,11 +1643,11 @@ function HomerApp() {
     if(canvasOpen&&page.threadId===state.threadId&&activeBrowser?.id===page.id)
       openDocumentLink(page.source,href,async()=> (await window.homerBrowserPreview?.list(page.threadId))?.some(item=>item.id===page.id&&item.document===page.document&&item.control==='user')===true);
   }),[state.threadId,previewTabs,canvasOpen]);
-  const addPreviewReference=useCallback(async(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[])=>{
+  const addPreviewReference=useCallback(async(reference:PreviewRequest,file?:File,isCurrent:()=>boolean=()=>true,htmlNotes?:import('./vendor/agentation-3.1.2/index.mjs').Annotation[],capture?:BrowserCaptureRegion)=>{
     if(!previewComposer.current)throw Error('输入框尚未就绪，请重试。');
     const generation=previewScope.current.generation;
     const current=()=>generation===previewScope.current.generation&&isCurrent();
-    await previewComposer.current.add(reference,file,current,htmlNotes);
+    await previewComposer.current.add(reference,file,current,htmlNotes,capture);
   },[]);
   const activePages=useRef({queue:new ActiveReadPage<NonNullable<WebState['queue']>[number]>(),interactions:new ActiveReadPage<WebInteraction>()});
   const activeReads=useRef<{disposed:boolean;timers:Set<ReturnType<typeof setTimeout>>;controllers:Set<AbortController>}>({disposed:false,timers:new Set(),controllers:new Set()});

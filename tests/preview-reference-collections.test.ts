@@ -251,3 +251,27 @@ test('local image annotations require a content digest and distinguish versions 
  assert.throws(()=>parseResourceReference({...reference,source:{...source,sha256:undefined}}),/invalid_resource_reference/);
  assert.notEqual(referenceKey(accepted),referenceKey(parseResourceReference({...reference,source:{...source,sha256:'b'.repeat(64)}})));
 });
+
+test('queued web screenshots remain opt-in tool input and missing images keep the note',()=>{
+ const image={assetId:'asset-00000000-0000-4000-8000-000000000001',revision:1};
+ const other={assetId:'asset-00000000-0000-4000-8000-000000000002',revision:1};
+ const input=conversationInput({requestId:'web-shot',text:'Review',attachments:[image,other],resourceReferences:[{
+  kind:'web',source:{kind:'browser',url:'https://example.com/',title:'Checkout'},
+  annotations:[{id:'n1',element:'address',elementPath:'#address',comment:'Keep my note',x:0,y:0,screenshot:{...image,width:800,height:600,region:{x:0,y:0,width:8,height:6}}}],
+ }]});
+ const prototype=Homer.prototype as any;
+ let available=true;
+ const owner={
+  webScreenshotAvailable:prototype.webScreenshotAvailable,
+  validateResourceReference(){},
+  media:{validate(){},validateAttachments(){if(!available)throw Error('media_scope_denied');}},
+ };
+ const project=()=>prototype.previewDispatch.call(owner,'thread',input);
+ assert.deepEqual(project().attachments,[other]);
+ assert.match(project().context,new RegExp(image.assetId));
+ available=false;
+ assert.deepEqual(prototype.queuePreviewAttachments.call(owner,input),[other]);
+ assert.deepEqual(project().attachments,[other]);
+ assert.match(project().context,/Keep my note/);
+ assert.doesNotMatch(project().context,new RegExp(image.assetId));
+});
