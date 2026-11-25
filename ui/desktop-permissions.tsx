@@ -448,7 +448,7 @@ function DesktopModelSettings({member=false,connected,unconfirmed,busy,different
     change(role,{model:id,effort,serviceTier},effort!==selected.effort||serviceTier!==selected.serviceTier);
    }
    return <section key={role} aria-labelledby={rowId+'-label-'+role}>
-    <h3 id={rowId+'-label-'+role}>{name}{defaultRow?<span>默认</span>:<Button className="desktop-model-restore" type="button" disabled={disabled} aria-label={restore} title={restore} onClick={()=>change(role,null)}><RotateCcw size={17} aria-hidden="true"/></Button>}</h3>
+    <h3 id={rowId+'-label-'+role}>{name}{defaultRow?<span>默认</span>:<Button className="desktop-model-restore" type="button" disabled={disabled} aria-label={restore} title={restore} onClick={()=>change(role,null)}><RotateCcw size={14} aria-hidden="true"/></Button>}</h3>
     <div className="desktop-model-controls"><ModelSelectorRoot models={models} value={selected.model} effort={selected.effort} onValueChange={chooseModel} onEffortChange={effort=>change(role,{...selected,effort})}>
      <ModelSelectorTrigger id={rowId+'-'+role} aria-label={name+' 模型'} disabled={disabled}><ModelSelectorValue placeholder={selected.model}/></ModelSelectorTrigger>
      <ModelSelectorContent searchable={false} className="desktop-model-menu"><ModelSelectorList/><ModelSelectorEffort label="思考深度"/></ModelSelectorContent>
