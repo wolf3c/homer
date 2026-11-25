@@ -484,7 +484,7 @@ export function homerWebBridge(app: Homer,{draftUpload=true}:{draftUpload?:boole
       },
     },
     openPreview:input=>app.openBrowserPreview(input),
-    readMessageFile:input=>app.readMessageFile(input),
+    readMessageFile:input=>app.readMessageFile(input,true),
     messageFileInfo:(input,reveal)=>app.messageFileInfo(input,reveal),
     schedules:async input=>app.readSchedules(input),
     onStateChange: listener=>app.onStateChange(listener),

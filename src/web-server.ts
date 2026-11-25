@@ -199,6 +199,8 @@ export async function createWebServer({ bridge, port = 4780, uiDirectory, logoPa
         const preview=await chat('media.preview',input) as {mime:string;data:string};
         response.writeHead(200,{'Content-Type':preview.mime});response.end(Buffer.from(preview.data,'base64'));return;
       }
+      if(path==='/api/preview/open'&&!desktopAccess)
+        return json(response,403,{error:'message_file_scope_denied'});
       const operation=webChatPost(path);
       if(operation)return json(response,operation.status,await chat(operation.op,operation.id?{id:operation.id,input}:input));
     }

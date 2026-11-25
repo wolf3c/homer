@@ -2258,10 +2258,10 @@ function HomerApp() {
     canvasTrigger.current=trigger;updatePreviewScope(true,'schedules');setAnnotationFocus(undefined);if(!canvasOpen)captureAnchor();
     setPreviewTabs(old=>({...old,tabs:old.tabs.some(tab=>tab.id==='schedules')?old.tabs:[...old.tabs,{id:'schedules',kind:'schedules',title:'定时任务',trigger}],activeId:'schedules'}));setCanvasOpen(true);
   };
-  function requestBrowserPage(source:Parameters<typeof openBrowserPreview>[1],show:(page:BrowserPage)=>void,url?:string){
+  function requestBrowserPage(source:Parameters<typeof openBrowserPreview>[1],show:(page:BrowserPage)=>void,url?:string,onError?:(error:Error)=>void){
     const current=claimPreviewOpen();
     void openBrowserPreview(state.threadId,source,url,false)
-      .then(page=>{if(current())show(page);}).catch(error=>{if(current())setPageNotice(error.message);});
+      .then(page=>{if(current())show(page);}).catch(error=>{if(current()){if(onError)onError(error);else setPageNotice(error.message);}});
   }
   const openArtifact=(file:CanvasArtifact,trigger?:HTMLElement,annotation?:{key:string;id:string})=>{
     const active=trigger??document.activeElement;
@@ -2361,7 +2361,7 @@ function HomerApp() {
     if(local){
       const title=(decodeMessageLink(destination)??destination).split(/[\\/]/).pop()||destination;
       const existing=browser.pages.find(page=>page.source.kind==='message-file'&&page.source.messageId===messageId&&page.source.destination===destination);
-      if(existing)requestBrowserPage(existing.source,page=>showBrowser(page,undefined,false,returnTo));
+      if(existing)requestBrowserPage(existing.source,page=>showBrowser(page,undefined,false,returnTo),undefined,()=>openLocalFile(messageId,destination,title,trigger));
       else openLocalFile(messageId,destination,title,trigger);
       return true;
     }

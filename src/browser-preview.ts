@@ -1,7 +1,7 @@
 import type{PreviewAnnotation,PreviewSource}from'./preview-reference.js';
 
 // Page state is owned by Electron, annotation notes by the existing composer.
-export type BrowserPage={id:string;threadId:string;owner:string;url:string;title:string;document:number;control:'user'|'agent';agentAssigned?:boolean;source:PreviewSource;resource?:string;loading?:boolean;error?:string;locationDenied?:true;locationApproval?:string};
+export type BrowserPage={id:string;threadId:string;owner:string;url:string;title:string;document:number;control:'user'|'agent';agentAssigned?:boolean;source:PreviewSource;resource?:string;loading?:boolean;error?:string;fileError?:string;locationDenied?:true;locationApproval?:string};
 export type PreviewLinkResult={page:BrowserPage}|{messageId:string;destination:string;title:string}|{attachment:{messageId:string;assetId:string;revision:number;resource?:string;sha256?:string;title:string}};
 export type BrowserAnnotationState={document:number;active:boolean;revision:number;epoch:number;notes:PreviewAnnotation[];focusId?:string;focusRequest?:string;historyNote?:PreviewAnnotation};
 export type BrowserAnnotationChange={pageId:string;document:number;baseRevision:number;epoch:number;changeId:string;notes:PreviewAnnotation[]};

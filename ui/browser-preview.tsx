@@ -206,9 +206,11 @@ export function BrowserPreview({page,annotationDraft,onReference,enabled:referen
  {(notice||page.error)&&<p role="status" className="canvas-note">{notice||page.error}</p>}
  <div className="browser-preview-viewport" ref={viewport} aria-label="内置网页内容">{suspended&&<p>关闭对话框后继续查看网页。</p>}</div></div>;
 }
-export function AttachmentBrowserPreview(props:Omit<Props,'page'>&{threadId:string;source:PreviewSource}){
+export function AttachmentBrowserPreview(props:Omit<Props,'page'>&{threadId:string;source:PreviewSource;onFileError?:(code:string)=>void}){
  const [page,setPage]=useState<BrowserPage>(),[error,setError]=useState('');const{pages}=useBrowserPages(props.threadId);
- useEffect(()=>{let alive=true;void(async()=>{try{const existing=(await window.homerBrowserPreview!.list(props.threadId)).find(p=>referenceKey({kind:'web',source:p.source})===referenceKey({kind:'web',source:props.source}));const next=existing??await openBrowserPreview(props.threadId,props.source);if(alive)setPage(next);}catch(e){if(alive)setError(e instanceof Error?e.message:'HTML 打开未确认。');}})();return()=>{alive=false;};},[props.threadId,referenceKey({kind:'web',source:props.source})]);
+ useEffect(()=>{let alive=true;void(async()=>{try{const existing=(await window.homerBrowserPreview!.list(props.threadId)).find(p=>!p.fileError&&referenceKey({kind:'web',source:p.source})===referenceKey({kind:'web',source:props.source}));const next=existing??await openBrowserPreview(props.threadId,props.source);if(alive)setPage(next);}catch(e){if(alive)setError(e instanceof Error?e.message:'HTML 打开未确认。');}})();return()=>{alive=false;};},[props.threadId,referenceKey({kind:'web',source:props.source})]);
  const actual=pages.find(p=>p.id===page?.id)??page;
- return error?<p role="alert">{error}</p>:actual?<BrowserPreview {...props} page={actual}/>:<p role="status">正在打开 HTML…</p>;
+ const fileError=error||actual?.fileError;
+ useEffect(()=>{if(fileError)props.onFileError?.(fileError);},[fileError,actual?.document]);
+ return error?<p role="alert">{error}</p>:actual&&!actual.fileError?<BrowserPreview {...props} page={actual}/>:<p role="status">正在打开 HTML…</p>;
 }

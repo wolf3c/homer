@@ -1,6 +1,6 @@
 import test from'node:test';
 import assert from'node:assert/strict';
-import{mkdtemp,mkdir,writeFile,readFile,readdir,rm,truncate,realpath,utimes}from'node:fs/promises';
+import{mkdtemp,mkdir,writeFile,readFile,readdir,rm,truncate,realpath,utimes,chmod}from'node:fs/promises';
 import{resolve,join}from'node:path';
 import{pathToFileURL}from'node:url';
 import{createRequire}from'node:module';
@@ -336,6 +336,46 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    await host.getByText('此文件类型暂不支持用默认应用打开。',{exact:true}).waitFor();
    assert.equal((await dispatches()).files.length,2);
    await closeTab('disguised.md');
+   const managedBinary=join(f.app.config.runtime,'managed-binary.md');
+   await writeFile(managedBinary,Buffer.from([0,1,2,3]));
+   f.app.history.record('desktop-managed-binary',f.app.store.meta('mainThread'),`[打开管理目录二进制](${pathToFileURL(managedBinary).href})`);
+   await host.getByRole('link',{name:'打开管理目录二进制',exact:true}).click();
+   const managedReveal=host.getByRole('button',{name:'在文件夹中显示',exact:true});
+   await managedReveal.waitFor();
+   await host.getByRole('button',{name:'用默认应用打开',exact:true}).click();
+   await host.getByText('无法用默认应用打开此文件。',{exact:true}).waitFor();
+   assert.equal((await dispatches()).files.length,2);
+   await managedReveal.click();
+   await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+   assert.equal((await dispatches()).reveal.at(-1),await realpath(managedBinary));
+   await electron.evaluate(()=>{globalThis.revealRequests.pop();});
+   await closeTab('managed-binary.md');
+   const managed=join(f.app.config.runtime,'managed-preview.html');
+   await writeFile(managed,'<meta charset="utf-8"><title>管理目录预览</title><h1>合成管理文件</h1>');
+   const managedUrl=pathToFileURL(managed).href;
+   const threadId=f.app.store.meta('mainThread');
+   f.app.history.record('desktop-managed-html',threadId,`[打开管理文件](${managedUrl})`);
+   await host.getByRole('link',{name:'打开管理文件',exact:true}).click();
+   const managedPage=await waitNative('/local/index.html');
+   await managedPage.getByRole('heading',{name:'合成管理文件'}).waitFor();
+   const managedSource=(await host.evaluate(id=>window.homerBrowserPreview.list(id),threadId)).find(page=>page.source.destination===managedUrl);
+   assert.ok(managedSource);
+   const read=await electron.evaluate((_,page)=>globalThis.preview.execute({owner:page.owner,threadId:page.threadId},'read',{pageId:page.id,document:page.document}),managedSource);
+   assert.match(read.content,/合成管理文件/);
+   if(process.platform!=='win32'&&process.getuid?.()!==0){
+    await chmod(managed,0);
+    try{
+     await host.getByRole('button',{name:'重新加载',exact:true}).click();
+     await host.getByRole('alert').filter({hasText:'无法读取本地文件'}).waitFor();
+     await host.screenshot({path:join(out,'managed-html-read-denied.png')});
+     await host.getByRole('button',{name:'在文件夹中显示',exact:true}).click();
+     await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+     assert.equal((await dispatches()).reveal.at(-1),await realpath(managed));
+     await electron.evaluate(()=>{globalThis.revealRequests.pop();});
+    }finally{await chmod(managed,0o600);}
+   }
+   await closeTab(process.platform!=='win32'&&process.getuid?.()!==0?'managed-preview.html':'管理目录预览');
+   record('managed HTML supports Agent reads and falls back to reveal after OS read denial');
    record('trusted keyboard and pointer actions revalidate and dispatch the current original, including native local HTML');
    const zip=join(scratch,'资料.zip');
    await writeFile(zip,Buffer.from([80,75,3,4,0]));
@@ -644,6 +684,18 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    await host.getByText('这个文件未单独交付或链接，无法在预览中打开。',{exact:true}).waitFor();
    await host.getByRole('button',{name:'关闭current.md',exact:true}).click();
    await host.getByRole('link',{name:'打开附有 Demo 的方案',exact:true}).click();
+   if(process.platform!=='win32'&&process.getuid?.()!==0){
+    await chmod(demoPath,0);
+    try{
+     await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
+     await host.getByRole('alert').filter({hasText:'无法读取本地文件'}).waitFor();
+     await host.getByRole('button',{name:'在文件夹中显示',exact:true}).click();
+     await host.getByText('已请求在系统中显示文件。',{exact:true}).waitFor();
+     assert.equal(await electron.evaluate(()=>globalThis.revealRequests.at(-1)),await realpath(demoPath));
+     await host.getByRole('button',{name:'关闭demo.html',exact:true}).click();
+    }finally{await chmod(demoPath,0o600);}
+    record('an unreadable linked original enters the file fallback and remains locatable');
+   }
    await host.getByRole('link',{name:'交互 Demo',exact:true}).click();
    await host.getByRole('tab',{name:'本地 Demo',exact:true,selected:true}).waitFor();
    let demoPage;await until(()=>!!(demoPage=electron.context().pages().find(page=>page.url().endsWith('/local/index.html'))));

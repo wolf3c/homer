@@ -71,10 +71,10 @@ const messageFileErrors:Record<string,string>={
 const unavailableFileCodes=new Set(['artifact_path_denied','message_file_scope_denied','message_file_path_unsupported',
   'file_type_or_size_denied','media_scope_denied','media_asset_not_found','media_file_missing','media_file_denied','media_integrity_failed','preview_source_mismatch','web_desktop_auth_required']);
 class FileReadFailure extends Error{
-  constructor(message:string,readonly retryable:boolean){super(message);}
+  constructor(message:string,readonly retryable:boolean,readonly code?:string){super(message);}
 }
 const readFailure=(code:string|undefined,message:string)=>new FileReadFailure(
-  code&&Object.hasOwn(messageFileErrors,code)?messageFileErrors[code]!:message,!code||!unavailableFileCodes.has(code),
+  code&&Object.hasOwn(messageFileErrors,code)?messageFileErrors[code]!:message,!code||!unavailableFileCodes.has(code),code,
 );
 async function fileResponseError(response:Response){
   const result=await response.json().catch(()=>null);
@@ -185,11 +185,14 @@ export function CanvasPanel({tabs,activeId,scheduleContent,taskContent,threadId=
   const title='预览：'+(webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'从对话中选择成果');
   const collapse=<button type="button" ref={collapseButton} className="canvas-collapse" aria-controls="canvas-panel" aria-expanded={true} aria-label="收起预览" title="收起预览" onClick={onClose}><PanelRight size={18} aria-hidden/></button>;
   const browser=tabs?.find(tab=>tab.id===selected&&'kind'in tab&&tab.kind==='browser');
-  const local=tabs?.find((tab):tab is MessageFileTab=>tab.id===selected&&'kind'in tab&&tab.kind==='message-file');
+  const failedPage=browser&&'kind'in browser&&browser.kind==='browser'&&browser.page.fileError?browser.page:undefined;
+  const local=failedPage?.source.kind==='message-file'
+    ?{...failedPage.source,id:failedPage.id,reload:failedPage.document}
+    :tabs?.find((tab):tab is MessageFileTab=>tab.id===selected&&'kind'in tab&&tab.kind==='message-file');
   const task=tabs?.find(tab=>tab.id===selected&&'kind' in tab&&tab.kind==='task');
-  const reader=task&&'kind' in task&&task.kind==='task'?taskContent?.(task):selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'?<BrowserPreview onLocationApproval={readerProps.onLocationApproval} page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce} historyNote={readerProps.annotationFocus?.history?.kind==='web'?readerProps.annotationFocus.history.annotations.find(note=>note.id===readerProps.annotationFocus?.id):undefined}/>:<CanvasReader {...readerProps} local={local} threadId={threadId} key={JSON.stringify([threadId,local?.id??artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
+  const reader=task&&'kind' in task&&task.kind==='task'?taskContent?.(task):selected==='schedules'?scheduleContent:browser&&'kind'in browser&&browser.kind==='browser'&&!failedPage?<BrowserPreview onLocationApproval={readerProps.onLocationApproval} page={browser.page} annotationDraft={readerProps.annotationDraft} onReference={readerProps.onReference} enabled={!!readerProps.referencesEnabled} isCurrent={readerProps.isCurrent} focusId={readerProps.annotationFocus?.id} focusKey={readerProps.annotationFocus?.key} focusRequest={readerProps.annotationFocus?.nonce} historyNote={readerProps.annotationFocus?.history?.kind==='web'?readerProps.annotationFocus.history.annotations.find(note=>note.id===readerProps.annotationFocus?.id):undefined}/>:<CanvasReader {...readerProps} local={local} threadId={threadId} key={JSON.stringify([threadId,local?.id??artifact?.id??(webSource?[webSource.messageId,webSource.sourceId,webSource.url]:'empty')])} actions={actions} imageControl={imageControl}/>;
   const activeTitle=webSource?.title??tabs?.find(tab=>tab.id===selected)?.title??artifact?.title??'预览';
-  const nativeBrowser=!!browser;
+  const nativeBrowser=!!browser&&!failedPage;
   const statusBar=!nativeBrowser&&<PreviewToolbar title={activeTitle} detail={webSource?new URL(webSource.url).host:undefined}><div ref={setActions} className="canvas-tab-actions"/></PreviewToolbar>;
   return <div ref={host} className="canvas-host" data-narrow-preview={narrow||undefined}><Dialog.Root open modal={narrow} disablePointerDismissal onOpenChange={(open,details)=>{
     if(details.reason==='escape-key'&&imageControl.current?.escape()){details.cancel();return;}
@@ -465,16 +468,19 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
   const fileFallback=!loading&&!readError&&(!!localInfo&&!file||!!file&&
     (!!mediaError||!(isPatch||isHtml||isMarkdown||isText||mediaKind||file.mime.startsWith('image/')||file.mime==='application/pdf')));
   useEffect(()=>{
-    if(!fileFallback||!local||artifact||localInfo||!desktopMore)return;
+    if((!fileFallback&&readError?.code!=='artifact_path_denied')||!local||artifact||localInfo||!desktopMore)return;
     const controller=new AbortController(),epoch=generation.current;
     const current=()=>!controller.signal.aborted&&readerCurrent()&&epoch===generation.current;
     void loadLocalInfo(controller.signal).then(info=>{
-      if(current()&&info.kind==='local')setLocalInfo(info);
+      if(current()&&info.kind==='local'){
+        setLocalInfo(info);
+        if(readError)setReadError(new FileReadFailure('无法读取本地文件。',false));
+      }
     },error=>{
-      if(current())invalidateFile(error instanceof FileReadFailure?error:new FileReadFailure('文件信息暂不可用。',true));
+      if(current())invalidateFile(error instanceof FileReadFailure?new FileReadFailure(error.message,error.retryable):new FileReadFailure('文件信息暂不可用。',true));
     });
     return ()=>controller.abort();
-  },[fileFallback,local?.id,localInfo,artifact,file,desktopMore]);
+  },[fileFallback,local?.id,localInfo,artifact,file,desktopMore,readError]);
   const fixedSource=file?.sha256&&artifact&&!artifact.resource?{
     kind:'attachment' as const,messageId:artifact.messageId,assetId:artifact.assetId,revision:artifact.revision,title:file.name,sha256:file.sha256,
   }:undefined;
@@ -483,7 +489,8 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
     if(fixedSource)moreItems=attachmentMoreItems({threadId,attachment:fixedSource});
     else if(local&&!artifact&&(file||localInfo))
       moreItems=localMoreItems({threadId,file:{messageId:local.messageId,destination:local.destination}},
-        localInfo?.filename??file!.name,window.homerBrowserPreview?.platform,fileFallback?!!localInfo?.reveal:undefined);
+        localInfo?.filename??file!.name,window.homerBrowserPreview?.platform,fileFallback||readError?!!localInfo?.reveal:undefined);
+    if(readError)moreItems=moreItems.filter(item=>item.input.action==='reveal');
   }
   async function runFallback(item?:PreviewMoreItem){
     if(actionPending.current||!readerCurrent())return;
@@ -493,7 +500,9 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
     try{
       if(item){
         await runPreviewMore(item.input,current,(message,code)=>{
-          if(code==='file_type_or_size_denied')invalidateFile(new FileReadFailure(message,false));
+          if(item.input.action==='open'&&'file'in item.input&&code==='artifact_path_denied')
+            setNotice('无法用默认应用打开此文件。');
+          else if(code==='file_type_or_size_denied')invalidateFile(new FileReadFailure(message,false));
           else if(code&&(unavailableFileCodes.has(code)||code==='artifact_missing'))invalidateFile(readFailure(code,message));
           else setNotice(message);
         });
@@ -549,7 +558,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
     {actions&&!fileFallback&&createPortal(isHtml&&!showSource&&!window.homerBrowserPreview&&referencesEnabled&&source?<div ref={setHtmlActions} className="html-preview-actions aui-attachment-surface">
       <AnnotationButton active={selection==='active'} className="html-annotation-toggle" tooltipContainer={htmlActions} aria-pressed={selection==='active'} aria-busy={annotationLoading} aria-label={annotationLabel} tooltip={annotationLabel} onClick={()=>{if(interactive||annotationLoading)stopHtmlAnnotation();else void enableWebAnnotation();}}/>
     </div>:imagePreview?<span ref={setImageActions} className="image-preview-actions aui-attachment-surface"/>:null,actions)}
-    {actions&&!fileFallback&&moreItems.length>0&&createPortal(<PreviewMoreMenu items={moreItems} onAction={input=>{
+    {actions&&!fileFallback&&!readError&&moreItems.length>0&&createPortal(<PreviewMoreMenu items={moreItems} onAction={input=>{
       const epoch=generation.current;
       void runPreviewMore(input,()=>readerCurrent()&&generation.current===epoch,setNotice);
     }}/>,actions)}
@@ -565,10 +574,10 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
       {fallbackSize!==undefined&&<p className="canvas-note">{artifact&&!artifact.resource?'交付附件':local?'本地文件':'文件'} · {fallbackSize<1048576?<FileSize bytes={fallbackSize}/>:((fallbackSize/1048576).toFixed(1)+' MiB')}</p>}
       {readError?<p role="alert">{readError.message}</p>:<>{fallbackHint&&<p role={mediaError?'alert':undefined}>{fallbackHint}</p>}{downloadNotice&&<p>{downloadNotice}</p>}</>}
       <div className="canvas-file-actions">
-        {readError?readError.retryable&&<button type="button" onClick={event=>{if(local&&!event.isTrusted)return;setRetry(value=>value+1);}}>重试读取</button>:
-          moreItems.length?moreItems.map(item=><button type="button" key={item.input.action} aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback(item);}}>
+        {readError?.retryable&&<button type="button" onClick={event=>{if(local&&!event.isTrusted)return;setRetry(value=>value+1);}}>重试读取</button>}
+        {moreItems.length?moreItems.map(item=><button type="button" key={item.input.action} aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback(item);}}>
             {item.input.action==='reveal'?'在文件夹中显示':item.input.action==='download'?'下载文件':item.label}
-          </button>):fixedSource&&!downloadNotice&&<button type="button" aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback();}}>{mobileShare?'保存或分享':'下载文件'}</button>}
+          </button>):!readError&&fixedSource&&!downloadNotice&&<button type="button" aria-disabled={acting||undefined} onClick={event=>{if(event.isTrusted)void runFallback();}}>{mobileShare?'保存或分享':'下载文件'}</button>}
       </div>
       {fileFallback&&notice&&<p className="canvas-note" role="status">{notice}</p>}
     </div>:file?<>
@@ -576,7 +585,7 @@ function CanvasReader({annotationDraft,annotationFocus,artifact:tabArtifact,loca
       <PatchPreviewBoundary key={JSON.stringify([artifact?.id,file.sha256,retry])} fallback={<><p role="status" className="canvas-note">差异预览失败，显示原文。</p>{patchRaw}</>}>
         <details><summary>原始补丁文本</summary>{patchRaw}</details>
         <Suspense fallback={<p role="status">加载差异预览…</p>}><LazyDiffViewer patch={file.text} maxCollapsedLines={200}/></Suspense>
-      </PatchPreviewBoundary>:isHtml?window.homerBrowserPreview&&source?<AttachmentBrowserPreview threadId={threadId} source={source} annotationDraft={annotationDraft} onReference={onReference} enabled={referencesEnabled} isCurrent={readerCurrent} focusId={annotationFocus?.id} focusKey={annotationFocus?.key} focusRequest={annotationFocus?.nonce}/>:<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" {...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'})} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:file.text,runtime},'*')}/>
+      </PatchPreviewBoundary>:isHtml?window.homerBrowserPreview&&source?<AttachmentBrowserPreview onFileError={local&&!artifact?code=>invalidateFile(readFailure(code,'无法打开本地 HTML。')):undefined} threadId={threadId} source={source} annotationDraft={annotationDraft} onReference={onReference} enabled={referencesEnabled} isCurrent={readerCurrent} focusId={annotationFocus?.id} focusKey={annotationFocus?.key} focusRequest={annotationFocus?.nonce}/>:<><iframe ref={webFrame} key={token} title="隔离 HTML 成果" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" {...(mobileView?{srcDoc:htmlPreviewShell}:{src:'/preview/interactive'})} onLoad={event=>event.currentTarget.contentWindow?.postMessage({type:'homer-html-preview',html:file.text,runtime},'*')}/>
       {savedCount>0&&!interactive&&<p className="canvas-note html-notes-status">已保存 {savedCount} 条网页批注到输入草稿</p>}</>:
       mediaKind?<div className="canvas-media">
         <p className="canvas-note">{file.name}</p>

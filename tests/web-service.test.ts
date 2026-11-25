@@ -2,7 +2,7 @@ import {openTaskWorker} from './fixtures/open-task-worker.js';
 import {readTestConversation} from './fixtures/read-test-conversation.js';
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {realpathSync,rmSync,statSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs';
+import {chmodSync,mkdirSync,realpathSync,rmSync,statSync,symlinkSync,truncateSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import type {Message} from "../src/service.js";
@@ -82,7 +82,29 @@ test('desktop message-file reads require a visible Markdown link and read its cu
   writeFileSync(file,'# 第二版');assert.equal(await (await read('existing')).text(),'# 第二版');
   for(const id of ['internal','foreign'])await expectError(await read(id),409,'message_file_scope_denied');
   await expectError(await read(fresh.id,destination),409,'message_file_scope_denied');
-  await expectError(await read('protected',privateFile.split('\\').join('/')),409,'artifact_path_denied');
+  const nativeHome=join(folder,'native-codex');
+  f.app.config.nativeCodexHome=nativeHome;
+  for(const [index,root] of [f.app.config.codexHome,nativeHome].entries()){
+   mkdirSync(root,{recursive:true});
+   const path=join(root,'managed.md'),url=pathToFileURL(path).href,id='managed-'+index;
+   writeFileSync(path,'# managed');
+   f.app.history.record(id,threadId,`[托管文件](${url})`);
+   assert.equal(await (await read(id,url)).text(),'# managed');
+   assert.throws(()=>f.app.readMessageFile({threadId,messageId:id,destination:url}),{message:'artifact_path_denied'});
+  }
+  const managedDestination=privateFile.split('\\').join('/');
+  assert.equal(await (await read('protected',managedDestination)).text(),'private');
+  const managedInput={threadId,messageId:'protected',destination:managedDestination};
+  const managedOpen=await fetch(desktop.url+'/api/preview/message-file/open',{method:'POST',
+   headers:{Origin:desktop.url,'Content-Type':'application/json','X-Homer-Desktop-Access':token},body:JSON.stringify(managedInput)});
+  await expectError(managedOpen,409,'artifact_path_denied');
+  const managedInfo=await f.app.messageFileInfo(managedInput);
+  assert.equal(managedInfo.kind,'local');
+  assert.throws(()=>f.app.readMessageFile({threadId,messageId:'protected',destination:managedDestination}),{message:'artifact_path_denied'});
+  const nativeOpen=await fetch(web.url+'/api/preview/open',{method:'POST',
+   headers:{Origin:web.url,'Content-Type':'application/json'},body:JSON.stringify({threadId,
+    source:{kind:'message-file',messageId:'protected',destination:managedDestination,title:'private.txt'}})});
+  await expectError(nativeOpen,403,'message_file_scope_denied');
   if(process.platform!=='win32'){
    const alias=join(folder,'alias.md');symlinkSync(file,alias);
    f.app.history.record('symlink',threadId,`[别名](<${alias}>)`);
@@ -214,7 +236,7 @@ test('an undelivered file remains readable from the same process link after the 
 test('desktop gets bounded metadata and revalidates local file scope before system reveal',async()=>{
  const f=fixture(),threadId='synthetic-main',token='a'.repeat(64);
  const filename='合成测试.zip',path=join(realpathSync.native(f.base),filename),destination=pathToFileURL(path).href;
- const size=412*1024*1024,platform=process.platform,reveal=platform==='darwin'||platform==='win32',calls:unknown[]=[];
+ const size=412*1024*1024,platform=process.platform,reveal=['darwin','win32','linux'].includes(platform),calls:unknown[]=[];
  writeFileSync(path,Buffer.from([80,75,3,4]));truncateSync(path,size);
  const web=await createWebServer({bridge:homerWebBridge(f.app),port:0,desktopAccessToken:token});
  const input={threadId,messageId:'file-fallback',destination};
@@ -236,6 +258,12 @@ test('desktop gets bounded metadata and revalidates local file scope before syst
   truncateSync(path,4);
   assert.deepEqual(await request('/info'),[200,{kind:'local',filename,size:4,overLimit:false,reveal,platform}]);
   assert.deepEqual(await request(''),[409,{error:'file_preview_unsupported'}]);
+  if(process.platform!=='win32'&&process.getuid?.()!==0){
+   chmodSync(path,0);
+   try{
+    assert.deepEqual(await request('/info'),[200,{kind:'local',filename,size:4,overLimit:false,reveal,platform}]);
+   }finally{chmodSync(path,0o600);}
+  }
   assert.deepEqual(await request('/reveal'),reveal?[200,{requested:true}]:[409,{error:'preview_reveal_unavailable'}]);
   const {dev,ino}=statSync(path);
   assert.deepEqual(calls,reveal?[{action:'reveal-file',input:{path,dev,ino}}]:[]);

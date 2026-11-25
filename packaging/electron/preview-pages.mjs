@@ -61,7 +61,7 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
  const browserSession=session.fromPartition('persist:homer-preview');
  const localSession=session.fromPartition('homer-local-preview');
  const preferences={session:browserSession,preload,sandbox:true,contextIsolation:true,nodeIntegration:false,webviewTag:false,backgroundThrottling:false};
- const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.resource?{resource:p.resource}:{}),...(p.error?{error:p.error}:{}),...(p.locationDenied?{locationDenied:true}:{}),...(p.locationApproval?{locationApproval:p.locationApproval}:{})});
+ const publicPage=p=>({id:p.id,threadId:p.threadId,owner:p.owner,url:p.view.webContents.getURL(),title:(p.fileError?p.source.title:p.view.webContents.getTitle()||p.source.title).slice(0,500),document:p.document,control:p.control,agentAssigned:!!p.agentAssigned,source:p.source,loading:!!p.loading,...(p.resource?{resource:p.resource}:{}),...(p.error?{error:p.error}:{}),...(p.fileError?{fileError:p.fileError}:{}),...(p.locationDenied?{locationDenied:true}:{}),...(p.locationApproval?{locationApproval:p.locationApproval}:{})});
  const changed=()=>{const w=window();if(w&&!w.isDestroyed())w.webContents.send('homer:preview:changed');};
  const page=id=>{const p=pages.get(id);if(!p||p.closed||p.view.webContents.isDestroyed())throw Error('preview_page_unavailable');return p;};
  const sendState=p=>p.view.webContents.send('homer:preview:annotation-state',{document:p.document,active:false,revision:0,epoch:0,notes:[],...p.annotations});
@@ -135,8 +135,15 @@ export function createBrowserPreview({window,runtimeDirectory,preload,ipcMain,ui
    if(p.view.webContents.session!==previewSession)throw Error('preview_source_mismatch');
    if(s.kind==='message-file'){
     if(url.pathname!=='/local/index.html'||request.method!=='GET'||url.search)return new Response(null,{status:403});
-    const response=await fetchMessageFile(p.threadId,s);
-    if(!response.ok||response.headers.get('Content-Type')?.split(';')[0]!=='text/html')return new Response('来源已不可用',{status:403});
+    const document=p.document;
+    const response=await fetchMessageFile(p.threadId,s).catch(()=>undefined);
+    const html=response?.ok&&response.headers.get('Content-Type')?.split(';')[0]==='text/html';
+    if(!html){
+     const failure=response&&!response.ok?await response.json().catch(()=>null):null;
+     if(p.document===document){p.fileError=typeof failure?.error==='string'?failure.error:'file_preview_unsupported';changed();}
+     return new Response('来源已不可用',{status:403});
+    }
+    if(p.document===document&&p.fileError){p.fileError=undefined;changed();}
     return new Response(await response.arrayBuffer(),{headers:{'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src http: https: data: blob:; script-src 'unsafe-inline' 'unsafe-eval' http: https: data: blob:; style-src 'unsafe-inline' http: https:; connect-src http: https: ws: wss:; frame-src about: blob: http: https:; sandbox allow-scripts allow-forms"}});
    }
    if(s.kind!=='attachment')throw Error('preview_source_mismatch');
