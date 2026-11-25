@@ -64,9 +64,9 @@ import {HomerMessageQueue} from './homer-message-queue';
 import type {LegacyQueueEditSession} from './queue-draft-recovery';
 import {useQueueOperations} from './queue-operations';
 import {createHomerAttachmentAdapter,attachmentAsset,type HomerAttachment,type HomerAttachmentAdapter,type DraftContext} from './homer-attachment-adapter';
-import { MessageBubble,MessageDetails,TaskMessageOriginContext } from './message-details';
-import { ProcessMessageContent,InactiveInteractionNotes } from './process-nodes';
-import {projectProcessMessage,useProcessParts} from './process-message';
+import { MessageBubble,MessageDetails,TaskMessageOriginContext,hasRuntimeMessageActions,visibleMessageSources } from './message-details';
+import { ProcessMessageContent,InactiveInteractionNotes,processStartFailure } from './process-nodes';
+import {projectProcessMessage,useProcessParts,isAnswerPart,type ActivityPresentation} from './process-message';
 import {confirmedTerminal} from './process-presentation';
 import {isVisibleConversationMessage} from './chat-date';
 import {MessageTimestamps,MessageDaySeparator,MessageTimestamp} from './message-timestamps';
@@ -142,8 +142,7 @@ const MessageMarkdownLink:NonNullable<Components['a']>=({children,href,node})=>{
   return <a href={href} target="_blank" rel="noreferrer noopener" onClick={event=>{if(href&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&browser.openLink(href,event.currentTarget))event.preventDefault();}}>{children}</a>;
 };
 const MessageMarkdownImage:NonNullable<Components['img']>=({src,alt,node})=>{
-  const id=useAuiState(s=>s.message.metadata.custom.messageId);
-  const message=useContext(ProcessMessagesContext).get(String(id));
+  const message=useAuiState(s=>s.message.metadata.custom.original) as WebState['messages'][number]|undefined;
   const {files}=useContext(ArtifactsContext);
   const destination=node?.properties.homerImageDestination;
   if(typeof destination!=='string'){
@@ -289,20 +288,39 @@ function messageTaskTitles(message:WebState['messages'][number]|undefined){
   }
   return titles;
 }
-function singleReplyTask(message:WebState['messages'][number]|undefined,hasBody=!!message?.text.trim()){
-  if(!message||message.role!=='assistant'||!hasBody||message.taskSourceUnresolved||message.source||
+function singleReplyTask(message:WebState['messages'][number],hasBody:boolean){
+  if(message.role!=='assistant'||!hasBody||message.taskSourceUnresolved||message.source||
      message.process?.sourceKind==='scheduled'||!['running','completed'].includes(message.status))return;
   const titles=messageTaskTitles(message);
   const [entry]=titles;
   if(titles.size===1&&entry?.[0].startsWith('task:')&&
      !message.taskSources?.some(({target})=>'task:'+target.taskId!==entry[0]))return entry;
 }
-function continuesReplyTask(previous:WebState['messages'][number]|undefined,current:WebState['messages'][number]|undefined,hasBody?:boolean){
-  if(previous?.role!=='assistant'||!current||previous.status!=='completed'||previous.threadId!==current.threadId)return false;
-  const task=singleReplyTask(current,hasBody),prior=task&&singleReplyTask(previous);
-  if(!prior||prior[0]!==task[0]||prior[1].title!==task[1].title)return false;
-  const day=new Date(previous.createdAt);
-  return Number.isFinite(day.getTime())&&day.toDateString()===new Date(current.createdAt).toDateString();
+function replyPosition(message:WebState['messages'][number],hasBody:boolean){
+  return {message,hasBody,task:singleReplyTask(message,hasBody)};
+}
+type ReplyPosition=ReturnType<typeof replyPosition>;
+function continuesReplyTask(previous:ReplyPosition|undefined,current:ReplyPosition,entryVisible:boolean,canOpenTask:boolean){
+  if(previous?.message.status!=='completed'||previous.message.threadId!==current.message.threadId)return false;
+  const task=current.task,prior=previous.task;
+  if(!task||!prior||prior[0]!==task[0]||prior[1].title!==task[1].title)return false;
+  if(canOpenTask&&task[1].taskId&&!entryVisible)return false;
+  const day=new Date(previous.message.createdAt);
+  return Number.isFinite(day.getTime())&&day.toDateString()===new Date(current.message.createdAt).toDateString();
+}
+const isStandaloneArtifact=(file:WebArtifact)=>!file.destination;
+function hasAssistantBubble(message:WebState['messages'][number],hasBody:boolean,hasFiles:boolean){
+  return hasBody||!!message.source||hasFiles;
+}
+function emptyWorkerProcess({message,hasBody}:ReplyPosition,notes:WebState['inactiveInteractions'],hasFiles:boolean){
+  const process=message.process;
+  // A completed internal Worker has no standalone title or timestamp.
+  return message.role==='assistant'&&message.audience==='internal'&&message.status==='completed'&&
+    process?.sourceKind==='worker'&&process.threadId===message.threadId&&process.messageId===message.id&&
+    confirmedTerminal(process)&&process.status==='completed'&&
+    !hasAssistantBubble(message,hasBody,hasFiles)&&!message.taskSourceUnresolved&&
+    !process.items.some(processStartFailure)&&!notes?.length&&!message.interaction&&
+    !hasRuntimeMessageActions(message)&&!visibleMessageSources(message.sources).length;
 }
 function AssistantMessage() {
   const prefix=useContext(MessageIdPrefixContext);
@@ -310,13 +328,12 @@ function AssistantMessage() {
   const content = useAuiState(s => s.message.content);
   const metadata=useAuiState(s=>s.message.metadata.custom);
   const {files}=useContext(ArtifactsContext);
-  // The external runtime may synthesize an empty reply after the last queued
-  // user bubble. Only persisted messages own a display position.
-  const original=useContext(ProcessMessagesContext).get(String(metadata.messageId));
+  const original=metadata.original as WebState['messages'][number]|undefined;
   const parts=useProcessParts();
   const openSchedule=useContext(ScheduleNavigationContext);
   const openTask=useContext(TaskPreviewNavigationContext);
-  if(!isVisibleConversationMessage(original))return null;
+  // A synthetic runtime reply has no projected message.
+  if(!original||!isVisibleConversationMessage(original))return null;
   const process=original?.process;
   const scheduled=process?.sourceKind==='scheduled';
   const scheduledSource=original?.scheduledSource;
@@ -324,8 +341,8 @@ function AssistantMessage() {
   const scheduleId=scheduledSource?.scheduleId;
   const internal=process?.sourceKind==='worker';
   const hasBody=parts.hasBody;
-  const messageFiles=files.filter(file=>file.messageId===metadata.messageId&&!file.destination);
-  const hasBubble=hasBody||!!original?.source||messageFiles.length>0;
+  const messageFiles=files.filter(file=>file.messageId===original.id&&isStandaloneArtifact(file));
+  const hasBubble=hasAssistantBubble(original,hasBody,messageFiles.length>0);
   const completed=!!process&&confirmedTerminal(process)&&process.status==='completed';
   const titles=hasBubble||internal&&process.turnIds.length>0&&!completed ? messageTaskTitles(original) : undefined;
   const taskTitle=titles&&(titles.size>0||internal)&&<div className="message-task-title">
@@ -1375,7 +1392,7 @@ function runtimeConversationMessage(message:WebState['messages'][number],notes?:
  const projected=projectProcessMessage(preview?{...message,text:preview}:message);
  return {
     id: message.id, role: message.role, content: projected.content, createdAt: new Date(message.createdAt),
-    metadata: { custom: { ...(message.role==='user'?{original:message}:{}),claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
+    metadata: { custom: { original:message,claimPosition,activityPresentation:projected.presentation,inactiveInteractions:notes,sourceLabel:message.sourceLabel,sourceMessageId:message.sourceMessageId,quote: message.quote, quotes: message.quotes,resourceReference:message.resourceReference,resourceReferences:message.resourceReferences,media:message.media,messageId:message.id,inputState:message.inputState,queued:!isVisibleConversationMessage(message) } },
     ...(message.role === "assistant" ? { status: message.status === "running" ? { type: "running" as const } : message.status === "completed" ? { type: "complete" as const, reason: "stop" as const } : { type: "incomplete" as const, reason: message.process?.status === "unknown" ? "other" as const : message.status === "interrupted" ? "cancelled" as const : "error" as const } } : {}),
  };}
 
@@ -2019,9 +2036,9 @@ function HomerApp() {
     const input = prepareMessage(text, custom?.quotes ?? custom?.quote, undefined, () => crypto.randomUUID());
     await sendInput(input);
   }, [sendInput]);
-  const processMessages=useMemo(()=>new Map(state.messages.map(message=>[message.id,message])),[state.messages]);
+  const alive=useMemo(()=>new Set(state.messages.map(message=>message.id)),[state.messages]);
   const messageCache=useRef(new Map<string,{source:WebState['messages'][number];key:string;value:ThreadMessageLike}>());
-  const alive=new Set(state.messages.map(message=>message.id));for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
+  for(const id of messageCache.current.keys())if(!alive.has(id))messageCache.current.delete(id);
   const receipt=connected&&state.upgrade.phase==='running'&&state.mainActivity?.source==='internal'&&state.mainActivity.stage!=='unknown'?state.mainActivity:undefined;
   const messages:ThreadMessageLike[]=useMemo(()=>state.messages.map(message=>{
     const notes=state.inactiveInteractions?.filter(i=>i.processId?i.processId===message.process?.id:i.messageId===message.id);
@@ -2043,11 +2060,29 @@ function HomerApp() {
     return runtime.thread.subscribe(()=>{const actual=runtime.thread.getState().messages;
       const idsChanged=actual.length!==previous.length||actual.some((m,i)=>m.id!==previous[i]?.id);
       const changed=idsChanged||actual.some((m,i)=>m.metadata.custom!==previous[i]?.metadata.custom);previous=actual;
-      if(idsChanged||changed&&reader.current.pending)setState(old=>({...old}));
+      if(changed)setState(old=>({...old}));
     });
   },[runtime]);
   const runtimeMessages=runtime.thread.getState().messages;
-  const rows=runtimeMessages.flatMap((message,index)=>isVisibleConversationMessage(processMessages.get(message.id))?[{id:message.id,index}]:[]);
+  const canOpenTask=!!(connected&&state.history&&state.features?.taskConversation);
+  const messagesWithFiles=useMemo(()=>new Set(state.artifacts?.filter(isStandaloneArtifact).map(file=>file.messageId)),[state.artifacts]);
+  const rows=useMemo(()=>{
+    let previous:ReplyPosition|undefined;
+    let entryVisible=false;
+    return runtimeMessages.flatMap((row,index)=>{
+      const metadata=row.metadata.custom;
+      const message=metadata.original as WebState['messages'][number]|undefined;
+      if(!alive.has(row.id)||message?.id!==row.id||!isVisibleConversationMessage(message))return [];
+      const presentation=metadata.activityPresentation as ActivityPresentation|undefined;
+      const current=replyPosition(message,row.content.some(part=>isAnswerPart(part,presentation)));
+      const continuesTask=continuesReplyTask(previous,current,entryVisible,canOpenTask);
+      if(!emptyWorkerProcess(current,metadata.inactiveInteractions as WebState['inactiveInteractions'],messagesWithFiles.has(row.id))){
+        if(!continuesTask)entryVisible=canOpenTask&&!!current.task?.[1].taskId;
+        previous=current;
+      }
+      return [{id:row.id,index,continuesTask}];
+    });
+  },[runtimeMessages,alive,messagesWithFiles,canOpenTask]);
   const virtualizer=useVirtualizer({count:rows.length,getScrollElement:()=>viewport.current,
     getItemKey:index=>rows[index].id,estimateSize:()=>180,overscan:8,scrollMargin:listTop,
     anchorTo:'start',followOnAppend:false,
@@ -2370,7 +2405,7 @@ function HomerApp() {
   const indicator=useMainProcessingIndicator(processing,processingInline,viewport,messageList);
   const featureTour = mobileView ? undefined : window.homerDesktopFeatureTour;
   const feedback = error || (!accountRequired&&!connected ? connectionError || (state.threadId ? "与荷马的连接暂时中断，正在自动重连。草稿已保留。" : "正在恢复主对话…") : "");
-  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><TaskReferenceNavigationContext.Provider value={taskId=>setTaskLocation({taskId,threadId:state.threadId,readEpoch:state.history?.readEpoch})}><ScheduleNavigationContext.Provider value={connected?openScheduleDetail:undefined}><ProcessMessagesContext.Provider value={processMessages}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
+  return <BrowserPreviewContext.Provider value={{openLink:openBrowserLink,openReference:openBrowserReference}}><QuoteNavigationContext.Provider value={quote=>locateMessage(quote.messageId,quote)}><TaskReferenceNavigationContext.Provider value={taskId=>setTaskLocation({taskId,threadId:state.threadId,readEpoch:state.history?.readEpoch})}><ScheduleNavigationContext.Provider value={connected?openScheduleDetail:undefined}><ArtifactsContext.Provider value={{files:artifacts,selectedId:canvasOpen?canvasArtifact?.id:undefined,open:openArtifact}}><AssistantRuntimeProvider runtime={runtime}><PreviewActionsContext.Provider value={{canQuote:()=>previewComposer.current?.canQuote()??false,openQuote:(snapshot,trigger)=>previewComposer.current?.openQuote(snapshot,trigger)??false,quoteNotice:message=>previewComposer.current?.quoteNotice(message),appendQuote:quote=>previewComposer.current?.appendQuote(quote)}}>
     <div className={canvasOpen?"app-shell canvas-open":"app-shell"} data-native-titlebar={nativeTitlebar||undefined} data-narrow-preview={narrowPreview||undefined}>
       {featureTour && <DesktopFeatureTour bridge={featureTour}
         ready={accountRequired || (connected && !!state.threadId && state.upgrade.phase === 'running')}
@@ -2411,11 +2446,11 @@ function HomerApp() {
                 {['帮我整理一份资料','和我一起规划一件事','帮我核对一份结果'].map(example => <button key={example} type="button" onClick={() => {setEditDraft({text:example,id:crypto.randomUUID(),source:'welcome'});focusEditor.current?.();}}>{example}</button>)}
               </div>
             </div></ThreadPrimitive.Empty>}
-            <div className="messages" ref={messageList}><TaskPreviewNavigationContext.Provider value={connected&&state.history&&state.features?.taskConversation?openTaskConversation:undefined}><MessageTimestamps messages={state.messages}>
+            <div className="messages" ref={messageList}><TaskPreviewNavigationContext.Provider value={canOpenTask?openTaskConversation:undefined}><MessageTimestamps messages={state.messages}>
               {virtualRows.map((row,i)=><Fragment key={row.key}>
                 <div aria-hidden="true" style={{height:Math.max(0,row.start-(virtualRows[i-1]?.end??listTop))}}/>
                 <div data-index={row.index} data-processing-tail={processingInline&&row.index===rows.length-1||undefined}
-                  data-continues-task={continuesReplyTask(processMessages.get(rows[row.index-1]?.id),processMessages.get(rows[row.index].id),runtimeMessages[rows[row.index].index].content.some(part=>part.type==='text'))||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
+                  data-continues-task={rows[row.index].continuesTask||undefined} ref={element=>{if(!element||element.querySelector('[data-conversation-message]'))virtualizer.measureElement(element);}} style={{display:'flow-root'}}><VirtualMessage id={rows[row.index].id} index={rows[row.index].index} measure={virtualizer.measureElement}/></div>
               </Fragment>)}
               <div aria-hidden="true" style={{height:Math.max(0,virtualizer.getTotalSize()-((virtualRows.at(-1)?.end??listTop)-listTop))}}/>
             </MessageTimestamps></TaskPreviewNavigationContext.Provider>
@@ -2462,6 +2497,6 @@ function HomerApp() {
       }} onReference={value=>{if(previewComposer.current?.selectSchedule(value)&&narrowPreview){canvasTrigger.current=null;closeCanvas();}}}/>:<p role="status" className="schedule-note">{connectionError||"正在连接荷马…"}</p>} artifact={canvasArtifact} onSelectArtifact={selectArtifact} onCloseArtifact={closeArtifact} isCurrent={isCurrentPreview} onOpenLink={openDocumentLink} annotationFocus={annotationFocus} onLocationApproval={id=>{if(narrowPreview)closeCanvas();void readActivePage('interactions',activePages.current.interactions.cursor,id).then(found=>{if(found===true)setInteractionFocus(id);else setPageNotice('原请求已处理或失效。');});}} onClose={closeCanvas} returnFocusTo={()=>canvasTrigger.current??false} onReference={addPreviewReference} referencesEnabled={!!state.features?.previewReferenceCollections}/></Panel></>}</Group>
     </div>
     {connected&&state.history&&<ScheduleDetail threadId={state.threadId} readEpoch={state.history.readEpoch} refreshKey={hostStateFrame.current} scheduleId={scheduleSelection?.readEpoch===state.history.readEpoch?scheduleSelection?.id:undefined} onClose={()=>setScheduleSelection(undefined)} finalFocus={()=>scheduleTrigger.current?.isConnected?scheduleTrigger.current:document.querySelector<HTMLElement>('.canvas-tab[aria-selected=true], .header-actions button[aria-label="定时任务"]')}/>}
-  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ProcessMessagesContext.Provider></ScheduleNavigationContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
+  </PreviewActionsContext.Provider></AssistantRuntimeProvider></ArtifactsContext.Provider></ScheduleNavigationContext.Provider></TaskReferenceNavigationContext.Provider></QuoteNavigationContext.Provider></BrowserPreviewContext.Provider>;
 }
 createRoot(document.getElementById("homer-root")!).render(<HomerApp />);

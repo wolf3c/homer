@@ -202,16 +202,16 @@ Function('require', 'exports', ts.transpileModule(readFileSync(actionPath, 'utf8
 const detailsExports: any = {};
 const quotedActions:unknown[]=[];
 Function('require', 'exports', 'useContext', 'useLayoutEffect', 'useRef', 'useState', 'useAui', 'useAuiState', 'useActionBarCopy', 'PreviewActionsContext', 'TaskMessageOriginContext', 'useComposerInputFocus', 'previewQuoteText', 'messageSourceParts', 'sourceQuote', 'sourceMessageText', 'MessageActions', 'MessageTimestamp',
-  declarations('../ui/message-details.tsx', ['titleWidths', 'MessageBubble', 'MessageDetails', 'RuntimeMessageActions']))(
+  declarations('../ui/message-details.tsx', ['titleWidths', 'MessageBubble', 'MessageDetails', 'hasRuntimeMessageActions', 'RuntimeMessageActions']))(
   require, detailsExports, React.useContext, React.useLayoutEffect, React.useRef, React.useState, AssistantUI.useAui, useAuiState, useActionBarCopy,
   React.createContext({ canQuote: () => true,appendQuote:(quote:unknown)=>quotedActions.push(quote) }), React.createContext(undefined), () => () => {}, previewQuoteText,messageSourceParts,sourceQuote,sourceMessageText, actionExports.MessageActions, timestampExports.MessageTimestamp);
 const processExports: any = {};
-Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['useProcessParts']))(
+Function('require', 'exports', 'useMemo', 'useAuiState', 'MessagePrimitive', 'HomerToolFallback', declarations('../ui/process-message.tsx', ['isAnswerPart', 'useProcessParts']))(
   require, processExports, React.useMemo, useAuiState, MessagePrimitive, () => null);
 const referenceExports: any = {};
 Function('require', 'exports', 'XIcon', declarations('../ui/reference-card.tsx', ['ReferenceCard']))(
   require, referenceExports, require('lucide-react').XIcon);
-const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource','messageTaskTitles','singleReplyTask','continuesReplyTask']);
+const wrapperJs = 'const Fragment = require("react").Fragment;\n'+declarations('../ui/homer-app.tsx', ['UserMessage', 'AssistantMessage','QuoteSource','messageTaskTitles','singleReplyTask','replyPosition','continuesReplyTask','isStandaloneArtifact','hasAssistantBubble']);
 // Keep the current production quote renderer in this rich-content boundary.
 // Only its stylesheet is omitted; installed primitives and icons stay real.
 const quotePath = new URL('../ui/vendor/assistant-ui/quote.tsx', import.meta.url);
@@ -225,10 +225,9 @@ const wrappers: any = {};
 const h = React.createElement;
 const files = [{ id: 'file', messageId: 'a' }];
 const artifacts = React.createContext({ files });
-const processes = React.createContext(new Map());
 const calls: any[] = [];
 const taskNavigation = React.createContext<((id:string)=>void)|undefined>(undefined);
-Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageBubble', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'ReferenceCard', 'MessageCirclePlus', 'referencesOf', 'ProcessMessagesContext', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', 'MessageIdPrefixContext', 'ScheduleNavigationContext', 'TaskPreviewNavigationContext', 'ListTodoIcon', 'Clock3', 'scheduleMessageBody', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;exports.continuesReplyTask=continuesReplyTask;')(
+Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','useEffect','locateSourceQuote', 'draftQuotes', 'MessagePrimitive', 'Markdown', 'MediaAttachments', 'MessageBubble', 'MessageDetails', 'InactiveInteractionNotes', 'ArtifactsContext', 'confirmedTerminal', 'ProcessMessageContent', 'ReactMarkdown', 'remarkGfm', 'ArtifactFiles', 'MessageDaySeparator', 'MessageTimestamp', 'isVisibleConversationMessage', 'QuoteBlock', 'ReferenceCard', 'MessageCirclePlus', 'referencesOf', 'useProcessParts', 'messageSourceParts', 'QuoteNavigationContext', 'MessageIdPrefixContext', 'ScheduleNavigationContext', 'TaskPreviewNavigationContext', 'ListTodoIcon', 'Clock3', 'scheduleMessageBody', wrapperJs + '\nexports.UserMessage=UserMessage;exports.AssistantMessage=AssistantMessage;exports.continuesReplyTask=continuesReplyTask;exports.replyPosition=replyPosition;')(
   require, wrappers, useAuiState, React.useContext,React.useState,React.useRef,React.useEffect,locateSourceQuote, (v: any) => v.quotes ?? [], MessagePrimitive,
   () => h(MessagePrimitive.Parts, { children: ({ part }: any) => part.type === 'text' ? h('p', null, part.text) : null }),
   (props: any) => { calls.push(['media', props]); return props.media?.length ? h('figure', null, '附件') : null; },
@@ -240,13 +239,13 @@ Function('require', 'exports', 'useAuiState', 'useContext','useState','useRef','
   () => null, () => null,
   (props: any) => { calls.push(['files', props]); return h('aside', null, '成果'); },
   timestampExports.MessageDaySeparator, timestampExports.MessageTimestamp, isVisibleConversationMessage, quoteExports.QuoteBlock, referenceExports.ReferenceCard,
-  MessageCirclePlus, referencesOf, processes, processExports.useProcessParts, messageSourceParts, React.createContext(() => {}), React.createContext("message-"), React.createContext(undefined), taskNavigation, require("lucide-react").ListTodoIcon, require("lucide-react").Clock3, scheduleMessageBody);
+  MessageCirclePlus, referencesOf, processExports.useProcessParts, messageSourceParts, React.createContext(() => {}), React.createContext("message-"), React.createContext(undefined), taskNavigation, require("lucide-react").ListTodoIcon, require("lucide-react").Clock3, scheduleMessageBody);
 
 
 function ConversationHarness({ source, openTask }: { source: any[]; openTask?: (id:string)=>void }) {
   const messages: ThreadMessageLike[] = source.map(m => ({ id: m.id, role: m.role, content: m.text ? [{ type: 'text', id: 'answer:' + m.id, text: m.text }] : [], createdAt: new Date(m.createdAt), metadata: { custom: { activityPresentation: { entries: { ['text:answer:' + m.id]: { kind: 'answer' } } }, original: m, messageId: m.id, media: m.media, quotes: m.quotes, process: m.process, sourceLabel: m.sourceLabel, sourceMessageId: m.sourceMessageId, inactiveInteractions: m.notes } }, ...(m.role === 'assistant' ? { status: m.status==='interrupted' ? {type:'incomplete',reason:'other'} as const : { type: 'complete', reason: 'stop' } as const } : {}) }));
   const runtime = useExternalStoreRuntime({ messages, convertMessage: m => m, isRunning: false, onNew: async () => {} });
-  return h(AssistantRuntimeProvider, { runtime }, h(timestampExports.MessageTimestamps, { messages: source }, h(processes.Provider, { value: new Map(source.map(m => [m.id, m])) }, h(ThreadPrimitive.Root, null, h(taskNavigation.Provider, { value: openTask }, h(ThreadPrimitive.Messages, { components: wrappers }))))));
+  return h(AssistantRuntimeProvider, { runtime }, h(timestampExports.MessageTimestamps, { messages: source }, h(ThreadPrimitive.Root, null, h(taskNavigation.Provider, { value: openTask }, h(ThreadPrimitive.Messages, { components: wrappers })))));
 }
 const renderConversation = (source: any[]) => renderToStaticMarkup(h(ConversationHarness, { source }));
 
@@ -389,17 +388,20 @@ test('bubbles own the only time, while tool-only and invalid messages retain the
   assert.equal((plain.match(/class="message-timestamp"/g) ?? []).length, 1);
 });
 
-test('grouping uses the adjacent history row and one verified task and title', () => {
+test('grouping uses projected answers on both rows and one verified task and title', () => {
   const task = (taskId: string, title = '同名事项') => ({ target: { taskId }, title });
   const first = { ...m('a', 1700000000000), role: 'assistant', status: 'completed', threadId: 'thread', taskSources: [task('one')] };
   const second = { ...first, id: 'b', status: 'running', text: '流式回复' };
-  const continues = wrappers.continuesReplyTask;
+  const continues = (previous: typeof first | undefined, current: typeof second, hasBody = !!current.text.trim(), priorHasBody = !!previous?.text.trim()) =>
+    wrappers.continuesReplyTask(previous && wrappers.replyPosition(previous, priorHasBody), wrappers.replyPosition(current, hasBody), false, false);
   assert.equal(continues(first, second), true);
   assert.equal(continues(first, { ...second, text: '' }), false);
   assert.equal(continues(first, { ...second, text: '' }, true), true);
   assert.equal(continues(undefined, second), false);
   assert.equal(continues({ ...first, createdAt: NaN }, { ...second, createdAt: NaN }), false);
   assert.equal(continues({ ...first, text: '' }, second), false);
+  assert.equal(continues({ ...first, text: '' }, second, true, true), true);
+  assert.equal(continues(first, second, true, false), false);
   assert.equal(continues({ ...first, role: 'user' }, second), false);
   assert.equal(continues(first, { ...second, createdAt: 1700000000000 + 86_400_000 }), false);
   for (const taskSources of [[], [task('two')], [task('one', '新标题')], [task('one'), task('two')], [task('one'), task('two', '')]]) {

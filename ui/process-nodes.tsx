@@ -14,9 +14,12 @@ export function ProcessMessageContent({node,children,taskSourceUnresolved}:{node
   </>;
 }
 
+export const processStartFailure=(item:ProcessNode['items'][number])=>
+  item.kind==='workerEvent'&&item.event?.eventKind==='start_failed'?item.event:undefined;
+
 export function ProcessNodeView({node}:{node:ProcessNode}){
   return <>{node.items.map(item=>{
-    if(item.kind!=='workerEvent'||item.event?.eventKind!=='start_failed')return null;
-    return <p key={item.id} className="process-record-note">{item.event.title} · {item.event.body}</p>;
+    const event=processStartFailure(item);
+    return event&&<p key={item.id} className="process-record-note">{event.title} · {event.body}</p>;
   })}</>;
 }

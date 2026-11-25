@@ -7,6 +7,9 @@ import {projectProcessItems} from './process-presentation';
 
 type Entry={kind:'answer';source:'model'|'host'};
 export type ActivityPresentation={entries:Record<string,Entry>};
+export function isAnswerPart(part:{type:string;id?:string},presentation:ActivityPresentation|undefined){
+ return part.type==='text'&&!!presentation?.entries['text:'+part.id];
+}
 // Preserve final item identities; process commentary and tool calls have no UI parts.
 export function projectProcessMessage(message:WebState['messages'][number]):{content:ThreadMessageLike['content'];presentation:ActivityPresentation}{
  const content:Exclude<ThreadMessageLike['content'],string>[number][]=[],entries:ActivityPresentation['entries']={};
@@ -25,7 +28,7 @@ export function useProcessParts(){
  const presentation=useAuiState(s=>s.message.metadata.custom.activityPresentation as ActivityPresentation|undefined);
  const parts=useAuiState(s=>s.message.parts);
  const answerIndices:number[]=[];
- parts.forEach((part,index)=>{if(part.type==='text'&&presentation?.entries['text:'+part.id])answerIndices.push(index);});
+ parts.forEach((part,index)=>{if(isAnswerPart(part,presentation))answerIndices.push(index);});
  const renderAnswers=(Text:({text}:{text:string})=>ReactNode)=>answerIndices.map(index=>{const part=parts[index],id=part?.type==='text'?part.id:undefined,source=id?presentation?.entries['text:'+id]?.source:undefined;return <div key={id??index} style={{display:'contents'}} data-message-item-id={source==='model'?id:undefined}><MessagePrimitive.PartByIndex index={index} components={{Text}}/></div>;});
  return {hasBody:answerIndices.length>0,renderAnswers};
 }

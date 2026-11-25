@@ -97,13 +97,19 @@ try{
    db.prepare("UPDATE tasks SET historyState='archived',state='paused' WHERE id=?").run(c);
    const publish=(body,taskId)=>f.attach(body,[],{taskId,taskVersion:1}).messageId;
    const title=id=>'#message-'+id+' .message-task-open';
-   const messageA=publish('合成事项入口 A',a), continuation=publish('连续事项入口 A',a);
+   const staticReply=f.attach('历史静态事项标题',[]).messageId;
+   const silentProcess='silent-between-task-replies';
+   f.processes.start({id:silentProcess,threadId:thread,sourceKind:'worker',sourceMessageIds:[],messageId:silentProcess},'silent-turn');
+   f.history.record(silentProcess,thread,'','running',null,'internal');
+   f.processes.finish(silentProcess,'completed','silent-end');
+   const messageA=publish('合成事项入口 A',a);
+   const continuation=publish('连续事项入口 A',a);
    const messageC=publish('历史归档事项入口',c);
    const addTitles=messages=>messages.map(message=>message.id===messageC?{...message,taskSources:[
     {title:archivedTitle,target:{taskId:c,version:1},previewVerified:true},
     {title:archivedTitle,target:{taskId:secondTitleTask,version:1},previewVerified:true},
     {title:'证据不足的历史事项标题'.repeat(6),target:{taskId:'legacy',version:1}},
-   ]}:message);
+   ]}:message.id===staticReply?{...message,taskSources:[{title:'合成事项 A',target:{taskId:a,version:1}}]}:message);
    const stateWithTasks=f.bridge.history.state;
    f.bridge.history.state=async()=>{const state=await stateWithTasks();return {...state,messages:addTitles(state.messages)};};
    let denyOriginal=false,originalReads=0;
@@ -181,7 +187,10 @@ try{
     await click('.canvas-tab-close[aria-label="关闭合成网页"]');
     await closed();
    }
+   await exists('#message-'+staticReply+' .message-task-static');
    await exists(title(messageA));
+   check(await page.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(title(messageA))})).visibility==='visible'`),'a static title across an empty Worker row leaves the first verified task entrance visible');
+   await exists('#message-'+silentProcess);
    await exists(title(continuation));
    check(await page.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(title(continuation))})).visibility==='hidden'`),'folded title skips keyboard and pointer');
    await focus(title(messageA));
@@ -195,6 +204,7 @@ try{
    await click('.canvas-collapse');
    await closed();
    await focused(title(messageA));
+   await page.screenshot('continuous-task-title-'+width+'.png');
    const secondTitle='#message-'+messageC+' .message-task-open:nth-child(2)';
    const checkTitles=async (selector,buttonCount)=>{
     check(await page.evaluate(`(()=>{

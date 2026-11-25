@@ -31,6 +31,10 @@ let chrome;const checks=[];
 const markdown='# 合成回复\n\n**核对** [资料](https://example.com/hidden-target) 与 `x = 1`。\n\n| 项目 | 状态 |\n| --- | --- |\n| 核对 | 完成 |';
 const message=(id,role,text,status='completed')=>({id,role,text,status,threadId:'composer-review',requestId:'request-'+id,createdAt:1700000000000});
 const taskReply=(id,text,taskId)=>({...message(id,'assistant',text),taskSources:[{title:'合成事项',target:{taskId,version:1}}]});
+const emptyWorker=id=>{
+ const record=message(id,'assistant','');
+ return {...record,audience:'internal',process:{id,messageId:id,threadId:record.threadId,sourceKind:'worker',sourceMessageIds:[],turnIds:['turn-'+id],state:'worked',status:'completed',revision:1,seq:1,items:[]}};
+};
 const pageSource={kind:'message-file',messageId:'web-original',destination:'plan.html',title:'套餐页'};
 const webNote=(element,comment)=>({id:element,element,elementPath:'h1',comment,x:0,y:0});
 const longRemark='保留完整备注。\n\n'+('BillingSubscriptionMigrationCompatibility '.repeat(8))+'末尾要求';
@@ -41,6 +45,8 @@ const webRefs=[
 const messages=[
  message('quote-user','user','合成用户原文'),
  taskReply('quote-assistant',markdown,'one'),
+ emptyWorker('empty-one'),
+ emptyWorker('empty-two'),
  taskReply('same-task','已阅。','one'),
  taskReply('other-task','这是另一事项。','two'),
  message('attachment-only','assistant',''),
@@ -83,10 +89,12 @@ try{
    await key(page,'Tab');
    await check('the next Tab reaches Copy',()=>document.activeElement===document.querySelector('#message-quote-user [aria-label="复制"]'));
    await page.evaluate(()=>document.activeElement.blur());
-   await check('adjacent same-task titles are visually hidden, and matching names on different tasks stay separate',()=>{
+   await check('two empty Worker rows preserve the same-task group and its reply controls',()=>{
     const first=document.querySelector('#message-quote-assistant'),second=document.querySelector('#message-same-task'),other=document.querySelector('#message-other-task');
     const gap=(before,after)=>Math.round(after.querySelector('.assistant-message-bubble').getBoundingClientRect().top-before.querySelector('.assistant-message-bubble').getBoundingClientRect().bottom);
     return second.parentElement.hasAttribute('data-continues-task')&&getComputedStyle(second.querySelector('.message-task-title')).clipPath!=='none'&&
+     ['empty-one','empty-two'].every(id=>document.getElementById('message-'+id).parentElement.getBoundingClientRect().height===0)&&
+     !!second.querySelector('.markdown')&&!!second.querySelector('time')&&second.querySelectorAll('.message-actions button').length===2&&
      !other.parentElement.hasAttribute('data-continues-task')&&getComputedStyle(other.querySelector('.message-task-title')).clipPath==='none'&&
      gap(first,second)===(matchMedia('(pointer:coarse)').matches?54:8)&&gap(second,other)>gap(first,second);
    });
@@ -175,6 +183,38 @@ try{
    await press(page,'#message-stream-copy [aria-label="引用"]');
    await check('long quote preserves the complete visible text',()=>JSON.parse(sessionStorage.getItem('homer-draft:composer-review')).quotes[0].text.length===16001);
    await check('no application console warnings or errors',()=>window.__console.length===0);
+   if(width===1440){
+    const lead={...taskReply('boundary-lead','','one'),finalAnswers:[{id:'projected-answer',text:'仅在投影中的正文',completed:true}]};
+    const middle=emptyWorker('boundary');
+    const tail=taskReply('boundary-tail','继续核对。','one');
+    const grouped=()=>document.querySelector('#message-boundary-tail')?.parentElement.hasAttribute('data-continues-task');
+    fixture.reset({messages:[lead,middle,tail]});
+    await page.command('Page.reload');
+    await wait(grouped);
+    const artifact={id:'artifact',messageId:middle.id,assetId:'synthetic',revision:1,title:'合成成果.md',sha256:'synthetic'};
+    for(const [label,record,extras,selector] of [
+     ['body',{...middle,text:'新出现的正文'},{},'.markdown'],
+     ['start failure',{...middle,process:{...middle.process,items:[{kind:'workerEvent',id:'failed',revision:1,seq:1,event:{eventKind:'start_failed',title:'启动失败',body:'合成说明'}}]}},{},'.process-record-note'],
+     ['unresolved task',{...middle,taskSourceUnresolved:true},{},'.process-record-note'],
+     ['interaction note',middle,{inactiveInteractions:[{id:'expired',kind:'question',state:'expired',sourceRequestId:'request-boundary',processId:middle.process.id}]},'.message-state'],
+     ['original request',{...middle,source:message('original-request','user','原请求')},{},'summary'],
+     ['artifact',middle,{artifacts:[artifact]},'.file-list-open'],
+     ['source link',{...middle,sources:[{id:'source',title:'合成链接',url:'https://example.com/',kind:'reply-link'}]},{},'.message-link-sources'],
+     ['message actions',{...middle,text:' '},{},'.message-actions'],
+     ['failed process',{...middle,status:'failed',process:{...middle.process,status:'failed'}},{},'.message-state'],
+     ['interaction receipt',{...message(middle.id,'user',''),interaction:{id:'completed',kind:'question',title:'合成咨询',answers:[{text:'已答复'}]}},{},'[data-kind="question"]'],
+    ]){
+     fixture.update({messages:[lead,record,tail],inactiveInteractions:[],artifacts:[],...extras});
+     await page.until(`!!document.querySelector(${JSON.stringify('#message-boundary '+selector)})&&!(${grouped})()`,10000);
+     fixture.update({messages:[lead,middle,tail],inactiveInteractions:[],artifacts:[{...artifact,destination:'result.md'}]});
+     await wait(grouped);
+     checks.push({width,label:'same-ID '+label+' splits the group until the row becomes empty'});
+    }
+    fixture.update({messages:[lead,middle,{...tail,createdAt:tail.createdAt+86_400_000}]});
+    await wait(()=>!!document.querySelector('#message-boundary-tail').parentElement.querySelector('.message-day-separator')&&
+     !document.querySelector('#message-boundary-tail').parentElement.hasAttribute('data-continues-task'));
+    checks.push({width,label:'an empty Worker record cannot continue a group across a day boundary'});
+   }
    {
     const earlierReply=taskReply('stream-lead','已开始核对。','receipt-task');
     const activity={processId:'receipt-process',source:'internal',stage:'native',turnId:'receipt-turn'};
@@ -193,9 +233,9 @@ try{
     const selector='#message-receipt .assistant-message-bubble > time.message-timestamp';
     const expected=new Date(receipt.createdAt).toISOString();
     await page.until('document.querySelector('+JSON.stringify(selector)+')?.dateTime==='+JSON.stringify(expected),10000);
-    await check('the published reply renders exactly one timestamp without an extra date separator',()=>{
+    await check('the published reply retains grouping and renders only one timestamp',()=>{
      const row=document.querySelector('#message-receipt');
-     return row.querySelectorAll('time.message-timestamp').length===1&&!row.parentElement.querySelector('.message-day-separator');
+     return row.parentElement.hasAttribute('data-continues-task')&&row.querySelectorAll('time.message-timestamp').length===1&&!row.parentElement.querySelector('.message-day-separator');
     });
     await page.command('Page.reload');
     await page.until('document.querySelector('+JSON.stringify(selector)+')?.dateTime==='+JSON.stringify(expected),10000);
@@ -288,7 +328,7 @@ try{
     }
     await check('wheel scrolling does not reclassify the already mounted one-line message',()=>window.actionLayoutChanges===0);
     const replies=Array.from({length:100},(_,i)=>taskReply('group-'+i,'连续同事项回复 '+i,'virtual-task'));
-    earlier=replies.slice(0,25);
+    earlier=[...replies.slice(0,25),emptyWorker('history-gap')];
     fixture.reset({messages:replies.slice(25),features:{draftUpload:true,taskOverview:false}});
     await page.command('Page.reload');
     await wait(()=>!!document.querySelector('#message-group-99')&&document.querySelector('.scroll-latest')?.disabled);
