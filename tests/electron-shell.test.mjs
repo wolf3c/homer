@@ -83,7 +83,7 @@ async function fixture(args=['Homer','--test-profile','/synthetic/profile'],open
  }};
  modules['../homer/dist/preview-reference.js']=await import('../src/preview-reference.ts');
  modules['../homer/dist/browser-preview.js']=await import('../src/browser-preview.ts');
- modules['./preview-pages.mjs']={registerPreviewScheme(){},createBrowserPreview(){return{close(){},expirePermissions(){},async execute(...args){if(native.previewExecute)return native.previewExecute(...args);throw Error('preview_unavailable');}};}};
+ modules['./preview-pages.mjs']={registerPreviewScheme(){},createBrowserPreview(){return{close(){},expirePermissions(){},releaseAll(){},async execute(...args){if(native.previewExecute)return native.previewExecute(...args);throw Error('preview_unavailable');}};}};
  Object.assign(modules['../homer/scripts/desktop-profile.mjs'],{
   readDesktopCaptureShortcut:()=>native.captureShortcut,
   saveDesktopCaptureShortcut:(_root,shortcut)=>{if(native.shortcutWriteError)throw Error('private_write_failure');native.captureShortcut=shortcut;},
