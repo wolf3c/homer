@@ -242,6 +242,17 @@ try{
    await click('.canvas-tab-close[aria-label="关闭'+archivedTitle+'"]');
    await click('.canvas-tab-close[aria-label="关闭合成事项 A"]');
    await closed();
+   const taskButton=id=>`[data-todo-id="${id}"] [data-slot="task-status-row"]`;
+   if(!await page.evaluate(()=>document.querySelector('#task-status-trigger')?.getAttribute('aria-expanded')==='true'))await click('#task-status-trigger');
+   await click('.status-archive-toggle');
+   await focus(taskButton(c));
+   await page.screenshot('task-status-row-'+width+'.png');
+   await key(' ',32);
+   await exists(taskReader(c));
+   await click('.canvas-tab-close[aria-label="关闭'+archivedTitle+'"]');
+   await closed();
+   await focused(width<700?'#task-status-trigger':taskButton(c));
+   if(width===1440)await click('.status-archive-toggle');
    await insert(primary,'主对话合成草稿');
    const readAnchor=()=>page.evaluate(()=>{
     const view=document.querySelector('.preview-main-panel .thread-viewport'),top=view.getBoundingClientRect().top;
@@ -253,12 +264,13 @@ try{
    const mainAnchor=await readAnchor();
    assert.ok(mainAnchor);
    if(!await page.evaluate(()=>document.querySelector('#task-status-trigger')?.getAttribute('aria-expanded')==='true'))await click('#task-status-trigger');
-   await exists(`[data-todo-id="${a}"] .status-task-open`);
    const taskRow=`[data-todo-id="${a}"]`;
+   await exists(taskButton(a));
+   check(await page.evaluate(`document.querySelector(${JSON.stringify(taskButton(a))}).matches('button[type=button]')`),'the entire current matter card is a native button');
    check(await page.evaluate(`document.querySelector(${JSON.stringify(taskRow+' .status-task-workers')})?.getAttribute('aria-label')==='3 个 Worker'`),'task list shows Worker count');
    const listEntry=await text(taskRow);
    check(!listEntry.includes(firstTitle)&&!listEntry.includes('复核补货访谈纪要'),'task list omits current and previous assignments');
-   await click(`[data-todo-id="${a}"] .status-task-open`);
+   await click(taskButton(a)+' .status-task-workers');
    await exists('.task-conversation #task-message-node-154');
    check((await text('.task-conversation #task-message-node-154')).includes('合成事项答复 154'),'public projected final');
    check(!(await page.evaluate(()=>document.querySelector('.task-conversation #task-message-node-159'))),'unrelated history excluded');
@@ -439,8 +451,7 @@ try{
    check(await text(primary)==='主对话合成草稿','task send never changes main draft');
    await click('.canvas-collapse');
    if(!await page.evaluate(()=>document.querySelector('#task-status-trigger')?.getAttribute('aria-expanded')==='true'))await click('#task-status-trigger');
-   await exists(`[data-todo-id="${b}"] .status-task-open`);
-   await click(`[data-todo-id="${b}"] .status-task-open`);
+   await click(taskButton(b));
    await exists(draft);
    check(await text(draft)==='','other task starts independent');
    if(sparse){

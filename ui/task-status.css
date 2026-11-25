@@ -61,6 +61,8 @@
 /* Host accessibility boundary; pinned TaskCard markup and utilities stay intact. */
 :is(.homer-task-status[data-slot="task-card"],.homer-task-status [data-slot="task-card"])>button:focus-visible{outline:2px solid hsl(var(--ring));outline-offset:-2px}
 
-.status-task-open{padding:0;background:transparent;color:inherit;text-align:left;font:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;min-height:28px}
-.status-task-open:hover{text-decoration:underline;text-underline-offset:3px}
-@media(pointer:coarse){.status-task-open{min-height:44px}}
+.homer-task-status button.status-task-row .status-task-title{min-height:28px;align-content:center}
+@media(pointer:coarse){.homer-task-status button.status-task-row .status-task-title{min-height:44px}}
+@media(hover:hover){.homer-task-status button.status-task-row:hover{background:var(--soft)}}
+.homer-task-status button.status-task-row:active{background:var(--soft)}
+.homer-task-status button.status-task-row:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}

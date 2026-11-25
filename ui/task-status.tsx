@@ -31,10 +31,16 @@ function TaskStatusRow({label,workerCount,running,archived,onReference,onOpen,ar
  archive?:{reason:string|null;pending:boolean;activate:()=>void};
 }){
  const archiveReasonId=useId();
+ const Row=onOpen?'button':'div';
+ const openProps=onOpen?{
+  type:'button' as const,
+  'aria-label':label,
+  'aria-description':[running?'运行中':'',workerCount>0?workerCount+' 个 Worker':''].filter(Boolean).join('，')||undefined,
+  onClick:(event:React.MouseEvent<HTMLElement>)=>onOpen(event.currentTarget),
+ }:{};
  return <div className="status-task-entry" data-reference={onReference?'available':undefined} data-workers={workerCount>0?'present':undefined} data-top-action={running||archive?'present':undefined}>
- <div data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label}>
-  {onOpen?<button type="button" className="status-task-title status-task-open" onClick={event=>onOpen(event.currentTarget)}>{label}</button>
-    :<span className={archived?'status-task-title':'status-task-title status-task-title-truncated'}>{label}</span>}
+ <Row data-slot="task-status-row" data-item-row="true" className="status-task-row" title={label} {...openProps}>
+  <span className={onOpen||!archived?'status-task-title status-task-title-truncated':'status-task-title'}>{label}</span>
   {running&&<span className="status-task-running" role="img" aria-label="运行中" title="运行中">
    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="animate-spin motion-reduce:animate-none">
     <circle cx="7" cy="7" r="6" stroke="currentColor" strokeOpacity=".25" strokeWidth="1.5"/>
@@ -42,7 +48,7 @@ function TaskStatusRow({label,workerCount,running,archived,onReference,onOpen,ar
    </svg>
   </span>}
   {workerCount>0&&<span className="status-task-workers" role="img" aria-label={workerCount+' 个 Worker'} title={workerCount+' 个 Worker'}><BotIcon size={16} aria-hidden="true"/>{workerCount}</span>}
- </div>
+ </Row>
  {archive&&<button type="button" className="status-task-archive" aria-label={(archive.pending?'正在归档：':'归档事项：')+label}
   title={archive.reason??(archive.pending?'正在归档…':'归档事项')} disabled={!!archive.reason&&!archive.pending}
   aria-disabled={archive.pending||undefined} aria-describedby={archive.reason?archiveReasonId:undefined} onClick={archive.activate}><ArchiveIcon size={16} aria-hidden/></button>}
