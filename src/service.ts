@@ -252,7 +252,9 @@ export class Homer {
         let file:ReturnType<Homer['readMessageFile']>;
         try{file=this.readMessageFile({threadId,messageId,destination},true);}
         catch(error){
-          if(!named.path||!['artifact_path_denied','artifact_missing','artifact_changed','file_type_or_size_denied','file_preview_unsupported'].includes(engineError(error)))throw error;
+          const code=engineError(error),cause=error instanceof Error?error.cause as NodeJS.ErrnoException|undefined:undefined;
+          const readDenied=code==='artifact_path_denied'&&(cause?.code==='EACCES'||cause?.code==='EPERM');
+          if(!named.path||!readDenied&&!['artifact_missing','artifact_changed','file_type_or_size_denied','file_preview_unsupported'].includes(code))throw error;
           return {destination,messageId,title:basename(named.target?.withoutLine??named.path)};
         }
         if(file.mime.split(';')[0]==='text/html'){
@@ -470,7 +472,7 @@ export class Homer {
     if(!isAbsolute(path))throw Error('artifact_path_denied');
     let canonical:string;
     try{canonical=realpathSync.native(path);}
-    catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))throw Error('artifact_missing');throw Error('artifact_path_denied');}
+    catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))throw Error('artifact_missing');throw Error('artifact_path_denied',{cause:error});}
     if(canonical!==path&&!(messageLink&&process.platform==='darwin'&&/^\/(?:tmp|var|etc)\//.test(path)&&canonical==='/private'+path))throw Error('artifact_path_denied');
     path=canonical;
     if(!desktopFile)this.validateTaskFile(path,false,messageLink);
@@ -2562,7 +2564,7 @@ export class Homer {
       catch(error){
         const code=(error as NodeJS.ErrnoException).code;
         if(code==='ENOENT'||code==='ENOTDIR')throw Error('artifact_missing');
-        if(code==='EACCES'||code==='EPERM'||code==='ELOOP')throw Error('artifact_path_denied');
+        if(code==='EACCES'||code==='EPERM'||code==='ELOOP')throw Error('artifact_path_denied',{cause:error});
         throw error;
       }
     };
