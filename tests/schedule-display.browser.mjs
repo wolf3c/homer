@@ -37,7 +37,7 @@ try{
    if(holdList){const pending=holdList;holdList=undefined;onHeldList();await pending;}
    await route.fulfill({json});
   });
-  fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
+  fixture.reset({features:{draftUpload:true,taskOverview:false,previewReferenceCollections:2,scheduleReference:1},artifacts:[artifact],messages:[{id:artifact.messageId,threadId:'composer-review',requestId:'synthetic-request',role:'assistant',text:'已按要求登记安排。后续如需调整，直接告诉我。',status:'completed',createdAt:1700000000000,media:[{...artifact,filename:artifact.title,kind:'file',state:'ready',mime:'text/markdown',size:45}]}]});
   await page.goto(fixture.url);const editor=page.locator('[contenteditable=true]');await editor.waitFor();await editor.fill('把这个改到每天上午十点。');
   await page.getByRole('button',{name:'预览 原文件.md',exact:true}).click();await page.locator('.canvas-markdown').waitFor();
   if(width<=800)await page.getByRole('button',{name:'收起预览',exact:true}).click();
@@ -81,7 +81,42 @@ try{
   if(width<=800)await page.getByRole('button',{name:'定时任务',exact:true}).click();
   await page.getByRole('button',{name:'在对话中说：整理 AI 行业简报',exact:true}).click();await page.getByRole('button',{name:'移除定时任务引用',exact:true}).waitFor();
   await page.reload();await page.getByRole('button',{name:'移除定时任务引用',exact:true}).waitFor();assert.equal(await editor.innerText(),'把这个改到每天上午十点。');
-  await page.getByRole('button',{name:'发送消息',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.schedule-chip'));assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].text,'用户选择的定时任务：'+JSON.stringify({scheduleId:rows[0].scheduleId,label:rows[0].title})+'\n\n把这个改到每天上午十点。');
+  await page.getByRole('button',{name:'发送消息',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.composer .schedule-chip'));assert.equal(fixture.received.messages.length,1);assert.equal(fixture.received.messages[0].text,'用户选择的定时任务：'+JSON.stringify({scheduleId:rows[0].scheduleId,label:rows[0].title})+'\n\n把这个改到每天上午十点。');
+  const submitted=fixture.received.messages[0];
+  assert.deepEqual(submitted.scheduleReference,{scheduleId:rows[0].scheduleId,label:rows[0].title});
+  const sent=page.locator('[data-conversation-message="accepted-'+submitted.requestId+'"]');
+  const sentCard=sent.getByRole('button',{name:'查看定时任务引用：'+rows[0].title});
+  await sentCard.waitFor();
+  assert.equal(await sent.locator('.markdown').innerText(),'把这个改到每天上午十点。');
+  assert.equal(await sent.getByRole('button',{name:'移除定时任务引用'}).count(),0);
+  const readSent=page.waitForRequest(req=>req.url().endsWith('/api/schedules/read')&&req.postDataJSON().view==='detail');
+  await sentCard.click();
+  assert.equal((await readSent).postDataJSON().scheduleId,rows[0].scheduleId);
+  await dialog.locator('[data-slot=spec-sheet]').waitFor();
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
+  assert.equal(await sentCard.evaluate(node=>node===document.activeElement),true);
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText(value){window.__copied=value;return Promise.resolve();}}}));
+  const copy=sent.getByRole('button',{name:'复制'});
+  await sent.hover();await copy.click();
+  assert.equal(await page.evaluate(()=>window.__copied),submitted.text);
+
+  const longTitle='汇总每周发布候选、桌面和移动端验证进度，核对兼容性、签名和官网下载入口'.repeat(2);
+  const longReference={scheduleId:rows[0].scheduleId,label:longTitle};
+  fixture.accept({requestId:'long-schedule-reference',text:'用户选择的定时任务：'+JSON.stringify(longReference)+'\n\n把验证进度按平台分组。',scheduleReference:longReference});
+  const longCard=page.locator('[data-conversation-message="accepted-long-schedule-reference"] .schedule-chip');
+  assert.deepEqual(await longCard.locator('.compact-context-label').evaluate(node=>{
+    const style=getComputedStyle(node);return [style.whiteSpace,style.textOverflow,node.scrollWidth>node.clientWidth];
+  }),['nowrap','ellipsis',true]);
+  const longBox=await longCard.boundingBox();assert.ok(longBox.x>=0&&longBox.x+longBox.width<=width);
+  if(!await detailButton.isVisible())await page.getByRole('button',{name:'定时任务',exact:true}).click();
+  await page.getByRole('button',{name:'在对话中说：整理 AI 行业简报',exact:true}).click();
+  if(width>800)await page.getByRole('button',{name:'收起预览',exact:true}).click();
+  await page.screenshot({animations:'disabled',path:join(dest,'conversation-reference-'+width+'.png')});
+  await page.getByRole('button',{name:'移除定时任务引用',exact:true}).click();
+  fixture.accept({requestId:'ordinary-prefixed-message',text:submitted.text});
+  const legacyRow=page.locator('[data-conversation-message="accepted-ordinary-prefixed-message"]');
+  assert.match(await legacyRow.locator('.markdown').innerText(),/用户选择的定时任务/);
+  assert.equal(await legacyRow.locator('.schedule-chip').count(),0);
   await page.getByRole('button',{name:'定时任务',exact:true}).click();await detailButton.waitFor();
   const readBefore=reads;currentRows[0].title='已刷新：整理 AI 行业简报';fixture.update({isRunning:false});await page.getByRole('button',{name:'查看定时任务详情：已刷新：整理 AI 行业简报',exact:true}).waitFor();assert.ok(reads>readBefore);
   paged=true;fixture.update({});

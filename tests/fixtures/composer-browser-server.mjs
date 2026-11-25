@@ -50,7 +50,7 @@ export async function composerFixture({webDir,beforeDir,branding,resource,intera
    res.writeHead(200,{'Content-Type':mime[path.extname(file)]??'application/octet-stream'});res.end(body);
   }catch{res.writeHead(404);res.end('fixture_not_found');}
  });
- function accept(input){if(!state.acceptedRequestIds.includes(input.requestId))state.acceptedRequestIds.push(input.requestId);if(!state.messages.some(m=>m.requestId===input.requestId&&m.role==='user'))state.messages.push({id:'accepted-'+input.requestId,threadId:state.threadId,requestId:input.requestId,role:'user',text:input.text,taskReference:input.taskReference,quotes:input.quotes,quote:input.quote,status:'completed',createdAt:Date.now()});broadcast();}
+ function accept(input){if(!state.acceptedRequestIds.includes(input.requestId))state.acceptedRequestIds.push(input.requestId);if(!state.messages.some(m=>m.requestId===input.requestId&&m.role==='user'))state.messages.push({id:'accepted-'+input.requestId,threadId:state.threadId,requestId:input.requestId,role:'user',text:input.text,taskReference:input.taskReference,scheduleReference:input.scheduleReference,quotes:input.quotes,quote:input.quote,status:'completed',createdAt:Date.now()});broadcast();}
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  return {url:'http://127.0.0.1:'+server.address().port,received,reset,accept,configure(v){Object.assign(mode,v);},update(v){Object.assign(state,v);broadcast();},unavailable(){broadcast('unavailable');},releaseStops(){for(const r of held)r.end(JSON.stringify({ok:true}));held=[];},close:async()=>{for(const r of streams)r.end();for(const r of held)r.end();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}};
 }

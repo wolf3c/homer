@@ -3,8 +3,12 @@ import {validatePreviewIntent} from './user-intent.js';
 import {mainInputProcessingSql} from './main-process.js';
 import type { AgentMessage, RecursiveTasks } from './recursive-tasks.js';
 import { recursiveHash } from './recursive-tasks.js';
+import {scheduleMessageBody} from './schedule-reference.js';
 import type {ScheduleDelivery} from './schedules.js';
 import { conversationInput, encodeConversationReferences, type ConversationHistory, type ConversationInput, type ConversationAcceptance, type ConversationReceipt, type ConversationMessage } from './web-history.js';
+// The canonical text already binds the schedule ID and label. The separate
+// display field must not change hashes that older hosts use to claim the queue.
+function inputHash({scheduleReference:_reference,...input}:ConversationInput){return recursiveHash(input);}
 type InterruptTarget = {
   generationId: string;
   messageId: string;
@@ -149,7 +153,7 @@ export class MainInputs {
     message ??= this.history.inputs(row.threadId, [p.requestId]).get(p.requestId);
     if (!message) throw Error('queue_input_missing');
     const details = JSON.parse(row.detailsJson ?? '{}');
-    const input = conversationInput({ requestId: p.requestId, text: message.text,taskReference:message.taskReference,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
+    const input = conversationInput({ requestId: p.requestId, text: message.text,taskReference:message.taskReference,scheduleReference:message.scheduleReference,...(message.attachments?{attachments:message.attachments}:{}),...(message.resourceReference?{resourceReference:message.resourceReference}:{}),...(message.resourceReferences?{resourceReferences:message.resourceReferences}:{}), ...(message.quotes ? { quotes: message.quotes } : message.quote ? { quote: message.quote } : {}), ...(details.interactionId ? { interactionId: details.interactionId } : {}) });
     return { origin:'user',messageId: row.id, seq: row.seq, revision: row.revision, inputRevision: p.inputRevision, input, replyId: row.replyId, source: p.source,editable:this.rowEditable(row),...(row.receiptState==='pending'?{preparation:this.preparation(input,p.source)}:{}), state: p.terminal ?? (row.receiptState === 'pending' ? 'queued' : ['offered', 'received'].includes(row.receiptState) ? 'processing' : row.receiptState === 'uncertain' ? 'uncertain' : 'failed'), ...(row.offeredTurnId ? { generationId: row.offeredTurnId } : {}), ...(p.interruptState ? { interruptState: p.interruptState, interruptTarget: p.interrupt } : {}) };
   }
   list(): QueuedInput[] {
@@ -342,6 +346,7 @@ export class MainInputs {
   } {
     const input = conversationInput(value), thread = this.store.meta('mainThread');
     if(input.taskReference&&(acceptance?.source!==undefined||!this.validateQuotes))throw Error('task_reference_scope_denied');
+    if(input.scheduleReference&&(acceptance?.source!==undefined||!this.validateQuotes))throw Error('schedule_reference_unavailable');
     // Typed native answers belong to the live native callback, never this inbox.
     if(input.questionAnswers)throw Error('interaction_response_kind');
     if (!thread)
@@ -352,8 +357,8 @@ export class MainInputs {
         if (receipt.fresh) {
           this.admit(Buffer.byteLength(input.text));
           const key = 'op-' + randomUUID(), messageId = 'message-' + randomUUID();
-          const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: recursiveHash(input), inputRevision: 1, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
-          this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', recursiveHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId,...(acceptance?.optionId?{optionId:acceptance.optionId}:{}) } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
+          const payload: InputPayload = { requestId: input.requestId, source: acceptance?.source ?? 'local', inputHash: inputHash(input), inputRevision: 1, ...(interrupt ? { interrupt, interruptState: 'requested' } : {}) };
+          this.db.prepare("INSERT INTO operations(id,actorAgentId,scopeId,operationId,kind,payloadHash,state,detailsJson,responseJson,revision) VALUES(?,?,?,?,?,?,'confirmed',?,?,0)").run(key, 'user:' + this.agent, input.requestId, 'accept', 'user_accept', inputHash(input), JSON.stringify(input.interactionId ? { interactionId: input.interactionId,...(acceptance?.optionId?{optionId:acceptance.optionId}:{}) } : {}), JSON.stringify({ messageId, replyId: receipt.replyId }));
           this.db.prepare("INSERT INTO agent_messages(id,senderAgentId,recipientAgentId,kind,operationKey,payloadJson) VALUES(?,?,?,'user_input',?,?)").run(messageId, 'user:' + this.agent, this.agent, key, JSON.stringify(payload));
           this.db.prepare("INSERT INTO agent_receipts(messageId,recipientAgentId,state) VALUES(?,?,'pending')").run(messageId, this.agent);
           this.db.prepare("UPDATE conversation_messages SET status='queued' WHERE requestId=? AND threadId=?").run(input.requestId, thread);
@@ -414,11 +419,14 @@ export class MainInputs {
       const taskReference=previous.taskReference;
       if(updated.taskReference&&recursiveHash(updated.taskReference)!==recursiveHash(taskReference??null))throw Error('task_reference_changed');
       if(taskReference)updated=conversationInput({...updated,taskReference});
+      const scheduleReference=previous.scheduleReference;
+      if(updated.scheduleReference&&recursiveHash(updated.scheduleReference)!==recursiveHash(scheduleReference??null))throw Error('invalid_schedule_reference');
+      if(scheduleReference&&scheduleMessageBody(updated.text,scheduleReference)!==undefined)updated={...updated,scheduleReference};
       validatePreviewIntent(updated);
       if(updated.interactionId!==previous.interactionId)throw Error('queue_interaction_conflict');
       if((updated.resourceReference||updated.resourceReferences)&&JSON.stringify([updated.resourceReference,updated.resourceReferences])!==JSON.stringify([previous.resourceReference,previous.resourceReferences]))throw Error('queue_quote_validation_required');
       if (this.validateQuotes)
-        this.validateQuotes({...updated,taskReference:undefined,resourceReference:undefined,resourceReferences:undefined});
+        this.validateQuotes({...updated,taskReference:undefined,scheduleReference:undefined,resourceReference:undefined,resourceReferences:undefined});
       else if (updated.quotes?.length || updated.quote) {
         if (JSON.stringify(updated.quotes ?? updated.quote) !== JSON.stringify(previous.quotes ?? previous.quote))
           throw Error('queue_quote_validation_required');
@@ -431,8 +439,8 @@ export class MainInputs {
       if(!userMessage)throw Error('queue_message_not_found');
       this.db.prepare('DELETE FROM conversation_attachments WHERE messageId=?').run(String(userMessage.id));
       if(updated.attachments?.length)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(String(userMessage.id),JSON.stringify(updated.attachments));
-      this.db.prepare("UPDATE conversation_messages SET text=?,quote=? WHERE requestId=? AND threadId=? AND role='user'").run(updated.text, encodeConversationReferences(updated), p.requestId, thread);
-      this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, inputHash: recursiveHash(updated), inputRevision: p.inputRevision + 1 }), row.id);
+      this.db.prepare("UPDATE conversation_messages SET text=?,quote=?,scheduleReferenceJson=? WHERE requestId=? AND threadId=? AND role='user'").run(updated.text, encodeConversationReferences(updated), updated.scheduleReference?JSON.stringify(updated.scheduleReference):null,p.requestId, thread);
+      this.db.prepare('UPDATE agent_messages SET payloadJson=? WHERE id=?').run(JSON.stringify({ ...p, inputHash: inputHash(updated), inputRevision: p.inputRevision + 1 }), row.id);
       this.db.prepare('UPDATE operations SET detailsJson=? WHERE id=(SELECT operationKey FROM agent_messages WHERE id=?)').run(JSON.stringify(updated.interactionId ? { interactionId: updated.interactionId } : {}), row.id);
       this.db.prepare('UPDATE agent_receipts SET revision=revision+1 WHERE messageId=? AND state=\'pending\'').run(row.id);
       this.lifecycle?.edited?.(updated,thread);
@@ -494,7 +502,7 @@ export class MainInputs {
       const preparation=current.preparation;
       if(preparation==='preparing')return;
       if(preparation==='failed')throw Error('media_preparation_failed');
-      if (recursiveHash(current.input) !== p.inputHash)
+      if (inputHash(current.input) !== p.inputHash)
         throw Error('queue_input_hash_conflict');
       const change = this.db.prepare("UPDATE agent_receipts SET state='offered',revision=revision+1 WHERE messageId=? AND state='pending' AND revision=?").run(row.id, row.revision);
       if (!change.changes)

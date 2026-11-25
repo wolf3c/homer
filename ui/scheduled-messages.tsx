@@ -11,8 +11,13 @@ import {Dialog,DialogContent,DialogTitle} from './vendor/assistant-ui/attachment
 import './vendor/assistant-ui/schedules.css';
 import './scheduled-messages.css';
 
-export function ScheduleChip({value,onRemove}:{value:ScheduleContext;onRemove:()=>void}){
- return <div className="schedule-chip"><Clock3 size={14} aria-hidden/><span>{value.label}</span><button type="button" aria-label="移除定时任务引用" title="移除定时任务引用" onClick={onRemove}><X size={14} aria-hidden/></button></div>;
+export function ScheduleChip({value,onRemove,onOpen}:{value:ScheduleContext;onRemove?:()=>void;onOpen?:(trigger:HTMLElement)=>void}){
+ const label=<><Clock3 size={15} aria-hidden/><span className="compact-context-copy"><span className="compact-context-label">{value.label}</span><span className="compact-context-source">定时任务引用</span></span></>;
+ return <div className="annotation-chip schedule-chip">
+  {onOpen?<button type="button" className="annotation-chip-open" title={value.label} aria-label={'查看定时任务引用：'+value.label} aria-haspopup="dialog" onClick={event=>onOpen(event.currentTarget)}>{label}</button>
+   :<div className="annotation-chip-open task-reference-chip" title={value.label}>{label}</div>}
+  {onRemove&&<button type="button" className="annotation-chip-remove" aria-label="移除定时任务引用" title="移除定时任务引用" onClick={onRemove}><X size={14} aria-hidden/></button>}
+ </div>;
 }
 async function read(input:ScheduleReadRequest,threadId:string,signal:AbortSignal){
  const response=await connectionFetch('/api/schedules/read',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),signal});

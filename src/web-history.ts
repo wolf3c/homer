@@ -4,6 +4,7 @@ import {isDraftImageReference,parseResourceReference,parseResourceReferences,ref
 import { messageQuoteText,previewQuoteText,sourceQuoteText } from './message-quote.js';
 import type { AttachmentRef,MediaView } from './media-store.js';
 import { messageLinks, type MessageSource } from './message-links.js';
+import {isScheduleId,scheduleMessageBody,type ScheduleReference} from './schedule-reference.js';
 export type MessageToolActivity = { id: string; label: string; status: 'running' | 'completed' | 'failed' | 'blocked' };
 
 export type MessageQuote = { messageId: string; text: string; itemIds?:string[]; position?:import('./preview-reference.js').PreviewTextAnchor & {sourceHash:string} };
@@ -16,13 +17,14 @@ function quotePosition(value:unknown,text:string):MessageQuote['position']{
 }
 export type AnnotatedQuote = MessageQuote & { annotation: string };
 export type TaskReference = {taskId:string;version:number;title:string};
-export type ConversationInput = { requestId: string; text: string; taskReference?:TaskReference; quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; interactionId?: string; questionAnswers?: Record<string,string[]>; attachments?: AttachmentRef[] };
+export type ConversationInput = { requestId: string; text: string; taskReference?:TaskReference; scheduleReference?:ScheduleReference; quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; interactionId?: string; questionAnswers?: Record<string,string[]>; attachments?: AttachmentRef[] };
 export type ConversationMessage = {
   id: string; threadId: string; requestId: string | null;
   role: "user" | "assistant"; text: string;
   status: "queued" | "processing" | "cancelled" | "running" | "completed" | "interrupted" | "failed";
   quote?: MessageQuote; quotes?: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; createdAt: number;
   taskReference?:TaskReference;
+  scheduleReference?:ScheduleReference;
   taskId?: string | null;
   taskVersion?: number | null;
   operationKey?: string | null;
@@ -42,7 +44,7 @@ type AssistantMessage = {
   taskId?: string | null; taskVersion?: number | null; operationKey: string;
 };
 type ConversationReferences = Pick<ConversationInput,'quote'|'quotes'|'resourceReference'|'resourceReferences'|'taskReference'>;
-type Row = Omit<ConversationMessage, keyof ConversationReferences> & { quote: string | null };
+type Row = Omit<ConversationMessage, keyof ConversationReferences|'scheduleReference'> & { quote: string | null; scheduleReferenceJson:string|null };
 // Preserve the legacy single-owner JSON bytes; only mixed inputs use both keys.
 export function encodeConversationReferences(input: ConversationReferences): string | null {
   const resources = input.resourceReferences ? { resourceReferences: input.resourceReferences } : input.resourceReference ? { resourceReference: input.resourceReference } : undefined;
@@ -61,7 +63,14 @@ export function decodeConversationReferences(json: string | null): ConversationR
   };
   return { quote: value as MessageQuote };
 }
-const parse = ({ quote, ...row }: Row): ConversationMessage => ({ ...row, ...decodeConversationReferences(quote) });
+const parse = ({ quote, scheduleReferenceJson, ...row }: Row): ConversationMessage => {
+  const message={...row,...decodeConversationReferences(quote)};
+  if(row.role==='user'&&scheduleReferenceJson)try{
+    const scheduleReference=parseScheduleReference(JSON.parse(scheduleReferenceJson));
+    if(scheduleMessageBody(row.text,scheduleReference)!==undefined)return {...message,scheduleReference};
+  }catch{/* A damaged display reference must not make the message unreadable. */}
+  return message;
+};
 function parseTaskReference(value:unknown):TaskReference{
   const ref=value as TaskReference|null;
   if(!ref||typeof ref.taskId!=='string'||!/^[\w:-]{1,100}$/.test(ref.taskId)||
@@ -69,10 +78,19 @@ function parseTaskReference(value:unknown):TaskReference{
     throw Error('invalid_task_reference');
   return {taskId:ref.taskId,version:ref.version,title:ref.title};
 }
+function parseScheduleReference(value:unknown):ScheduleReference{
+  const ref=value as ScheduleReference|null;
+  if(!ref||!isScheduleId(ref.scheduleId)||typeof ref.label!=='string'||!ref.label.trim()||ref.label.length>100)
+    throw Error('invalid_schedule_reference');
+  return {scheduleId:ref.scheduleId,label:ref.label};
+}
 export function conversationInput(value: unknown): ConversationInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_message");
   const input = value as ConversationInput;
   const taskReference=input.taskReference===undefined?undefined:parseTaskReference(input.taskReference);
+  const scheduleReference=input.scheduleReference===undefined?undefined:parseScheduleReference(input.scheduleReference);
+  if(scheduleReference&&(input.interactionId!==undefined||input.questionAnswers!==undefined||typeof input.text!=='string'||scheduleMessageBody(input.text,scheduleReference)===undefined))
+    throw Error('invalid_schedule_reference');
   if(taskReference&&(input.interactionId!==undefined||input.questionAnswers!==undefined))throw Error('invalid_task_reference');
   const validQuote = (quote: unknown): quote is MessageQuote => !!quote && typeof quote === "object" &&
     typeof (quote as MessageQuote).messageId === "string" && /^[\w:-]{1,100}$/.test((quote as MessageQuote).messageId) &&
@@ -103,7 +121,7 @@ export function conversationInput(value: unknown): ConversationInput {
       Object.entries(answers).some(([id,list])=>!id.trim()||id.length>200||!Array.isArray(list)||!list.length||list.length>16||list.some(value=>typeof value!=='string'||!value.trim()||value.length>16000))||JSON.stringify(answers).length>64000)throw Error('interaction_answer_scope');
     questionAnswers=Object.fromEntries(Object.entries(answers).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([id,list])=>[id,[...list]]));
   }
-  return { requestId: input.requestId, text: input.text,...(taskReference?{taskReference}:{}),...(resourceReference?{resourceReference}:{}),...(resourceReferences?{resourceReferences}:{}),
+  return { requestId: input.requestId, text: input.text,...(scheduleReference?{scheduleReference}:{}),...(taskReference?{taskReference}:{}),...(resourceReference?{resourceReference}:{}),...(resourceReferences?{resourceReferences}:{}),
     ...(input.quote ? { quote: { messageId: input.quote.messageId, text: input.quote.text,...(input.quote.itemIds?{itemIds:[...input.quote.itemIds]}:{}),...(input.quote.position!==undefined?{position:quotePosition(input.quote.position,input.quote.text)}:{}) } } : {}),
     ...(quotes?.length ? { quotes } : {}), ...(attachments?.length?{attachments}:{}), ...(input.interactionId ? { interactionId: input.interactionId } : {}),...(questionAnswers?{questionAnswers}:{}) };
 }
@@ -118,7 +136,8 @@ export class ConversationHistory {
         (attachments.length && !attachments.some(column => column.name === "messageId"))) throw Error("conversation_schema_unsupported");
     db.exec(`BEGIN IMMEDIATE;
       CREATE TABLE IF NOT EXISTS conversation_inputs(requestId TEXT PRIMARY KEY,threadId TEXT NOT NULL,hash TEXT NOT NULL,replyId TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,threadId TEXT NOT NULL,requestId TEXT,role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,quote TEXT,createdAt INTEGER NOT NULL,taskId TEXT,taskVersion INTEGER,operationKey TEXT,audience TEXT NOT NULL DEFAULT 'user' CHECK(audience IN ('user','internal')),revokedAt INTEGER);
+      CREATE TABLE IF NOT EXISTS conversation_messages(id TEXT PRIMARY KEY,threadId TEXT NOT NULL,requestId TEXT,role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,quote TEXT,createdAt INTEGER NOT NULL,taskId TEXT,taskVersion INTEGER,operationKey TEXT,audience TEXT NOT NULL DEFAULT 'user' CHECK(audience IN ('user','internal')),revokedAt INTEGER,scheduleReferenceJson TEXT);
+      ${messages.length&&!messages.some(column=>column.name==='scheduleReferenceJson')?'ALTER TABLE conversation_messages ADD COLUMN scheduleReferenceJson TEXT;':''}
       CREATE INDEX IF NOT EXISTS conversation_thread ON conversation_messages(threadId,createdAt);
       CREATE INDEX IF NOT EXISTS conversation_request_user ON conversation_messages(threadId,requestId,role,createdAt);
       CREATE INDEX IF NOT EXISTS conversation_task_message ON conversation_messages(threadId,taskId) WHERE taskId IS NOT NULL;
@@ -286,10 +305,10 @@ export class ConversationHistory {
       this.validateQuotes(threadId,input);
       const messageId = "message-" + randomUUID(), replyId = "message-" + randomUUID(), now = Date.now();
       this.db.prepare("INSERT INTO conversation_inputs VALUES(?,?,?,?)").run(input.requestId, threadId, hash, replyId);
-      const insert = this.db.prepare("INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt) VALUES(?,?,?,?,?,?,?,?)");
-      insert.run(messageId, threadId, input.requestId, "user", input.text, "completed", encodeConversationReferences(input), now);
+      const insert = this.db.prepare("INSERT INTO conversation_messages(id,threadId,requestId,role,text,status,quote,createdAt,scheduleReferenceJson) VALUES(?,?,?,?,?,?,?,?,?)");
+      insert.run(messageId, threadId, input.requestId, "user", input.text, "completed", encodeConversationReferences(input), now,input.scheduleReference?JSON.stringify(input.scheduleReference):null);
       if(input.attachments)this.db.prepare('INSERT INTO conversation_attachments VALUES(?,?)').run(messageId,JSON.stringify(input.attachments));
-      insert.run(replyId, threadId, input.requestId, "assistant", "", "running", null, now);
+      insert.run(replyId, threadId, input.requestId, "assistant", "", "running", null, now,null);
       const receipt = persist({ fresh: true, replyId });
       this.db.exec("COMMIT");
       return receipt;

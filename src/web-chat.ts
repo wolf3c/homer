@@ -104,7 +104,7 @@ export function createWebChat(bridge:WebBridge){
   if(path==='/api/messages'){
     if(!input||typeof input!=='object'||!Object.hasOwn(input,'scope'))return bridge.submit(conversationInput(input));
     const scope=input.scope,message=conversationInput(input.input);
-    if(!message.taskReference||message.interactionId||!id(scope?.threadId)||!id(scope.readEpoch)||
+    if(!message.taskReference||message.scheduleReference||message.interactionId||!id(scope?.threadId)||!id(scope.readEpoch)||
        Object.keys(scope).some(key=>!['threadId','readEpoch'].includes(key))||
        Object.keys(input).some(key=>!['input','scope'].includes(key)))throw Error('task_reference_scope_denied');
     return bridge.submit(message,scope);

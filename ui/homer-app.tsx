@@ -77,6 +77,7 @@ import { QuestionFlow } from './vendor/assistant-ui/question-flow';
 import { ElicitationForm } from './vendor/assistant-ui/elicitation-form';
 import {questionReply} from '../src/question-schema';
 import type { ConversationInput, MessageQuote, AnnotatedQuote, TaskReference } from "../src/web-history";
+import {scheduleMessageBody} from '../src/schedule-reference';
 import {scheduleMessageText,type ScheduleContext, canAcceptInput, prepareMessage, prepareInteractionResponse, draftQuotes, canSubmitMessage, homerFeedbackPrompt, restoreComposerDraft,restoreRejectedSourceDraft,singleComposerDraft,unconfirmedInputs,quoteDrafts,protocolQuotes,type QuoteDraft,type UnconfirmedInput } from "./conversation-client";
 import type {AttachmentRef,MediaView} from '../src/media-store';
 import {DesktopSettings,DesktopAccount,ModelFailureNotice,type CaptureShortcutBridge,type DesktopNotice} from './desktop-permissions';
@@ -239,6 +240,8 @@ function UserMessage() {
   const prefix=useContext(MessageIdPrefixContext);
   const metadata = useAuiState(s => s.message.metadata.custom);
   const original=metadata.original as WebState['messages'][number]|undefined;
+  const openSchedule=useContext(ScheduleNavigationContext);
+  const scheduleReference=original&&scheduleMessageBody(original.text,original.scheduleReference)!==undefined?original.scheduleReference:undefined;
   const channelSource=original?.channelSource;
   const channelName=channelSource?.source==='wechat'?'微信':channelSource?.source==='telegram'?'Telegram':channelSource?.source==='dingtalk'?'钉钉':channelSource?.source;
   const hasText = useAuiState(s => s.message.content.some(part => part.type === 'text' && part.text.trim().length > 0));
@@ -246,6 +249,7 @@ function UserMessage() {
   const bubble =
     <div className={original?.interaction?undefined:"user-message-bubble"} data-kind={original?.interaction?.kind} role={original?.interaction?"group":undefined} aria-label={original?.interaction?(original.interaction.kind==='authorization'?'授权请求与用户决定':'咨询问题与用户回答'):undefined}>
     {channelSource&&<p className="message-source-label">{channelName+'@'+channelSource.entryLabel}</p>}
+    {scheduleReference&&<ScheduleChip value={scheduleReference} onOpen={openSchedule&& (trigger=>openSchedule(scheduleReference.scheduleId,trigger))}/>}
     {original?.taskReference&&<TaskReferenceSource reference={original.taskReference}/>}
     {quotes.map((quote, index) => <Fragment key={index}>
       <QuoteSource quote={quote} index={index}/>
@@ -612,8 +616,9 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     const localFileError=localImage&&['preview_source_mismatch','artifact_missing','message_file_scope_denied','artifact_path_denied','file_type_or_size_denied','file_preview_unsupported','media_preview_unavailable'].includes(error);
     const imageError=(localImage||refs.some(isDraftImageReference))&&['preview_source_mismatch','preview_image_missing','invalid_resource_reference','invalid_attachments','media_scope_denied','media_asset_not_found','media_not_ready','media_derivative_missing'].includes(error);
     const staleTask=error==='task_reference_stale'||error==='task_reference_scope_denied';
+    const staleSchedule=error==='schedule_reference_unavailable'||error==='invalid_schedule_reference';
     if(restoring||!draft||reconciled.current.has(item)||!pendingRef.current.includes(item)
-      ||error!=='request_too_large'&&error!=='quote_source_mismatch'&&!staleTask&&!localFileError&&!imageError)return;
+      ||error!=='request_too_large'&&error!=='quote_source_mismatch'&&!staleTask&&!staleSchedule&&!localFileError&&!imageError)return;
     reconciled.current.add(item);
     if(clearing.current?.requestId===input.requestId)await clearing.current.wait;
     if(!composerMounted.current||!pendingRef.current.includes(item))return;
@@ -622,15 +627,15 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
       restoreRejectedSourceDraft({taskReference:taskReferenceRef.current,scheduleContext:scheduleRef.current,text:composer.text,quotes:quotesRef.current,requestId:draftRequest.current,attachments:composer.attachments,uploading:uploadingRef.current,...resources},input,draft.clearedRequestId);
     if(!restore){setDraftNotice(error==='request_too_large'?'原请求超出96KiB，原请求内容及当前草稿已保留。':'原请求未获接收，已保留原请求内容及当前草稿。');return;}
     setRestoring(true);try{
-      setScheduleContext(undefined);setTaskReference(restore.taskReference);draftRequest.current=restore.requestId;contextOrder.current=new ContextOrder(draft.contextOrder);
+      setScheduleContext(restore.scheduleContext);setTaskReference(restore.taskReference);draftRequest.current=restore.requestId;contextOrder.current=new ContextOrder(draft.contextOrder);
       annotationDraft.restore({...draft.resources,...restore});aui.composer().setText(restore.text);replaceQuotes(draft.quotes);
       const restoredResources=annotationDraft.read();
       for(const [index,asset] of draft.attachments.entries()){
         const current=aui.composer().getState();
-        if(!composerMounted.current||uploadingRef.current||draftRequest.current!==input.requestId||current.text!==input.text||annotationDraft.read()!==restoredResources||current.attachments.length!==index||JSON.stringify(protocolQuotes(quotesRef.current))!==JSON.stringify(protocolQuotes(restore.quotes)))break;
+        if(!composerMounted.current||uploadingRef.current||draftRequest.current!==input.requestId||current.text!==restore.text||annotationDraft.read()!==restoredResources||current.attachments.length!==index||JSON.stringify(protocolQuotes(quotesRef.current))!==JSON.stringify(protocolQuotes(restore.quotes)))break;
         await aui.composer().addAttachment(attachmentOwner.restore(asset));
       }
-      setDraftNotice(error==='request_too_large'?'整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。':staleTask?'事项引用已变化或不可用。草稿已保留，请重新选择或移除引用。':localFileError?'本地图片来源无法核验。草稿已保留，可移除旧图片附件后重新圈选，或只保留备注。':'引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
+      setDraftNotice(error==='request_too_large'?'整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。':staleTask?'事项引用已变化或不可用。草稿已保留，请重新选择或移除引用。':staleSchedule?'定时任务引用已变化或不可用。草稿已保留，请重新选择或移除引用。':localFileError?'本地图片来源无法核验。草稿已保留，可移除旧图片附件后重新圈选，或只保留备注。':'引用来源未通过校验，原草稿和请求标识已保留，请重新核对引用。');
     }finally{if(composerMounted.current)setRestoring(false);}
   }
   async function keepLocalImageComments(){
@@ -1026,9 +1031,11 @@ function MainComposer({ bindPreview,bindFeedback,annotationDraft,state, connecte
     if(quotes.length&&referencesOf(resourceState).length&&state.features?.previewReferenceCollections!==2){setDraftNotice('当前连接不支持批注与消息引用共存，请刷新后重试。');return;}
     const selectedTask=boundTask??taskReferenceRef.current;
     if(selectedTask&&!state.features?.taskReference){setDraftNotice('当前连接暂不支持事项引用，草稿已保留。');return;}
-    const submissionText=scheduleMessageText(text,scheduleRef.current);
+    const schedule=scheduleRef.current;
+    const submissionText=scheduleMessageText(text,schedule);
     if(!canSubmitMessage(submissionText,quotes,attachments,resourceReference,resourceReferences)){setDraftNotice('加入定时任务引用后内容过长，请缩短后发送。');return;}
     const input=prepareMessage(submissionText,protocolQuotes(quotes),undefined,()=>draftRequest.current,attachments,resourceReference,resourceReferences,selectedTask);
+    if(schedule&&state.features?.scheduleReference)input.scheduleReference=schedule;
     if(new TextEncoder().encode(JSON.stringify(input)).length>96*1024){setDraftNotice('整条消息超过96KiB，请缩短引用或减少内容后发送；正文、引用和附件已保留。');return;}
     try{checkQuotes(quotes);}catch(error){setDraftNotice((error as Error).message);return;}
     if(boundTask){if(!scopedStale)submitScoped?.(input,key);return;}
@@ -1969,6 +1976,7 @@ function HomerApp() {
   }
   const sendInput=useCallback((input:ConversationInput,target?:UnconfirmedInput['target'],scope?:WebSendScope)=>{
     if(!connected||!verifiedThread.current)return Promise.reject(new Error('service_not_ready'));
+    if(input.scheduleReference&&!state.features?.scheduleReference)return Promise.reject(new Error('schedule_reference_transport_unavailable'));
     if(input.taskReference&&!state.features?.taskReference)return Promise.reject(new Error('task_reference_scope_denied'));
     const ownerThread=verifiedThread.current;
     if(!scope)setError('');
@@ -1977,7 +1985,7 @@ function HomerApp() {
       try{await post(input.interactionId?'/api/interactions/'+input.interactionId:target?'/api/messages/interrupt':'/api/messages',target?{input,target}:scope?{input,scope}:input);if(input.interactionId&&verifiedThread.current===ownerThread)setState(old=>old.threadId===ownerThread?({...old,acceptedRequestIds:[...new Set([...(old.acceptedRequestIds??[]),input.requestId])]}):old);}
       catch(error){if(!scope&&verifiedThread.current===ownerThread)setError(error instanceof Error&&error.message==='request_too_large'?'整条消息超过96KiB，未获接收；原请求内容已保留，请减少内容后发送。':'发送未确认，消息和引用已逐条保留；可核对并重试：'+(error instanceof Error?error.message:'web_request_failed'));throw error;}
     };const task=input.interactionId?send():sendChain.current.catch(()=>{}).then(send);if(!input.interactionId)sendChain.current=task;return task;
-  },[connected,state.features?.taskReference]);
+  },[connected,state.features?.taskReference,state.features?.scheduleReference]);
   const onNew = useCallback(async (message: AppendMessage) => {
     const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
     const custom = message.metadata?.custom as { quote?: MessageQuote; quotes?: AnnotatedQuote[] } | undefined;

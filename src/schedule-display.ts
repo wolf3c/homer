@@ -1,11 +1,12 @@
 import type {DatabaseSync} from 'node:sqlite';
 import type {Schedules,Schedule,ScheduleTrigger} from './schedules.js';
+import {isScheduleId} from './schedule-reference.js';
 
 export type ScheduleReadRequest={readEpoch:string;view:'list';offset?:number;limit?:number}|{readEpoch:string;view:'detail';scheduleId:string};
 export type ScheduleSummary={scheduleId:string;revision:number;title:string;trigger:ScheduleTrigger;enabled:boolean;nextFireAt:number|null;status:string;timeLabel:string;timeText:string;cadence:string;note:string};
 export type ScheduleReadResult={threadId:string;readEpoch:string;displayTimeZone:string;items:ScheduleSummary[];nextOffset:number|null}|{threadId:string;readEpoch:string;displayTimeZone:string;item:ScheduleSummary&{text:string}};
 export const scheduleTitle=(text:string)=>text.split(/[。！？\n]/)[0]!.slice(0,100).trim()||'定时任务';
-export const isScheduleId=(id:unknown):id is string=>typeof id==='string'&&/^schedule-[a-f0-9-]{36}$/.test(id);
+export {isScheduleId} from './schedule-reference.js';
 const denied=new Set(['schedule_scope_denied','task_authority_source_denied','channel_binding_denied']);
 
 // This is a user-interface read, never a model tool call or scheduler operation.

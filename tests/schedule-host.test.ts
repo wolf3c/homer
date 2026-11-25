@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {fixture,until} from './fixtures/worker-chat-host.js';
 import {mcpCall} from './fixtures/host-mcp-call.js';
+import {scheduleMessageText} from '../src/schedule-reference.js';
 import {homerWebBridge} from '../src/web-homer.js';
 import {ChannelPlugin} from '../src/channel-plugin.js';
 import {renameSync} from 'node:fs';
@@ -571,5 +572,39 @@ test('text edits keep schedule ownership and a queued hit keeps its delivery tas
   await f.restart();
   await f.app.idle();
   assert.equal(f.app.listCommittedMessages({taskId:oldTaskId}).items.length,1);
+ }finally{await f.close();}
+});
+
+test('selected schedule references are validated and durable without changing model or legacy text',async()=>{
+ const f=fixture();
+ try{
+  await f.app.start();
+  const instanceId=f.app.store.meta('mainAgentId')!,threadId=f.app.store.meta('mainThread')!;
+  const create=(owner:string)=>f.app.schedules.create({text:'整理周报。附上核对清单。',trigger:{cron:'0 9 * * *',timeZone:'Asia/Shanghai'},
+   sourceRef:JSON.stringify({instanceId:owner,threadId,creatorAgentId:owner})});
+  const ref={scheduleId:create(instanceId).id,label:'整理周报'};
+  const denied={...ref,scheduleId:create('another-instance').id};
+  const body='明天执行。',text=scheduleMessageText(body,ref),requestId='selected-schedule';
+  const input={requestId,text,scheduleReference:ref};
+  assert.throws(()=>f.app.inputs.accept({...input,text:body}),/invalid_schedule_reference/);
+  assert.throws(()=>f.app.inputs.accept({...input,text:scheduleMessageText(body,denied),scheduleReference:denied}),/schedule_reference_unavailable/);
+  const wrongTitle={...ref,label:'假标题'};
+  assert.throws(()=>f.app.inputs.accept({...input,text:scheduleMessageText(body,wrongTitle),scheduleReference:wrongTitle}),/schedule_reference_unavailable/);
+  assert.throws(()=>f.app.inputs.accept(input,{source:'telegram',persist(){}}),/schedule_reference_unavailable/);
+  const accepted=f.app.inputs.accept(input);
+  assert.equal(accepted.fresh,true);
+  assert.equal(f.app.inputs.accept(input).fresh,false);
+  assert.equal(f.app.inputs.accept({requestId,text}).fresh,false);
+  assert.deepEqual(f.app.history.inputs(threadId,[requestId]).get(requestId)?.scheduleReference,ref);
+  assert.deepEqual(f.app.inputs.list().find(item=>item.input.requestId===requestId)?.input,input);
+  const edit=(body:string,revision:number,operationId:string)=>f.app.inputs.edit({requestId,expectedRevision:revision,operationId,input:{requestId,text:body}});
+  const updated=edit(scheduleMessageText('后天执行。',ref),accepted.revision!,'keep-schedule');
+  assert.deepEqual(f.app.history.inputs(threadId,[requestId]).get(requestId)?.scheduleReference,ref);
+  edit('改成普通消息。',updated.revision,'remove-schedule');
+  assert.equal(f.app.history.inputs(threadId,[requestId]).get(requestId)?.scheduleReference,undefined);
+  f.app.inputs.accept({requestId:'legacy-prefix',text});
+  const legacy=f.app.history.inputs(threadId,['legacy-prefix']).get('legacy-prefix');
+  assert.equal(legacy?.text,text);
+  assert.equal(legacy?.scheduleReference,undefined);
  }finally{await f.close();}
 });

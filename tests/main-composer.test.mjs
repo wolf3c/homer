@@ -844,11 +844,14 @@ test('schedule chip preserves the ordinary draft and restores after reload; exac
  const f=fixture({text:'请改到明天'});assert.equal(f.preview().selectSchedule(value),true);f.render();
  assert.equal(f.runtime.text,'请改到明天');assert.equal(f.sends.length,0);
  const draft=f.cache.get('homer-draft:'+f.state.threadId);assert.deepEqual(draft.scheduleContext,value);f.close();
- const recovered=fixture({draft});await tick();recovered.render();submit(recovered);await tick();recovered.render();
+ const recovered=fixture({draft});recovered.state.features.scheduleReference=1;await tick();recovered.render();submit(recovered);await tick();recovered.render();
  assert.equal(recovered.sends.length,1);assert.equal(recovered.sends[0][0].text,client.scheduleMessageText('请改到明天',value));
+ assert.deepEqual(recovered.sends[0][0].scheduleReference,value);
  assert.equal(recovered.cache.get('homer-draft:'+recovered.state.threadId)?.scheduleContext,undefined);
  const input=recovered.sends[0][0];assert.equal(client.restoreComposerDraft({...draft,requestId:input.requestId},input,true),undefined);
- assert.equal(client.restoreComposerDraft(undefined,input,false).text,input.text);
+ assert.equal(client.restoreComposerDraft(undefined,input,false).text,'请改到明天');
+ assert.deepEqual(client.restoreComposerDraft(undefined,input,false).scheduleContext,value);
+ assert.equal(client.restoreComposerDraft(undefined,{...input,scheduleReference:undefined},false).text,input.text);
  assert.equal(client.restoreRejectedSourceDraft({text:'',quotes:[],requestId:'new',scheduleContext:value},input,'new'),undefined);
  recovered.close();
 });

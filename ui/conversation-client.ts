@@ -1,4 +1,5 @@
 import {resourceHasComment,referencesOf,type ResourceReference} from '../src/preview-reference.js';
+import {scheduleMessageText,scheduleMessageBody,type ScheduleReference} from '../src/schedule-reference.js';
 import {previewIntentTooLong} from '../src/user-intent.js';
 import type { ConversationInput, MessageQuote, AnnotatedQuote, TaskReference } from "../src/web-history.js";
 
@@ -7,8 +8,8 @@ import type { ConversationInput, MessageQuote, AnnotatedQuote, TaskReference } f
 export function draftQuotes(value: { quote?: MessageQuote; quotes?: AnnotatedQuote[] }): AnnotatedQuote[] {
   return value.quotes ?? (value.quote ? [{ ...value.quote, annotation: "" }] : []);
 }
-export type ScheduleContext={scheduleId:string;label:string};
-export function scheduleMessageText(text:string,context?:ScheduleContext):string{return context?'用户选择的定时任务：'+JSON.stringify(context)+'\n\n'+text:text;}
+export type ScheduleContext=ScheduleReference;
+export {scheduleMessageText};
 export type ComposerDraft = { taskReference?:TaskReference; scheduleContext?:ScheduleContext; text: string; quotes: AnnotatedQuote[]; resourceReference?:ResourceReference; resourceReferences?:ResourceReference[]; requestId?:string; attachments?:import('../src/media-store.js').MediaView[] };
 export type QuoteDraft=AnnotatedQuote&{draftId:string};
 export function quoteDrafts(quotes:readonly AnnotatedQuote[],newId:()=>string):QuoteDraft[]{
@@ -30,10 +31,14 @@ export function unconfirmedInputs(items:readonly UnconfirmedInput[],accepted:rea
 export function restoreComposerDraft(draft: { taskReference?:TaskReference; scheduleContext?:ScheduleContext; text: string; quote?: MessageQuote; quotes?: AnnotatedQuote[];resourceReference?:ResourceReference; resourceReferences?:ResourceReference[];requestId?:string;attachments?:ComposerDraft['attachments'] } | undefined, pending: ConversationInput | undefined, accepted: boolean): ComposerDraft | undefined {
   const current = draft ? { text: draft.text, quotes: draftQuotes(draft),...(draft.taskReference?{taskReference:draft.taskReference}:{}),...(draft.scheduleContext?{scheduleContext:draft.scheduleContext}:{}),...(draft.resourceReference?{resourceReference:draft.resourceReference}:{}),...(draft.resourceReferences?{resourceReferences:draft.resourceReferences}:{}),...(draft.requestId?{requestId:draft.requestId}:{}),...(draft.attachments?.length?{attachments:draft.attachments}:{}) } : undefined;
   if (!pending) return current;
-  const previous = { text: pending.text, quotes: draftQuotes(pending),...(pending.taskReference?{taskReference:pending.taskReference}:{}),...(pending.resourceReference?{resourceReference:pending.resourceReference}:{}),...(pending.resourceReferences?{resourceReferences:pending.resourceReferences}:{}) };
-  const same = current && (!current.requestId||current.requestId===pending.requestId)&&JSON.stringify(current.taskReference)===JSON.stringify(pending.taskReference)&&JSON.stringify(current.resourceReference)===JSON.stringify(pending.resourceReference)&&JSON.stringify(current.resourceReferences)===JSON.stringify(pending.resourceReferences)&& scheduleMessageText(current.text,current.scheduleContext) === previous.text && JSON.stringify(current.attachments?.map(({assetId,revision})=>({assetId,revision}))??[])===JSON.stringify(pending.attachments??[])&&JSON.stringify(protocolQuotes(current.quotes)) === JSON.stringify(protocolQuotes(previous.quotes));
+  const previous = { ...scheduleDraft(pending), quotes: draftQuotes(pending),...(pending.taskReference?{taskReference:pending.taskReference}:{}),...(pending.resourceReference?{resourceReference:pending.resourceReference}:{}),...(pending.resourceReferences?{resourceReferences:pending.resourceReferences}:{}) };
+  const same = current && (!current.requestId||current.requestId===pending.requestId)&&JSON.stringify(current.taskReference)===JSON.stringify(pending.taskReference)&&JSON.stringify(current.resourceReference)===JSON.stringify(pending.resourceReference)&&JSON.stringify(current.resourceReferences)===JSON.stringify(pending.resourceReferences)&& scheduleMessageText(current.text,current.scheduleContext) === pending.text && JSON.stringify(current.attachments?.map(({assetId,revision})=>({assetId,revision}))??[])===JSON.stringify(pending.attachments??[])&&JSON.stringify(protocolQuotes(current.quotes)) === JSON.stringify(protocolQuotes(previous.quotes));
   if (accepted) return same ? undefined : current;
   return current ?? previous;
+}
+function scheduleDraft(input:ConversationInput){
+  const body=scheduleMessageBody(input.text,input.scheduleReference);
+  return body===undefined?{text:input.text}:{text:body,scheduleContext:input.scheduleReference};
 }
 export const homerFeedbackPrompt='请把下面的问题反馈给 Homer 团队。';
 
@@ -65,5 +70,5 @@ export function canAcceptInput(connected: boolean, upgrade: {phase: string; acce
 // Its original payload also remains in pending storage; never replace newer work.
 export function restoreRejectedSourceDraft(current:{taskReference?:TaskReference;scheduleContext?:ScheduleContext;text:string;quotes:readonly AnnotatedQuote[];requestId:string;attachments?:readonly unknown[];uploading?:boolean;resourceReference?:ResourceReference;resourceReferences?:ResourceReference[]},input:ConversationInput,clearedRequestId:string){
  if(current.requestId!==clearedRequestId||current.text||current.taskReference||current.scheduleContext||current.quotes.length||current.uploading||current.attachments?.length||referencesOf(current).length)return;
- return {text:input.text,quotes:draftQuotes(input),requestId:input.requestId,...(input.taskReference?{taskReference:input.taskReference}:{}),...(input.attachments?{attachments:input.attachments}:{}),...(input.resourceReference?{resourceReference:input.resourceReference}:{}),...(input.resourceReferences?{resourceReferences:input.resourceReferences}:{})};
+ return {...scheduleDraft(input),quotes:draftQuotes(input),requestId:input.requestId,...(input.taskReference?{taskReference:input.taskReference}:{}),...(input.attachments?{attachments:input.attachments}:{}),...(input.resourceReference?{resourceReference:input.resourceReference}:{}),...(input.resourceReferences?{resourceReferences:input.resourceReferences}:{})};
 }

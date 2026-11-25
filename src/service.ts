@@ -30,7 +30,7 @@ import { RecursiveTasks, recursiveHash, type Actor, type TaskRun } from "./recur
 import type { TaskArchiveRequest } from "./web-contract.js";
 import { RecursiveTools, RECURSIVE_TOOLS, MAIN_DYNAMIC_TOOLS, MAIN_TOOLS_HASH, mainToolsForHash, validateRecursiveToolArguments, validateToolArguments, toolOperationId } from "./recursive-tools.js";
 import { MainInputs,MainInputClaimError, type QueuedInput,type MainInput,type InternalInput,type ScheduledInput } from "./recursive-main-inputs.js";
-import {readScheduleDisplay,type ScheduleReadRequest} from './schedule-display.js';
+import {readScheduleDisplay,scheduleTitle,type ScheduleReadRequest} from './schedule-display.js';
 import {Schedules,SCHEDULE_TOOLS} from './schedules.js';
 import {ScheduleTools,type ScheduleSource} from './schedule-tools.js';
 import {HostToolCalls} from './host-tool-calls.js';
@@ -786,9 +786,10 @@ export class Homer {
   private stateObservers = new Set<(reason?:StateChangeReason)=>void>();
   private pageReader?:WebHistoryPages;
   readonly webReadEpoch=randomUUID();
-  webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels,ref=>{
+  webHistoryPages(){return this.pageReader??=new WebHistoryPages(this.history,this.processes,this.inputs,this.channels,ref=>this.visibleScheduleSource(ref));}
+  private visibleScheduleSource(ref:string){
     try{this.validateScheduleSource(JSON.parse(ref));return true;}catch{return false;}
-  });}
+  }
   onStateChange(observer:(reason?:StateChangeReason)=>void){this.stateObservers.add(observer);return ()=>{this.stateObservers.delete(observer);};}
   private invalidateState(reason?:StateChangeReason){for(const observer of this.stateObservers??[])try{observer(reason);}catch{/* Notification is never business execution. */}}
   isWorkerExecuting(run:OverviewRun):boolean {
@@ -995,6 +996,11 @@ export class Homer {
         if(input.taskReference){
           const current=readTaskReference(this.store.db,input.taskReference.taskId);
           if(current?.version!==input.taskReference.version||current.title!==input.taskReference.title)throw Error('task_reference_stale');
+        }
+        if(input.scheduleReference){
+          const {scheduleId,label}=input.scheduleReference;
+          const schedule=this.store.db.prepare('SELECT text,sourceRef FROM schedules WHERE id=?').get(scheduleId);
+          if(!schedule||scheduleTitle(String(schedule.text))!==label||!this.visibleScheduleSource(String(schedule.sourceRef)))throw Error('schedule_reference_unavailable');
         }
         for(const reference of referencesOf(input))this.validateResourceReference(this.store.meta('mainThread')!,input,reference);
         if(input.interactionId&&this.interactions.inspect(input.interactionId).state!=='pending_user')throw Error('interaction_not_waiting_user');

@@ -1,3 +1,4 @@
+import {scheduleMessageBody} from '../src/schedule-reference';
 import {messageSourceParts} from '../src/message-quote';
 import {type ReactNode} from 'react';
 import {MessagePrimitive,useAuiState,type ThreadMessageLike} from '@assistant-ui/react';
@@ -15,7 +16,8 @@ export function projectProcessMessage(message:WebState['messages'][number]):{con
  }
  if(!message.process&&message.finalAnswers?.length){
   for(const part of message.finalAnswers)text(part.id,part.text,'model');
- }else if(!message.process)text('answer:'+message.id,message.text,'host');
+ }else if(!message.process)text('answer:'+message.id,
+  (message.role==='user'?scheduleMessageBody(message.text,message.scheduleReference):undefined)??message.text,'host');
  else if(message.process.sourceKind==='worker'||messageSourceParts(message)===undefined)text('host:'+message.id,message.text,'host');
  return {content,presentation:{entries}};
 }
