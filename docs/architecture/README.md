@@ -4,6 +4,8 @@
 
 2026-11-25 [工作状态与 Preview 三栏](preview-architecture.md#工作状态与-preview-三栏)已接入固定 300 CSS px 与 700 CSS px 下限，隔离 Chrome 及 macOS Electron 验证通过，安装版和移动真机待验。
 
+2026-11-25 [网页批注弹窗视口避让](preview-architecture.md#网页批注弹窗视口避让)已接入源码。隔离 macOS Electron Preview 专项通过，覆盖长元素、滚动、缩放和原生模态，已核对完整窗口截图。用户原页面、包含修复的安装包和其他桌面平台待验。
+
 2026-11-25 [网页批注气泡](../superpowers/plans/2026-11-25-web-annotation-bubble.md)已在普通对话中按来源只读展示完整备注。隔离 Chrome 三宽度及本地 HTML Electron 回归通过，安装版及移动真机待验。
 
 2026-11-24 [从工作状态打开事项对话](task-conversation-design.md)。Preview 标签已接入源码，支持可核实归属的历史、独立草稿及共用主队列。精确候选通过 101 项离线和 76 项宽窄屏检查；安装版及真机待验。2026-11-25 事项列表精简为标题及 Worker 数量，分工时间轴放在详情的 Worker 区域，已通过隔离 Chrome 三种宽度及桌面窄分栏回归。事项历史上滑自动加载已通过隔离 Chrome 1440／390／320 CSS px 验证。 同日，事项消息操作栏已增加原文跳转图标，复用主对话历史定位并短暂高亮目标。隔离 Chrome 验证了三种宽度、键盘和触屏，以及原文不可用后的重试。

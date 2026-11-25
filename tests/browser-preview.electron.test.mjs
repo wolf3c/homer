@@ -124,11 +124,100 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
   if(modalOnly){
    await host.getByRole('link',{name:'打开业务网页',exact:true}).click();releaseSlowPage();
    const page=await waitPage(url+'/start');page.on('pageerror',error=>errors.push(error.message));
+   const editor=page.locator('[data-homer-annotation] .editor');
+   const input=page.getByRole('textbox',{name:'网页元素批注'});
+   const editorBounds=()=>editor.evaluate(element=>{
+    const {left,top,right,bottom}=element.getBoundingClientRect();
+    return {left,top,right,bottom,width:innerWidth,height:innerHeight};
+   });
+   async function fittingEditor(){
+    await input.waitFor();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const bounds=await editorBounds();
+    const {left,top,right,bottom,width,height}=bounds;
+    assert.ok(left>=-1&&top>=-1&&right<=width+1&&bottom<=height+1,JSON.stringify(bounds));
+    return bounds;
+   }
    await annotationMode(true);
    await page.locator('#target').click();
-   await page.getByRole('textbox',{name:'网页元素批注'}).fill('普通网页对照');
-   await page.getByRole('button',{name:'保存',exact:true}).click();
+   const small=await fittingEditor();
+   assert.ok(Math.abs(small.top-(await page.locator('#target').evaluate(element=>element.getBoundingClientRect().bottom))-8)<2);
+   await input.fill('普通网页对照');
+   await input.press('Enter');
    await host.locator('.annotation-chip').filter({hasText:'普通网页对照'}).waitFor();
+   const originalSize=await electron.evaluate(()=>globalThis.testWindow.getContentSize());
+   await electron.evaluate(()=>globalThis.testWindow.setContentSize(1160,410));
+   await page.waitForFunction(()=>innerHeight>=270&&innerHeight<=345);
+   await page.evaluate(()=>{
+    const target=document.createElement('article');
+    target.id='long-target';target.textContent='用于验证裁切的高元素';
+    target.style.cssText='position:absolute;top:160px;right:0;width:90px;height:900px;margin:0;padding:0';
+    const end=document.createElement('div');
+    end.style.height='1800px';
+    document.body.append(target,end);scrollTo(0,0);
+   });
+   const longTarget=page.locator('#long-target');
+   await longTarget.click({position:{x:40,y:24}});
+   const anchor=await longTarget.evaluate(element=>{
+    const {top,bottom}=element.getBoundingClientRect();
+    return {top,bottom};
+   });
+   assert.deepEqual(anchor,{top:160,bottom:1062});
+   const compact=await fittingEditor();
+   await input.fill('边缘位置的草稿');
+   if(process.platform==='darwin'){
+    const id=await electron.evaluate(()=>globalThis.testWindow.getMediaSourceId().split(':')[1]);
+    execFileSync('/usr/sbin/screencapture',['-x','-l',id,join(out,'web-editor-native-window.png')],{timeout:10000});
+   }
+   await input.press('Shift+Enter');
+   await page.keyboard.insertText('滚动后仍可编辑');
+   await page.evaluate(()=>scrollTo(0,1200));
+   await page.waitForFunction(()=>document.querySelector('#long-target').getBoundingClientRect().bottom<0);
+   const offscreen=await fittingEditor();
+   assert.ok(offscreen.top<compact.top);
+   assert.equal(await input.inputValue(),'边缘位置的草稿\n滚动后仍可编辑');
+   assert.equal(await input.evaluate(element=>element.getRootNode().activeElement===element),true);
+   await page.evaluate(()=>scrollTo(0,0));
+   await until(async()=>Math.abs((await editorBounds()).top-compact.top)<2);
+   const pageZoom=await electron.evaluate(({webContents},url)=>{
+    const contents=webContents.getAllWebContents().find(contents=>contents.getURL()===url);
+    contents.setZoomFactor(1.25);return contents.getZoomFactor();
+   },page.url());
+   assert.equal(pageZoom,1.25);
+   await page.waitForFunction(height=>innerHeight<height,compact.height);
+   const zoomed=await fittingEditor();
+   const hostScale=await host.evaluate(()=>devicePixelRatio);
+   await electron.evaluate(({webContents},url)=>{
+    webContents.getAllWebContents().find(contents=>contents.getURL()===url).setZoomFactor(1);
+    globalThis.testWindow.webContents.setZoomFactor(1.25);
+   },page.url());
+   await host.waitForFunction(scale=>Math.abs(devicePixelRatio-scale*1.25)<0.01,hostScale);
+   await page.waitForFunction(height=>innerHeight>height,zoomed.height);
+   const hostZoomed=await fittingEditor();
+   await electron.evaluate(()=>globalThis.testWindow.setContentSize(1160,270));
+   await page.waitForFunction(()=>innerHeight<190);
+   const short=await fittingEditor();
+   assert.equal(await input.inputValue(),'边缘位置的草稿\n滚动后仍可编辑');
+   await input.press('Tab');
+   const cancel=page.getByRole('button',{name:'取消',exact:true});
+   assert.ok(await cancel.evaluate(element=>element.getRootNode().activeElement===element));
+   assert.ok(await cancel.evaluate(element=>element.closest('form').scrollTop>0));
+   await page.keyboard.press('Escape');
+   await input.waitFor({state:'detached'});
+   assert.equal(await host.locator('.annotation-chip').filter({hasText:'边缘位置的草稿'}).count(),0);
+   await longTarget.evaluate(element=>{
+    element.textContent='底边短目标';
+    element.style.cssText='position:fixed;bottom:0;left:0;width:120px;height:26px;margin:0;padding:0';
+   });
+   await longTarget.click();
+   const bottomEdge=await fittingEditor();
+   await cancel.click();
+   await input.waitFor({state:'detached'});
+   await electron.evaluate((_,size)=>{
+    globalThis.testWindow.webContents.setZoomFactor(1);globalThis.testWindow.setContentSize(...size);
+   },originalSize);
+   await page.waitForFunction(height=>innerHeight>height,compact.height);
+   record('long and offscreen targets keep the real editor in the native viewport through scroll and zoom',{small,anchor,compact,offscreen,zoomed,hostZoomed,short,bottomEdge});
    await page.evaluate(()=>{
     const lower=document.createElement('dialog'),upper=document.createElement('dialog');
     lower.id='annotation-modal';upper.id='annotation-upper';
@@ -142,6 +231,9 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    await modalHost.waitFor({state:'attached',timeout:3000});
    assert.equal(await modalHost.locator('.annotation-marker').count(),0);
    await page.locator('#modal-target').click();
+   const modalBounds=await fittingEditor();
+   const modalAnchorBottom=await page.locator('#modal-target').evaluate(element=>element.getBoundingClientRect().bottom);
+   assert.ok(Math.abs(modalBounds.top-modalAnchorBottom-8)<2,JSON.stringify({modalBounds,modalAnchorBottom}));
    const modalInput=modalHost.getByRole('textbox',{name:'网页元素批注'});
    await modalInput.click();await modalInput.fill('下层草稿不可丢失');
    await page.screenshot({path:join(out,'web-modal-editor.png')});
@@ -184,7 +276,7 @@ async function runPreview(linksOnly,modalOnly=false,linesOnly=false,moreOnly=fal
    assert.equal(await documentHost.getByRole('button',{name:'批注 2',exact:true}).count(),0);
    await host.locator('.composer-area .annotation-chip').filter({hasText:'下层草稿不可丢失'}).locator('.annotation-chip-remove').click();
    await page.evaluate(()=>{document.querySelector('#annotation-modal').remove();document.querySelector('#annotation-upper').remove();});
-   record('native dialog annotations keep lower drafts, anchor during scroll, and do not rebind removed targets');
+   record('native dialog annotations keep lower drafts, anchor during scroll, and do not rebind removed targets',{modalBounds,modalAnchorBottom});
    await page.evaluate(()=>{
     const portal=document.createElement('div');
     portal.setAttribute('role','dialog');portal.style.cssText='position:fixed;inset:20% auto auto 20%;z-index:50;transform:translateX(10px);background:white;padding:20px';
