@@ -2,10 +2,10 @@
   <img src="assets/readme/home-hero.png" alt="荷马手持书与剑，协调 AI 军团" width="720" />
 </p>
 
-<h1 align="center">荷马 Homer — 你的 AI 工作助手</h1>
+<h1 align="center">荷马 Homer — 你的 AI CEO</h1>
 
 <p align="center">
-  <strong>你交办目标，荷马协调 AI 军团，审核并交付成果。</strong>
+  <strong>你只管交代目标，荷马带着 AI 军团帮你搞定。</strong>
 </p>
 
 <p align="center">
@@ -28,7 +28,9 @@
 
 ---
 
-荷马（Homer）是一款开源 AI 工作助手。你只需与荷马对话，随时交办多项工作；荷马调度 AI 军团分工协作、审核成果，让你的目标持续向前。
+荷马（Homer）是面向个人和企业的开源 AI CEO，运行在你的电脑上。你在一个对话里交代目标，荷马组织 AI 团队分工、跟进和审核，把需要你决定的问题和可验收的成果带回来。
+
+如果你正在独立做产品，或者经营一个小团队，可以在同一个对话里交办用户反馈整理、功能开发和发布准备。荷马会协调不同的 AI 助手同时推进这些工作，让你少花时间切换会话、分派任务和转述上下文。
 
 ## 荷马能做什么
 
@@ -40,6 +42,12 @@
 ## 荷马如何工作
 
 ![荷马协调任务、助手协作、审核与交付的动画示意](assets/readme/homer-workflow.gif)
+
+荷马由主 Agent 协调事项和 Worker 会话，执行依托 Codex 的原生会话、工具和审批机制。详见[主 Agent 与 Worker 架构](docs/architecture/main-worker-chat-architecture.md)。
+
+## 荷马的愿景
+
+荷马要把你的 AI 团队带到同一个对话里。今天，荷马已经可以创建和调度 AI Worker。接下来，我们希望把你常用的个人 Agent、专业 AI 服务和智能设备也接入这支团队，由荷马统一分派工作、汇总结果。
 
 ## 安装与开始使用
 
@@ -67,8 +75,8 @@ Intel Mac 和 Windows x64 的目标系统安装与运行验收尚待完成。版
 
 安装手机 App 后，在电脑端荷马的「设置 → 移动设备」中扫码配对。手机 App 需要连接可用的电脑主端。
 
-- Android：下载入口待补充
-- iPhone / iPad：下载入口待发布
+- Android：[前往 GitHub Releases 下载 APK](https://github.com/wolf3c/homer/releases/tag/mobile-android-0.1.1-9)（Android 7.0 及以上，ARM64）。
+- iPhone：App Store 审核尚未通过。[TestFlight 公测](https://testflight.apple.com/join/AJ2W9jhA)目前暂不接受新测试者，开放状态以邀请页为准。
 
 开发者也可以[从源码构建和运行](docs/public/getting-started.md)。当前为开发预览，存在[已知限制](docs/public/getting-started.md#当前源码状态)。
 

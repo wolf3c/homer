@@ -2,10 +2,10 @@
   <img src="assets/readme/home-hero.png" alt="Homer with a book and sword, coordinating an AI team" width="720" />
 </p>
 
-<h1 align="center">Homer — Your AI Work Assistant</h1>
+<h1 align="center">Homer — Your AI CEO</h1>
 
 <p align="center">
-  <strong>One conversation. A team of AI assistants. Work that keeps moving.</strong>
+  <strong>Tell Homer what you want done. Homer and its AI team will take it from there.</strong>
 </p>
 
 <p align="center">
@@ -28,7 +28,9 @@
 
 ---
 
-Homer is an open-source AI work assistant. Talk to Homer and assign tasks whenever you like; it coordinates a team of AI assistants and reviews their work to keep your goals moving forward.
+Homer is an open-source AI CEO for individuals and businesses. It runs on your computer. Give Homer a goal in one conversation, and it will organize an AI team, follow up on progress, and review the work. It brings decisions to you and delivers results you can review.
+
+If you're building a product on your own or running a small team, you can assign work like sorting through user feedback, building features, and preparing a release in the same conversation. Homer coordinates AI assistants to move those tasks forward in parallel, so you spend less time switching sessions, assigning tasks, and repeating context.
 
 ## What Homer does
 
@@ -40,6 +42,12 @@ Homer is an open-source AI work assistant. Talk to Homer and assign tasks whenev
 ## How Homer works
 
 ![Animated illustration of Homer coordinating tasks, assistants, review, and delivery](assets/readme/homer-workflow.gif)
+
+Homer's main agent coordinates tasks and Worker sessions. Execution uses Codex's native sessions, tools, and approval mechanisms. See the [main agent and Worker architecture](docs/architecture/main-worker-chat-architecture.md).
+
+## Homer's vision
+
+Homer aims to bring your entire AI team into one conversation. Today, it can create and coordinate AI Workers. Next, we want your personal agents, specialized AI services, and smart devices to join that team, so Homer can assign work across them and bring the results together.
 
 ## Install and start
 
@@ -67,8 +75,8 @@ Model service eligibility, quotas, and fees depend on the release and service te
 
 After installing the mobile app, pair it by scanning the code under Settings → Mobile Devices in the desktop app. The mobile app requires an available desktop host.
 
-- Android: download link to be added
-- iPhone / iPad: download link to come
+- Android: [Download the APK from GitHub Releases](https://github.com/wolf3c/homer/releases/tag/mobile-android-0.1.1-9) (Android 7.0 or later, ARM64).
+- iPhone: App Store approval pending. The [TestFlight public beta](https://testflight.apple.com/join/AJ2W9jhA) is currently closed to new testers. Check the invitation page for the latest availability.
 
 Developers can also [build and run from source](docs/public/getting-started.en.md). This is a development preview with [known limitations](docs/public/getting-started.en.md#source-preview-status).
 
